@@ -138,11 +138,12 @@ deps-linux:
 # Make a cache image with downloaded and built dependencies
 build-linux-cache:
     FROM +deps-linux
-    RUN mkdir -p veilid-cli veilid-core veilid-core/examples/basic veilid-server veilid-tools veilid-wasm veilid-flutter veilid-flutter/rust veilid-remote-api
+    RUN mkdir -p veilid-cli veilid-core veilid-core/examples/basic veilid-core/examples/private_route veilid-server veilid-tools veilid-wasm veilid-flutter veilid-flutter/rust veilid-remote-api
     COPY --keep-ts --dir .cargo scripts Cargo.lock Cargo.toml .
     COPY --keep-ts veilid-cli/Cargo.toml veilid-cli
     COPY --keep-ts veilid-core/Cargo.toml veilid-core
     COPY --keep-ts veilid-core/examples/basic/Cargo.toml veilid-core/examples/basic
+    COPY --keep-ts veilid-core/examples/private_route/Cargo.toml veilid-core/examples/private_route
     COPY --keep-ts veilid-server/Cargo.toml veilid-server
     COPY --keep-ts veilid-tools/Cargo.toml veilid-tools
     COPY --keep-ts veilid-remote-api/Cargo.toml veilid-remote-api

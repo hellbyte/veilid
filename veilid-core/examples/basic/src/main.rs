@@ -4,6 +4,7 @@ use veilid_core::{VeilidConfig, VeilidConfigProtectedStore, VeilidConfigTableSto
 
 #[tokio::main]
 async fn main() {
+    // Create a basic update callback to display Veilid's update events
     let update_callback = Arc::new(move |update: VeilidUpdate| {
         match update {
             AppMessage(msg) => {
@@ -23,6 +24,12 @@ async fn main() {
         };
     });
 
+    // Set up a config for this application
+    let exe_dir = std::env::current_exe()
+        .map(|x| x.parent().map(|p| p.to_owned()))
+        .ok()
+        .flatten()
+        .unwrap_or(".".into());
     let config = VeilidConfig {
         program_name: "Example Veilid".into(),
         namespace: "veilid-example".into(),
@@ -31,16 +38,23 @@ async fn main() {
             // IMPORTANT: don't do this in production
             // This avoids prompting for a password and is insecure
             always_use_insecure_storage: true,
-            directory: "./.veilid/protected_store".into(),
+            directory: exe_dir
+                .join(".veilid/protected_store")
+                .to_string_lossy()
+                .to_string(),
             ..Default::default()
         },
         table_store: VeilidConfigTableStore {
-            directory: "./.veilid/table_store".into(),
+            directory: exe_dir
+                .join(".veilid/table_store")
+                .to_string_lossy()
+                .to_string(),
             ..Default::default()
         },
         ..Default::default()
     };
 
+    // Startup Veilid node
     let veilid = veilid_core::api_startup_config(update_callback, config)
         .await
         .unwrap();
@@ -48,7 +62,10 @@ async fn main() {
         "Node ID: {}",
         veilid.config().unwrap().get().network.routing_table.node_id
     );
+
+    // Attach to the network
     veilid.attach().await.unwrap();
+
     // Until CTRL+C is pressed, keep running
     tokio::signal::ctrl_c().await.unwrap();
     veilid.shutdown().await;

@@ -9,7 +9,7 @@ impl RPCProcessor {
     /// Because this leaks information about the identity of the node itself,
     /// replying to this request received over a private route will leak
     /// the identity of the node and defeat the private route.
-    #[instrument(level = "trace", target = "rpc", skip(self), err)]
+    #[instrument(level = "trace", target = "rpc", skip(self), err(level=Level::DEBUG))]
     pub async fn rpc_call_find_node(
         &self,
         dest: Destination,

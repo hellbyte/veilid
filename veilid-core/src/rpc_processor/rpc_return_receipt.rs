@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Sends a unidirectional in-band return receipt
     // Can be sent via all methods including relays and routes
-    #[instrument(level = "trace", target = "rpc", skip(self, receipt), ret, err)]
+    #[instrument(level = "trace", target = "rpc", skip(self, receipt), ret, err(level=Level::DEBUG))]
     pub async fn rpc_call_return_receipt<D: AsRef<[u8]>>(
         &self,
         dest: Destination,

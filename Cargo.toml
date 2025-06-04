@@ -3,6 +3,7 @@ members = [
     "veilid-tools",
     "veilid-core",
     "veilid-core/examples/basic",
+    "veilid-core/examples/private_route",
     "veilid-server",
     "veilid-cli",
     "veilid-flutter/rust",

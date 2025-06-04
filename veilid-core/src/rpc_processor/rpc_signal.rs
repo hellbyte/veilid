@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Sends a unidirectional signal to a node
     // Can be sent via relays but not routes. For routed 'signal' like capabilities, use AppMessage.
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err)]
+    #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
     pub async fn rpc_call_signal(
         &self,
         dest: Destination,

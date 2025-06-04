@@ -25,7 +25,7 @@ impl RPCProcessor {
         instrument(level = "trace", target = "rpc", skip(self, last_descriptor),
             fields(ret.peers.len,
                 ret.latency
-            ),err)
+            ),err(level=Level::DEBUG))
     ]
     pub async fn rpc_call_inspect_value(
         &self,

@@ -22,7 +22,7 @@ impl RPCProcessor {
             fields(ret.expiration,
                 ret.latency,
                 ret.peers.len
-            ),err)]
+            ),err(level=Level::DEBUG))]
     #[allow(clippy::too_many_arguments)]
     pub async fn rpc_call_watch_value(
         &self,

@@ -1,3 +1,7 @@
+**UNRELEASED**
+
+- Add private route example
+
 **Changed in Veilid 0.4.7**
 
 - _BREAKING API CHANGES_:

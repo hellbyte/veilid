@@ -6,7 +6,7 @@ import 'dart:async';
 import 'package:async_tools/async_tools.dart';
 import 'package:veilid/veilid.dart';
 
-bool kIsWeb = const bool.fromEnvironment('dart.library.js_util');
+const kIsWeb = bool.fromEnvironment('dart.library.js_util');
 
 abstract class VeilidFixture {
   Future<void> setUp();
@@ -111,6 +111,8 @@ class DefaultVeilidFixture implements VeilidFixture {
 
     _veilidUpdateSubscription = us.listen((update) {
       if (update is VeilidLog) {
+        // Tests should print logs
+        // ignore: avoid_print
         print(update.message);
       } else if (update is VeilidUpdateAttachment) {
       } else if (update is VeilidUpdateConfig) {

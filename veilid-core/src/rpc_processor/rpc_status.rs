@@ -18,7 +18,7 @@ impl RPCProcessor {
     // direct -> node status + sender info
     // safety -> node status
     // private -> nothing
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err)]
+    #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
     pub async fn rpc_call_status(
         &self,
         dest: Destination,

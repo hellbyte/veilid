@@ -1,0 +1,30 @@
+[package]
+name = "veilid-core-examples-private-route"
+version = "0.1.0"
+# ---
+description = "Example demonstrating Veilid private routes"
+resolver = "2"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+autobins = false
+publish = false
+
+[[example]]
+name = "private-route-example"
+path = "src/main.rs"
+
+[dependencies]
+async-stdin = "0.3.1"
+clap = { version = "4.5.39", features = ["derive"] }
+ctrlc = "3.4.7"
+data-encoding = "2.9.0"
+tokio = "1.45.1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+veilid-core = { path = "../../../veilid-core" }
+
+[lints]
+workspace = true

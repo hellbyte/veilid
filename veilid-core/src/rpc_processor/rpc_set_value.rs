@@ -26,7 +26,7 @@ impl RPCProcessor {
             ret.value.data.writer,
             ret.peers.len,
             ret.latency
-        ), err)]
+        ), err(level=Level::DEBUG))]
     pub async fn rpc_call_set_value(
         &self,
         dest: Destination,

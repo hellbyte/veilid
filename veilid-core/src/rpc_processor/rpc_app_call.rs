@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Sends a high level app request and wait for response
     // Can be sent via all methods including relays and routes
-    #[instrument(level = "trace", target = "rpc", skip(self, message), fields(message.len = message.len(), ret.latency, ret.len), err)]
+    #[instrument(level = "trace", target = "rpc", skip(self, message), fields(message.len = message.len(), ret.latency, ret.len), err(level=Level::DEBUG))]
     pub async fn rpc_call_app_call(
         &self,
         dest: Destination,

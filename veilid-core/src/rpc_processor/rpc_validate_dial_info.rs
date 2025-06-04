@@ -4,7 +4,7 @@ impl_veilid_log_facility!("rpc");
 
 impl RPCProcessor {
     // Can only be sent directly, not via relays or routes
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err)]
+    #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
     pub async fn rpc_call_validate_dial_info(
         &self,
         peer: NodeRef,
