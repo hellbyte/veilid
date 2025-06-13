@@ -588,9 +588,13 @@ impl BucketEntryInner {
         };
         // Peer info includes all node ids, even unvalidated ones
         let node_ids = self.node_ids();
-        let opt_pi = opt_current_sni
-            .as_ref()
-            .map(|s| Arc::new(PeerInfo::new(routing_domain, node_ids, *s.clone())));
+        let opt_pi = match opt_current_sni {
+            Some(s) => match PeerInfo::new(routing_domain, node_ids, *s.clone()) {
+                Ok(v) => Some(Arc::new(v)),
+                Err(_) => None,
+            },
+            None => None,
+        };
 
         // Cache the peerinfo
         pi_cache.insert(routing_domain, opt_pi.clone());

@@ -34,13 +34,26 @@ impl PeerInfo {
         routing_domain: RoutingDomain,
         node_ids: TypedNodeIdGroup,
         signed_node_info: SignedNodeInfo,
-    ) -> Self {
-        assert!(!node_ids.is_empty() && node_ids.len() <= MAX_CRYPTO_KINDS);
-        Self {
+    ) -> EyreResult<Self> {
+        if node_ids.is_empty() {
+            bail!(
+                "no node ids for peer info ({:?})\n{:#?}",
+                routing_domain,
+                signed_node_info
+            );
+        } else if node_ids.len() > MAX_CRYPTO_KINDS {
+            bail!(
+                "too many node ids for peer info ({:?}): {:?}\n{:#?}",
+                routing_domain,
+                node_ids,
+                signed_node_info
+            );
+        }
+        Ok(Self {
             routing_domain,
             node_ids,
             signed_node_info,
-        }
+        })
     }
 
     pub fn validate(&self, crypto: &Crypto) -> VeilidAPIResult<()> {

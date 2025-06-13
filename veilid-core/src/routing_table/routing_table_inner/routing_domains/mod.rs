@@ -419,6 +419,7 @@ impl RoutingDomainDetailCommon {
             routing_table.node_ids(),
             signed_node_info,
         )
+        .expect("our own peerinfo should never fail")
     }
 
     fn clear_cache(&self) {

@@ -144,11 +144,19 @@ impl NetworkManager {
                         ),
                     ));
 
-                    Some(Arc::new(PeerInfo::new(
+                    let bspi = match PeerInfo::new(
                         RoutingDomain::PublicInternet,
                         bsrec.node_ids().clone(),
                         sni,
-                    )))
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            veilid_log!(self error "Bootstrap has invalid peer info: {}", e);
+                            return None;
+                        }
+                    };
+
+                    Some(Arc::new(bspi))
                 }
             })
             .collect();

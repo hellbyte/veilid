@@ -69,11 +69,14 @@ impl SignedNodeInfo {
     pub fn relay_peer_info(&self, routing_domain: RoutingDomain) -> Option<Arc<PeerInfo>> {
         match self {
             SignedNodeInfo::Direct(_) => None,
-            SignedNodeInfo::Relayed(r) => Some(Arc::new(PeerInfo::new(
-                routing_domain,
-                r.relay_ids().clone(),
-                SignedNodeInfo::Direct(r.relay_info().clone()),
-            ))),
+            SignedNodeInfo::Relayed(r) => Some(Arc::new(
+                PeerInfo::new(
+                    routing_domain,
+                    r.relay_ids().clone(),
+                    SignedNodeInfo::Direct(r.relay_info().clone()),
+                )
+                .unwrap(), // validate() above, should have ensured this succeeds
+            )),
         }
     }
     pub fn has_any_dial_info(&self) -> bool {

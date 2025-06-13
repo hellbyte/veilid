@@ -47,9 +47,6 @@ pub fn decode_peer_info(
     if node_ids.is_empty() {
         return Err(RPCError::protocol("no verified node ids"));
     }
-    Ok(PeerInfo::new(
-        decode_context.routing_domain,
-        node_ids,
-        signed_node_info,
-    ))
+    PeerInfo::new(decode_context.routing_domain, node_ids, signed_node_info)
+        .map_err(RPCError::map_invalid_format("invalid peer info"))
 }

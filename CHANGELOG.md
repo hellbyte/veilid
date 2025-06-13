@@ -1,6 +1,9 @@
 **UNRELEASED**
 
-- Add private route example
+- veilid-core:
+  - Add private route example
+  - Add `require_inbound_relay` option in VeilidConfig. Default is false, but if enabled, forces OutboundOnly/InboundRelay mode. Can be used as an extra layer of IP address obscurity for some threat models. (@neequ57)
+  - Fix crash when peer info has missing or unsupported node ids
 
 **Changed in Veilid 0.4.7**
 

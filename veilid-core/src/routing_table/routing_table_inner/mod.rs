@@ -752,6 +752,9 @@ impl RoutingTableInner {
         F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner),
     {
         let routing_table = self.routing_table();
+        if node_ids.is_empty() {
+            bail!("Can't create node with no node id");
+        }
 
         // Ensure someone isn't trying register this node itself
         if routing_table.matches_own_node_id(node_ids) {
@@ -761,11 +764,14 @@ impl RoutingTableInner {
         // Look up all bucket entries and make sure we only have zero or one
         // If we have more than one, pick the one with the best cryptokind to add node ids to
         let mut best_entry: Option<Arc<BucketEntry>> = None;
+        let mut supported_node_ids = TypedNodeIdGroup::new();
         for node_id in node_ids.iter() {
             // Ignore node ids we don't support
             if !VALID_CRYPTO_KINDS.contains(&node_id.kind) {
                 continue;
             }
+            supported_node_ids.add(*node_id);
+
             // Find the first in crypto sort order
             let bucket_index = routing_table.calculate_bucket_index(node_id);
             let bucket = self.get_bucket(bucket_index);
@@ -798,8 +804,13 @@ impl RoutingTableInner {
             return Ok(nr);
         }
 
+        // Fail out if we can't handle this node
+        if supported_node_ids.is_empty() {
+            bail!("Not registering node with no supported node ids");
+        }
+
         // If no entry exists yet, add the first entry to a bucket, possibly evicting a bucket member
-        let first_node_id = node_ids[0];
+        let first_node_id = supported_node_ids[0];
         let bucket_entry = routing_table.calculate_bucket_index(&first_node_id);
         let bucket = self.get_bucket_mut(bucket_entry);
         let new_entry = bucket.add_new_entry(first_node_id.value);
