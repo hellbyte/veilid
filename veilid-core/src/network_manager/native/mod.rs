@@ -768,7 +768,9 @@ impl Network {
             true,
         );
 
-        let confirmed_public_internet = !self.config().with(|c| c.network.detect_address_changes);
+        let confirmed_public_internet = self
+            .config()
+            .with(|c| !c.network.detect_address_changes || c.network.privacy.require_inbound_relay);
         editor_public_internet.setup_network(
             network_state.protocol_config.outbound,
             network_state.protocol_config.inbound,
@@ -836,9 +838,18 @@ impl Network {
             self.trigger_update_network_class(RoutingDomain::PublicInternet);
         } else {
             // Warn if we have no public dialinfo, because we're not going to magically find some
-            // with detect address changes turned off
+            // with detect_address_changes turned off. Skip the warning if require_inbound_relay is
+            // enabled, this option intentionally disables publishing any dialinfo.
             let pi = routing_table.get_current_peer_info(RoutingDomain::PublicInternet);
-            if !pi.signed_node_info().has_any_dial_info() {
+            if !pi.signed_node_info().has_any_dial_info()
+                && !self
+                    .registry
+                    .config()
+                    .get()
+                    .network
+                    .privacy
+                    .require_inbound_relay
+            {
                 veilid_log!(self warn
                     "This node has no valid public dial info.\nConfigure this node with a static public IP address and correct firewall rules."
                 );

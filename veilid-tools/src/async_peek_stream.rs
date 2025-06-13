@@ -157,11 +157,7 @@ impl AsyncRead for AsyncPeekStream {
         //
         let buflen = buf.len();
         let bufcopylen = core::cmp::min(buflen, inner.peekbuf_len);
-        let bufreadlen = if buflen > inner.peekbuf_len {
-            buflen - inner.peekbuf_len
-        } else {
-            0
-        };
+        let bufreadlen = buflen.saturating_sub(inner.peekbuf_len);
 
         if bufreadlen > 0 {
             match Pin::new(&mut inner.stream).poll_read(cx, &mut buf[bufcopylen..buflen]) {

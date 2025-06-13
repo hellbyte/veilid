@@ -35,10 +35,9 @@ pub const PROGRAM_NAME: &str = "veilid-server";
 
 pub fn load_default_config() -> EyreResult<config::Config> {
     #[cfg(not(feature = "geolocation"))]
-    let privacy_section = "";
+    let privacy_geolocation_section = "";
     #[cfg(feature = "geolocation")]
-    let privacy_section = r#"
-        privacy:
+    let privacy_geolocation_section = r#"
             country_code_denylist: []
     "#;
 
@@ -224,8 +223,10 @@ core:
                 listen_address: ':5150'
                 path: 'ws'
                 # url: ''
+        privacy:
+            require_inbound_relay: false
+        %PRIVACY_GEOLOCATION_SECTION%
         %VIRTUAL_NETWORK_SECTION%
-        %PRIVACY_SECTION%
         "#,
     )
     .replace(
@@ -256,7 +257,7 @@ core:
         "%REMOTE_MAX_SUBKEY_CACHE_MEMORY_MB%",
         &Settings::get_default_remote_max_subkey_cache_memory_mb().to_string(),
     )
-    .replace("%PRIVACY_SECTION%", privacy_section)
+    .replace("%PRIVACY_GEOLOCATION_SECTION%", privacy_geolocation_section)
     .replace("%VIRTUAL_NETWORK_SECTION%", virtual_network_section)
     .replace(
         "%VIRTUAL_NETWORK_SERVER_SECTION%",
@@ -646,9 +647,10 @@ pub struct Protocol {
     pub wss: Wss,
 }
 
-#[cfg(feature = "geolocation")]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Privacy {
+    pub require_inbound_relay: bool,
+    #[cfg(feature = "geolocation")]
     pub country_code_denylist: Vec<CountryCode>,
 }
 
@@ -730,7 +732,6 @@ pub struct Network {
     pub tls: Tls,
     pub application: Application,
     pub protocol: Protocol,
-    #[cfg(feature = "geolocation")]
     pub privacy: Privacy,
     #[cfg(feature = "virtual-network")]
     pub virtual_network: VirtualNetwork,
@@ -1252,6 +1253,7 @@ impl Settings {
         set_config_value!(inner.core.network.protocol.wss.listen_address, value);
         set_config_value!(inner.core.network.protocol.wss.path, value);
         set_config_value!(inner.core.network.protocol.wss.url, value);
+        set_config_value!(inner.core.network.privacy.require_inbound_relay, value);
         #[cfg(feature = "geolocation")]
         set_config_value!(inner.core.network.privacy.country_code_denylist, value);
         #[cfg(feature = "virtual-network")]
@@ -1689,6 +1691,9 @@ impl Settings {
                         None => None,
                     }))
                 }
+                "network.privacy.require_inbound_relay" => {
+                    Ok(Box::new(inner.core.network.privacy.require_inbound_relay))
+                }
                 #[cfg(feature = "geolocation")]
                 "network.privacy.country_code_denylist" => Ok(Box::new(
                     inner.core.network.privacy.country_code_denylist.clone(),
@@ -1981,6 +1986,7 @@ mod tests {
         );
         assert_eq!(s.core.network.protocol.wss.url, None);
         //
+        assert_eq!(s.core.network.privacy.require_inbound_relay, false);
         #[cfg(feature = "geolocation")]
         assert_eq!(s.core.network.privacy.country_code_denylist, &[]);
         #[cfg(feature = "virtual-network")]

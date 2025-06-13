@@ -190,6 +190,11 @@ class VeilidConfigProtocol(ConfigBase):
 
 
 @dataclass
+class VeilidConfigPrivacy(ConfigBase):
+    require_inbound_relay: bool
+
+
+@dataclass
 class VeilidConfigNetwork(ConfigBase):
     connection_initial_timeout_ms: int
     connection_inactivity_timeout_ms: int
@@ -210,6 +215,7 @@ class VeilidConfigNetwork(ConfigBase):
     tls: VeilidConfigTLS
     application: VeilidConfigApplication
     protocol: VeilidConfigProtocol
+    privacy: VeilidConfigPrivacy
 
 
 @dataclass

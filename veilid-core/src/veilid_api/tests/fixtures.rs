@@ -280,8 +280,9 @@ pub fn fix_veilidconfig() -> VeilidConfig {
                     url: Some("https://veilid.com/wss".to_string()),
                 },
             },
-            #[cfg(feature = "geolocation")]
             privacy: VeilidConfigPrivacy {
+                require_inbound_relay: false,
+                #[cfg(feature = "geolocation")]
                 country_code_denylist: vec![CountryCode::from_str("NZ").unwrap()],
             },
             #[cfg(feature = "virtual-network")]

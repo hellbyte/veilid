@@ -178,11 +178,9 @@ impl TableDB {
                 &Nonce::try_from(&data[0..NONCE_LENGTH]).unwrap(),
                 &di.typed_key.value,
             );
-            decompress_size_prepended(&out, None)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            decompress_size_prepended(&out, None).map_err(|e| std::io::Error::other(e.to_string()))
         } else {
-            decompress_size_prepended(data, None)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            decompress_size_prepended(data, None).map_err(|e| std::io::Error::other(e.to_string()))
         }
     }
 

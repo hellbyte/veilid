@@ -287,60 +287,46 @@ impl RouteSpecStore {
                         let geolocation_info =
                             sni.get_geolocation_info(RoutingDomain::PublicInternet);
 
-                        // Since denylist is used, consider nodes with unknown countries to be automatically
-                        // excluded as well
-                        if geolocation_info.country_code().is_none() {
+                        // Since denylist is used, consider nodes with unknown countries to be automatically excluded
+                        let Some(node_country_code) = geolocation_info.country_code() else {
                             veilid_log!(self
-                                debug "allocate_route_inner: skipping node {} from unknown country",
+                                debug "allocate_route_inner: skipping node {:?} from unknown country",
                                 e.best_node_id()
                             );
                             return false;
-                        }
-                        // Same thing applies to relays used by the node
-                        if geolocation_info
-                            .relay_country_codes()
-                            .iter()
-                            .any(Option::is_none)
-                        {
+                        };
+                        // The same thing applies to relays used by the node
+                        // They must all be from a known country
+                        let relay_country_codes: Option<Vec<CountryCode>> = geolocation_info.relay_country_codes().iter().cloned().collect();
+                        let Some(relay_country_codes) = relay_country_codes else {
                             veilid_log!(self
-                                debug "allocate_route_inner: skipping node {} using relay from unknown country",
+                                debug "allocate_route_inner: skipping node {:?} using relay from unknown country",
                                 e.best_node_id()
                             );
                             return false;
-                        }
+                        };
 
                         // Ensure that node is not excluded
-                        // Safe to unwrap here, checked above
-                        if country_code_denylist.contains(&geolocation_info.country_code().unwrap())
+                        if country_code_denylist.contains(&node_country_code)
                         {
                             veilid_log!(self
-                                debug "allocate_route_inner: skipping node {} from excluded country {}",
+                                debug "allocate_route_inner: skipping node {:?} from excluded country {}",
                                 e.best_node_id(),
-                                geolocation_info.country_code().unwrap()
+                                node_country_code
                             );
                             return false;
                         }
 
                         // Ensure that node relays are not excluded
-                        // Safe to unwrap here, checked above
-                        if geolocation_info
-                            .relay_country_codes()
+                        if let Some(cc) = relay_country_codes
                             .iter()
-                            .cloned()
-                            .map(Option::unwrap)
-                            .any(|cc| country_code_denylist.contains(&cc))
+                            .filter(|cc| country_code_denylist.contains(cc))
+                            .next()
                         {
                             veilid_log!(self
-                                debug "allocate_route_inner: skipping node {} using relay from excluded country {:?}",
+                                debug "allocate_route_inner: skipping node {:?} using relay from excluded country {}",
                                 e.best_node_id(),
-                                geolocation_info
-                                    .relay_country_codes()
-                                    .iter()
-                                    .cloned()
-                                    .map(Option::unwrap)
-                                    .filter(|cc| country_code_denylist.contains(&cc))
-                                    .next()
-                                    .unwrap()
+                                cc
                             );
                             return false;
                         }

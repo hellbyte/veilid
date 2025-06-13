@@ -884,7 +884,9 @@ impl DiscoveryContext {
         // UPNP Automatic Mapping
         ///////////
 
-        let enable_upnp = self.config().with(|c| c.network.upnp);
+        let enable_upnp = self
+            .config()
+            .with(|c| c.network.upnp && !c.network.privacy.require_inbound_relay);
         if enable_upnp {
             // Attempt a port mapping via all available and enabled mechanisms
             // Try this before the direct mapping in the event that we are restarting

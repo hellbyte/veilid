@@ -4267,6 +4267,7 @@
         "max_connections_per_ip4",
         "max_connections_per_ip6_prefix",
         "max_connections_per_ip6_prefix_size",
+        "privacy",
         "protocol",
         "restricted_nat_retries",
         "reverse_connection_receipt_time_ms",
@@ -4331,6 +4332,9 @@
             "null"
           ]
         },
+        "privacy": {
+          "$ref": "#/definitions/VeilidConfigPrivacy"
+        },
         "protocol": {
           "$ref": "#/definitions/VeilidConfigProtocol"
         },
@@ -4354,6 +4358,18 @@
           "$ref": "#/definitions/VeilidConfigTLS"
         },
         "upnp": {
+          "type": "boolean"
+        }
+      }
+    },
+    "VeilidConfigPrivacy": {
+      "description": "Privacy preferences for routes.\n\n```yaml privacy: require_inbound_relay: false country_code_denylist: [] # only with `--features=geolocation` ```",
+      "type": "object",
+      "required": [
+        "require_inbound_relay"
+      ],
+      "properties": {
+        "require_inbound_relay": {
           "type": "boolean"
         }
       }

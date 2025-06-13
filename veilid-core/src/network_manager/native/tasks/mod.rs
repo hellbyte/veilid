@@ -87,11 +87,21 @@ impl Network {
             return Ok(());
         }
 
-        let (detect_address_changes, upnp) = {
+        let (detect_address_changes, upnp, require_inbound_relay) = {
             let config = self.network_manager().config();
             let c = config.get();
-            (c.network.detect_address_changes, c.network.upnp)
+            (
+                c.network.detect_address_changes,
+                c.network.upnp,
+                c.network.privacy.require_inbound_relay,
+            )
         };
+
+        if require_inbound_relay {
+            // Configured to only use relays for inbound connections.
+            // This implicitly turns off address detection and upnp.
+            return Ok(());
+        }
 
         // If we need to figure out our network class, tick the task for it
         if detect_address_changes {

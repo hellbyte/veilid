@@ -131,7 +131,7 @@ impl<T> NetworkResult<T> {
         Self::NoConnection(e)
     }
     pub fn no_connection_other<S: ToString>(s: S) -> Self {
-        Self::NoConnection(io::Error::new(io::ErrorKind::Other, s.to_string()))
+        Self::NoConnection(io::Error::other(s.to_string()))
     }
     pub fn invalid_message<S: ToString>(s: S) -> Self {
         Self::InvalidMessage(s.to_string())

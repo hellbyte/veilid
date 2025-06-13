@@ -289,6 +289,7 @@ pub fn config_callback(key: String) -> ConfigCallbackReturn {
         "network.protocol.wss.listen_address" => Ok(Box::new("".to_owned())),
         "network.protocol.wss.path" => Ok(Box::new(String::from("ws"))),
         "network.protocol.wss.url" => Ok(Box::new(Option::<String>::None)),
+        "network.privacy.require_inbound_relay" => Ok(Box::new(false)),
         #[cfg(feature = "geolocation")]
         "network.privacy.country_code_denylist" => Ok(Box::new(Vec::<CountryCode>::new())),
         #[cfg(feature = "virtual-network")]
@@ -436,6 +437,7 @@ pub fn test_config() {
     assert_eq!(inner.network.protocol.wss.path, "ws");
     assert_eq!(inner.network.protocol.wss.url, None);
 
+    assert!(!inner.network.privacy.require_inbound_relay);
     #[cfg(feature = "geolocation")]
     assert_eq!(inner.network.privacy.country_code_denylist, Vec::new());
     #[cfg(feature = "virtual-network")]

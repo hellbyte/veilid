@@ -22,7 +22,7 @@ macro_rules! io_error_other {
 }
 
 pub fn to_io_error_other<E: std::error::Error + Send + Sync + 'static>(x: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, x)
+    io::Error::other(x)
 }
 
 #[macro_export]

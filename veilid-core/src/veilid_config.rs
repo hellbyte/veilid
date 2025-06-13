@@ -285,23 +285,16 @@ pub struct VeilidConfigProtocol {
 ///
 /// ```yaml
 /// privacy:
-///     country_code_denylist: []
+///     require_inbound_relay: false
+///     country_code_denylist: [] # only with `--features=geolocation`
 /// ```
-#[cfg(feature = "geolocation")]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(target_arch = "wasm32", derive(Tsify))]
 #[must_use]
 pub struct VeilidConfigPrivacy {
+    pub require_inbound_relay: bool,
+    #[cfg(feature = "geolocation")]
     pub country_code_denylist: Vec<CountryCode>,
-}
-
-#[cfg(feature = "geolocation")]
-impl Default for VeilidConfigPrivacy {
-    fn default() -> Self {
-        Self {
-            country_code_denylist: Vec::new(),
-        }
-    }
 }
 
 /// Virtual networking client support for testing/simulation purposes
@@ -568,7 +561,6 @@ pub struct VeilidConfigNetwork {
     pub tls: VeilidConfigTLS,
     pub application: VeilidConfigApplication,
     pub protocol: VeilidConfigProtocol,
-    #[cfg(feature = "geolocation")]
     pub privacy: VeilidConfigPrivacy,
     #[cfg(feature = "virtual-network")]
     pub virtual_network: VeilidConfigVirtualNetwork,
@@ -596,7 +588,6 @@ impl Default for VeilidConfigNetwork {
             tls: VeilidConfigTLS::default(),
             application: VeilidConfigApplication::default(),
             protocol: VeilidConfigProtocol::default(),
-            #[cfg(feature = "geolocation")]
             privacy: VeilidConfigPrivacy::default(),
             #[cfg(feature = "virtual-network")]
             virtual_network: VeilidConfigVirtualNetwork::default(),
@@ -1049,6 +1040,7 @@ impl VeilidStartupOptions {
         get_config!(inner.network.protocol.wss.listen_address);
         get_config!(inner.network.protocol.wss.path);
         get_config!(inner.network.protocol.wss.url);
+        get_config!(inner.network.privacy.require_inbound_relay);
         #[cfg(feature = "geolocation")]
         get_config!(inner.network.privacy.country_code_denylist);
         #[cfg(feature = "virtual-network")]

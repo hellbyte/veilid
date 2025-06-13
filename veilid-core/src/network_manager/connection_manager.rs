@@ -17,7 +17,7 @@ const NEW_CONNECTION_RETRY_DELAY_MS: u32 = 500;
 #[derive(Debug)]
 enum ConnectionManagerEvent {
     Accepted(ProtocolNetworkConnection),
-    Dead(NetworkConnection),
+    Dead(Box<NetworkConnection>),
 }
 
 #[derive(Debug)]
@@ -330,12 +330,16 @@ impl ConnectionManager {
                 // Send it to be terminated
                 #[cfg(feature = "verbose-tracing")]
                 veilid_log!(self debug "== LRU kill connection due to limit: {:?}", conn.debug_print(Timestamp::now()));
-                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
+                let _ = inner
+                    .sender
+                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
             }
             Err(ConnectionTableAddError::AddressFilter(conn, e)) => {
                 // Connection filtered
                 let desc = conn.flow();
-                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
+                let _ = inner
+                    .sender
+                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection filtered: {:?} ({})",
                     desc, e
@@ -345,7 +349,9 @@ impl ConnectionManager {
                 // Connection already exists
                 let desc = conn.flow();
                 veilid_log!(self debug "== Connection already exists: {:?}", conn.debug_print(Timestamp::now()));
-                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
+                let _ = inner
+                    .sender
+                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection already exists: {:?}",
                     desc
@@ -355,7 +361,9 @@ impl ConnectionManager {
                 // Connection table is full
                 let desc = conn.flow();
                 veilid_log!(self debug "== Connection table full: {:?}", conn.debug_print(Timestamp::now()));
-                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
+                let _ = inner
+                    .sender
+                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection table is full: {:?}",
                     desc
@@ -687,7 +695,7 @@ impl ConnectionManager {
                     }
                 }
             }
-            let _ = sender.send(ConnectionManagerEvent::Dead(conn));
+            let _ = sender.send(ConnectionManagerEvent::Dead(Box::new(conn)));
         }
     }
 

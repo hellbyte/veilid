@@ -29,6 +29,7 @@ pub const ADDRESS_CHECK_CACHE_SIZE: usize = 10;
 pub struct AddressCheckConfig {
     pub detect_address_changes: bool,
     pub ip6_prefix_size: usize,
+    pub require_inbound_relay: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -70,15 +71,18 @@ impl AddressCheck {
     pub fn new(net: Network) -> Self {
         let registry = net.registry();
 
-        let (detect_address_changes, ip6_prefix_size) = registry.config().with(|c| {
-            (
-                c.network.detect_address_changes,
-                c.network.max_connections_per_ip6_prefix_size as usize,
-            )
-        });
+        let (detect_address_changes, ip6_prefix_size, require_inbound_relay) =
+            registry.config().with(|c| {
+                (
+                    c.network.detect_address_changes,
+                    c.network.max_connections_per_ip6_prefix_size as usize,
+                    c.network.privacy.require_inbound_relay,
+                )
+            });
         let config = AddressCheckConfig {
             detect_address_changes,
             ip6_prefix_size,
+            require_inbound_relay,
         };
 
         Self {
@@ -202,6 +206,11 @@ impl AddressCheck {
             return;
         }
 
+        // Configured to only use relays for inbound connections. Thus, skip address detection.
+        if self.config.require_inbound_relay {
+            return;
+        }
+
         // Process the state of the address checker and see if we need to
         // perform a full address check for this routing domain
         let needs_address_detection = match peer_info.signed_node_info().node_info().network_class()
@@ -225,7 +234,7 @@ impl AddressCheck {
         };
 
         if needs_address_detection {
-            if self.config.detect_address_changes {
+            if self.config.detect_address_changes && !self.config.require_inbound_relay {
                 // Reset the address check cache now so we can start detecting fresh
                 veilid_log!(self info
                     "{:?} address has changed, detecting dial info",
