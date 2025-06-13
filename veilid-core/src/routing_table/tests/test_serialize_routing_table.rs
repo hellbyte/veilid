@@ -1,5 +1,5 @@
 use super::*;
-use crate::{routing_table::*, RegisteredComponents};
+use crate::{routing_table::*, RegisteredComponents, VALID_CRYPTO_KINDS};
 
 fn make_mock_typed_node_id(kind: CryptoKind, idx: u8) -> TypedNodeId {
     TypedNodeId::new(
@@ -11,10 +11,12 @@ fn make_mock_typed_node_id(kind: CryptoKind, idx: u8) -> TypedNodeId {
     )
 }
 
-fn make_mock_typed_node_id_group(vld0: bool, unknown: bool) -> TypedNodeIdGroup {
+fn make_mock_typed_node_id_group(valid_kinds: bool, unknown: bool) -> TypedNodeIdGroup {
     let mut tks = TypedNodeIdGroup::new();
-    if vld0 {
-        tks.add(make_mock_typed_node_id(CRYPTO_KIND_VLD0, 0));
+    if valid_kinds {
+        VALID_CRYPTO_KINDS.iter().for_each(|k| {
+            tks.add(make_mock_typed_node_id(*k, 0));
+        });
     }
     if unknown {
         tks.add(make_mock_typed_node_id(CryptoKind([1, 2, 3, 4]), 0));

@@ -1,8 +1,8 @@
 use super::*;
 use argon2::password_hash::Salt;
 use data_encoding::BASE64URL_NOPAD;
+use digest::rand_core::RngCore;
 use digest::Digest;
-use rand::RngCore;
 const AEAD_OVERHEAD: usize = PUBLIC_KEY_LENGTH;
 pub const CRYPTO_KIND_NONE: CryptoKind = CryptoKind(*b"NONE");
 
@@ -49,11 +49,12 @@ fn is_bytes_eq_32(a: &[u8], v: u8) -> bool {
 }
 
 /// None CryptoSystem
-pub struct CryptoSystemNONE {
+pub(crate) struct CryptoSystemNONE {
     registry: VeilidComponentRegistry,
 }
 
 impl CryptoSystemNONE {
+    #[must_use]
     pub(crate) fn new(registry: VeilidComponentRegistry) -> Self {
         Self { registry }
     }
@@ -66,7 +67,7 @@ impl CryptoSystem for CryptoSystemNONE {
     }
 
     fn crypto(&self) -> VeilidComponentGuard<'_, Crypto> {
-        self.registry().lookup::<Crypto>().unwrap()
+        self.registry.lookup::<Crypto>().unwrap()
     }
 
     // Cached Operations
@@ -115,12 +116,12 @@ impl CryptoSystem for CryptoSystemNONE {
 
     fn random_nonce(&self) -> Nonce {
         let mut nonce = [0u8; NONCE_LENGTH];
-        random_bytes(&mut nonce).unwrap();
+        random_bytes(&mut nonce);
         Nonce::new(nonce)
     }
     fn random_shared_secret(&self) -> SharedSecret {
         let mut s = [0u8; SHARED_SECRET_LENGTH];
-        random_bytes(&mut s).unwrap();
+        random_bytes(&mut s);
         SharedSecret::new(s)
     }
     fn compute_dh(&self, key: &PublicKey, secret: &SecretKey) -> VeilidAPIResult<SharedSecret> {
@@ -130,8 +131,8 @@ impl CryptoSystem for CryptoSystemNONE {
     fn generate_keypair(&self) -> KeyPair {
         none_generate_keypair()
     }
-    fn generate_hash(&self, data: &[u8]) -> PublicKey {
-        PublicKey::new(*blake3::hash(data).as_bytes())
+    fn generate_hash(&self, data: &[u8]) -> HashDigest {
+        HashDigest::new(*blake3::hash(data).as_bytes())
     }
     fn generate_hash_reader(&self, reader: &mut dyn std::io::Read) -> VeilidAPIResult<PublicKey> {
         let mut hasher = blake3::Hasher::new();
@@ -150,14 +151,14 @@ impl CryptoSystem for CryptoSystemNONE {
         };
         v
     }
-    fn validate_hash(&self, data: &[u8], dht_key: &PublicKey) -> bool {
+    fn validate_hash(&self, data: &[u8], dht_key: &HashDigest) -> bool {
         let bytes = *blake3::hash(data).as_bytes();
         bytes == dht_key.bytes
     }
     fn validate_hash_reader(
         &self,
         reader: &mut dyn std::io::Read,
-        dht_key: &PublicKey,
+        dht_key: &HashDigest,
     ) -> VeilidAPIResult<bool> {
         let mut hasher = blake3::Hasher::new();
         std::io::copy(reader, &mut hasher).map_err(VeilidAPIError::generic)?;
@@ -165,8 +166,8 @@ impl CryptoSystem for CryptoSystemNONE {
         Ok(bytes == dht_key.bytes)
     }
     // Distance Metric
-    fn distance(&self, key1: &PublicKey, key2: &PublicKey) -> HashDistance {
-        let mut bytes = [0u8; PUBLIC_KEY_LENGTH];
+    fn distance(&self, key1: &HashDigest, key2: &HashDigest) -> HashDistance {
+        let mut bytes = [0u8; HASH_DIGEST_LENGTH];
 
         for (n, byte) in bytes.iter_mut().enumerate() {
             *byte = key1.bytes[n] ^ key2.bytes[n];
@@ -197,6 +198,7 @@ impl CryptoSystem for CryptoSystemNONE {
         sig_bytes[0..32].copy_from_slice(&in_sig_bytes[0..32]);
         sig_bytes[32..64].copy_from_slice(&do_xor_32(&in_sig_bytes[32..64], &dht_key_secret.bytes));
         let dht_sig = Signature::new(sig_bytes.into());
+        println!("DEBUG dht_sig: {:?}", dht_sig);
         Ok(dht_sig)
     }
     fn verify(

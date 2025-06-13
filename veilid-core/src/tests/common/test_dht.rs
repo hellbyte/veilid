@@ -1,11 +1,13 @@
 use super::test_veilid_config::*;
 use crate::*;
 
+const TEST_CRYPTO_KIND: CryptoKind = VALID_CRYPTO_KINDS[0];
+
 use lazy_static::*;
 
 lazy_static! {
     static ref BOGUS_KEY: TypedRecordKey = TypedRecordKey::from(CryptoTyped::new(
-        CRYPTO_KIND_VLD0,
+        TEST_CRYPTO_KIND,
         RecordKey::new([0u8; 32])
     ));
 }
@@ -42,7 +44,7 @@ pub async fn test_create_delete_dht_record_simple(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(TEST_CRYPTO_KIND))
         .await
         .unwrap();
 
@@ -55,14 +57,14 @@ pub async fn test_create_dht_record_with_owner(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let crypto = api.crypto().unwrap();
-    let cs = crypto.get(CRYPTO_KIND_VLD0).unwrap();
+    let cs = crypto.get(TEST_CRYPTO_KIND).unwrap();
     let owner_keypair = cs.generate_keypair();
 
     let rec = rc
         .create_dht_record(
             DHTSchema::dflt(1).unwrap(),
             Some(owner_keypair),
-            Some(CRYPTO_KIND_VLD0),
+            Some(TEST_CRYPTO_KIND),
         )
         .await
         .unwrap();
@@ -78,19 +80,19 @@ pub async fn test_get_dht_record_key(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let crypto = api.crypto().unwrap();
-    let cs = crypto.get(CRYPTO_KIND_VLD0).unwrap();
+    let cs = crypto.get(TEST_CRYPTO_KIND).unwrap();
     let owner_keypair = cs.generate_keypair();
     let schema = DHTSchema::dflt(1).unwrap();
 
     // create the record normally
     let rec = rc
-        .create_dht_record(schema.clone(), Some(owner_keypair), Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(schema.clone(), Some(owner_keypair), Some(TEST_CRYPTO_KIND))
         .await
         .unwrap();
 
     // recreate the record key from the metadata alone
     let key = rc
-        .get_dht_record_key(schema.clone(), &owner_keypair.key, Some(CRYPTO_KIND_VLD0))
+        .get_dht_record_key(schema.clone(), &owner_keypair.key, Some(TEST_CRYPTO_KIND))
         .unwrap();
 
     // keys should be the same
@@ -105,7 +107,7 @@ pub async fn test_get_dht_value_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(TEST_CRYPTO_KIND))
         .await
         .unwrap();
     let dht_key = *rec.key();
@@ -120,7 +122,7 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(TEST_CRYPTO_KIND))
         .await
         .unwrap();
     let dht_key = *rec.key();
@@ -168,7 +170,7 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(TEST_CRYPTO_KIND))
         .await
         .unwrap();
     let key = *rec.key();

@@ -64,8 +64,17 @@ pub async fn test_bootstrap_v1() {
     let dial_info_converter = MockDialInfoConverter::default();
 
     let bsrec = make_mock_bootstrap_record(true);
-    let signing_key_pairs = [TypedKeyPair::from_str("VLD0:W7ENB-SUWpPA7usY8ORVQf_si5QmFbD1Uqa89Jg2Uc0:hbdjau5sr3rBNwN68XeWLg3rfXnXLaLqfbbqhELqV1E").expect("should parse keypair"),
-        TypedKeyPair::from_str("VLD0:v6XPfyOoCP_ZP-CWFNrf_pF_dpxsq74p2LW_Q5Q4yPQ:n-DhHtOU7KWQkdp5to8cpBa_u0RFt2IDZzXPqMTq4O0").expect("should parse keypair")];
+    let signing_key_pairs = [
+        #[cfg(feature = "enable-crypto-vld0")]
+        TypedKeyPair::from_str("VLD0:W7ENB-SUWpPA7usY8ORVQf_si5QmFbD1Uqa89Jg2Uc0:hbdjau5sr3rBNwN68XeWLg3rfXnXLaLqfbbqhELqV1E").expect("should parse keypair"),
+        #[cfg(feature = "enable-crypto-vld0")]
+        TypedKeyPair::from_str("VLD0:v6XPfyOoCP_ZP-CWFNrf_pF_dpxsq74p2LW_Q5Q4yPQ:n-DhHtOU7KWQkdp5to8cpBa_u0RFt2IDZzXPqMTq4O0").expect("should parse keypair"),
+        #[cfg(feature = "enable-crypto-none")]
+        TypedKeyPair::from_str("NONE:xMzvYmY1C0B-pUrB9V1pnUf6A1hSqNTOju39UaFxQoU:OzMQnZnK9L-BWrU-CqKWYrgF_KetVysxcRICrl6OvXo").expect("should parse keypair"),
+        #[cfg(feature = "enable-crypto-none")]
+        TypedKeyPair::from_str("NONE:xuYisL8R7-qoUQiJtHVpvemzd1x3mH246cMJSkMp6BQ:ORndT0DuEBVXrvd2S4qWQhZMiKOIZ4JHFjz2tbzWF-s").expect("should parse keypair"),
+    ];
+    println!("signing_key_pairs: {:?}", signing_key_pairs);
     let signing_keys = signing_key_pairs
         .iter()
         .map(|skp| TypedPublicKey::new(skp.kind, skp.value.key))
