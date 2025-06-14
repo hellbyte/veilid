@@ -134,11 +134,19 @@ impl ApiTracingLayer {
                 .unwrap_or_default(),
         };
 
-        let message = format!("{} {}", origin, message).trim().to_owned();
+        // Dart can't handle the Unicode Replacement Character
+        // and it causes crashes on multiple Flutter applications
+        // see: https://gitlab.com/veilid/veilid/-/issues/473
+        // We sanitize the logs here because it is generally a good idea to
+        // ensure only valid UTF8 strings are returned to applications
+
+        let message = format!("{} {}", origin, message)
+            .trim()
+            .replace(char::REPLACEMENT_CHARACTER, "");
 
         let backtrace = if log_level <= VeilidLogLevel::Error {
             let bt = backtrace::Backtrace::new();
-            Some(format!("{:?}", bt))
+            Some(format!("{:?}", bt).replace(char::REPLACEMENT_CHARACTER, ""))
         } else {
             None
         };

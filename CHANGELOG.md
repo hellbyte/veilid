@@ -12,6 +12,7 @@
   - Fix crash when peer info has missing or unsupported node ids
   - Add 'auto' mode for detect_address_changes
   - Improved `TypedXXX` conversion traits, including to and from `Vec<u8>`
+  - Ensure utf8 replacement characters are never emitted in logs
 
 - veilid-server:
   - Use `detect_address_changes: auto` by default
