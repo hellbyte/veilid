@@ -1,6 +1,7 @@
 mod dht_record_descriptor;
 mod dht_record_report;
 mod schema;
+mod set_dht_value_options;
 mod value_data;
 mod value_subkey_range_set;
 
@@ -9,6 +10,7 @@ use super::*;
 pub use dht_record_descriptor::*;
 pub use dht_record_report::*;
 pub use schema::*;
+pub use set_dht_value_options::*;
 pub use value_data::*;
 pub use value_subkey_range_set::*;
 

@@ -273,6 +273,25 @@ enum DHTReportScope {
   String toJson() => name.toPascalCase();
 }
 
+/// SetDHTValueOptions
+
+@freezed
+sealed class SetDHTValueOptions with _$SetDHTValueOptions {
+  const factory SetDHTValueOptions({
+    KeyPair? writer,
+    bool? allowOffline,
+  }) = _SetDHTValueOptions;
+
+  factory SetDHTValueOptions.fromJson(dynamic json) =>
+      _$SetDHTValueOptionsFromJson(json as Map<String, dynamic>);
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'writer': writer,
+        'allow_offline': allowOffline,
+      };
+}
+
 //////////////////////////////////////
 /// VeilidRoutingContext
 
@@ -300,7 +319,7 @@ abstract class VeilidRoutingContext {
   Future<ValueData?> getDHTValue(TypedKey key, int subkey,
       {bool forceRefresh = false});
   Future<ValueData?> setDHTValue(TypedKey key, int subkey, Uint8List data,
-      {KeyPair? writer});
+      {SetDHTValueOptions? options});
   Future<bool> watchDHTValues(TypedKey key,
       {List<ValueSubkeyRange>? subkeys, Timestamp? expiration, int? count});
   Future<bool> cancelDHTWatch(TypedKey key, {List<ValueSubkeyRange>? subkeys});

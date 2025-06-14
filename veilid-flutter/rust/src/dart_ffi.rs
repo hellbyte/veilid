@@ -793,14 +793,14 @@ pub extern "C" fn routing_context_set_dht_value(
     key: FfiStr,
     subkey: u32,
     data: FfiStr,
-    writer: FfiStr,
+    options: FfiStr,
 ) {
     let key: veilid_core::TypedRecordKey =
         veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
-    let writer: Option<veilid_core::KeyPair> = writer
+    let options: Option<veilid_core::SetDHTValueOptions> = options
         .into_opt_string()
         .map(|s| veilid_core::deserialize_json(&s).unwrap());
 
@@ -809,7 +809,7 @@ pub extern "C" fn routing_context_set_dht_value(
             let routing_context = get_routing_context(id, "routing_context_set_dht_value")?;
 
             let res = routing_context
-                .set_dht_value(key, subkey, data, writer)
+                .set_dht_value(key, subkey, data, options)
                 .await?;
             APIResult::Ok(res)
         }

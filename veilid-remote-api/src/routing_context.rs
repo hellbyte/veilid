@@ -72,8 +72,7 @@ pub enum RoutingContextRequestOp {
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
         data: Vec<u8>,
-        #[schemars(with = "Option<String>")]
-        writer: Option<KeyPair>,
+        options: Option<SetDHTValueOptions>,
     },
     WatchDhtValues {
         #[schemars(with = "String")]

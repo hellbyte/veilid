@@ -145,11 +145,11 @@ impl StorageManager {
                         };
 
                         // Validate with schema
-                        if !schema.check_subkey_value_data(
+                        if schema.check_subkey_value_data(
                             descriptor.owner(),
                             subkey,
                             value.value_data(),
-                        ) {
+                        ).is_err() {
                             // Validation failed, ignore this value
                             // Move to the next node
                             return Ok(FanoutCallOutput{peer_info_list: vec![], disposition: FanoutCallDisposition::Invalid});

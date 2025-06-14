@@ -1669,7 +1669,15 @@ impl VeilidAPI {
 
         // Do a record set
         let value = match rc
-            .set_dht_value(key, subkey as ValueSubkey, data, writer)
+            .set_dht_value(
+                key,
+                subkey as ValueSubkey,
+                data,
+                Some(SetDHTValueOptions {
+                    writer,
+                    allow_offline: None,
+                }),
+            )
             .await
         {
             Err(e) => {

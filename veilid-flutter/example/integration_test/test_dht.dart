@@ -244,7 +244,8 @@ Future<void> testOpenWriterDHTValue() async {
     // Should have prior sequence number as its returned value because it
     // exists online at seq 0
     vdtemp = await rc.setDHTValue(key, 0, va,
-        writer: KeyPair(key: owner, secret: secret));
+        options:
+            SetDHTValueOptions(writer: KeyPair(key: owner, secret: secret)));
     expect(vdtemp, isNotNull);
     expect(vdtemp!.data, equals(vb));
     expect(vdtemp.seq, equals(0));
@@ -252,7 +253,8 @@ Future<void> testOpenWriterDHTValue() async {
 
     // Should update the second time to seq 1
     vdtemp = await rc.setDHTValue(key, 0, va,
-        writer: KeyPair(key: owner, secret: secret));
+        options:
+            SetDHTValueOptions(writer: KeyPair(key: owner, secret: secret)));
     expect(vdtemp, isNull);
 
     // Clean up

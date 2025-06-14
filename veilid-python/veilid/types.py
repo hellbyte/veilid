@@ -431,6 +431,27 @@ class DHTRecordReport:
         return self.__dict__
 
 
+class SetDHTValueOptions:
+    writer: Optional[KeyPair]
+    allow_offline: Optional[bool]
+
+    def __init__(self, writer: Optional[KeyPair], allow_offline: Optional[bool] = None):
+        self.writer = writer
+        self.allow_offline = allow_offline
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(writer={self.writer!r}, allow_offline={self.allow_offline!r})>"
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        return cls(
+            KeyPair(j["writer"]) if "writer" in j else None,
+            j["allow_offline"] if "allow_offline" in j else None,
+        )
+    
+    def to_json(self) -> dict:
+        return self.__dict__
+
 @total_ordering
 class ValueData:
     seq: ValueSeqNum

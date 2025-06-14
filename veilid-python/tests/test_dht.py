@@ -238,14 +238,14 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
 
         # Verify subkey 0 can be set because override with the right writer
         # Should have prior sequence number as its returned value because it exists online at seq 0
-        vdtemp = await rc.set_dht_value(key, ValueSubkey(0), va, veilid.KeyPair.from_parts(owner, secret))
+        vdtemp = await rc.set_dht_value(key, ValueSubkey(0), va, veilid.SetDHTValueOptions(veilid.KeyPair.from_parts(owner, secret)))
         assert vdtemp is not None
         assert vdtemp.data == vb
         assert vdtemp.seq == 0
         assert vdtemp.writer == owner
 
         # Should update the second time to seq 1
-        vdtemp = await rc.set_dht_value(key, ValueSubkey(0), va, veilid.KeyPair.from_parts(owner, secret))
+        vdtemp = await rc.set_dht_value(key, ValueSubkey(0), va, veilid.SetDHTValueOptions(veilid.KeyPair.from_parts(owner, secret)))
         assert vdtemp is None
 
         # Clean up

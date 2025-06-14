@@ -461,6 +461,16 @@
             "key": {
               "type": "string"
             },
+            "options": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SetDHTValueOptions"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "rc_op": {
               "type": "string",
               "enum": [
@@ -471,12 +481,6 @@
               "type": "integer",
               "format": "uint32",
               "minimum": 0.0
-            },
-            "writer": {
-              "type": [
-                "string",
-                "null"
-              ]
             }
           }
         },
@@ -1656,6 +1660,9 @@
     }
   },
   "definitions": {
+    "AllowOffline": {
+      "type": "boolean"
+    },
     "DHTReportScope": {
       "description": "DHT Record Report Scope",
       "oneOf": [
@@ -1851,6 +1858,28 @@
         "PreferOrdered",
         "EnsureOrdered"
       ]
+    },
+    "SetDHTValueOptions": {
+      "type": "object",
+      "properties": {
+        "allow_offline": {
+          "description": "Defaults to true. If false, the value will not be written if the node is offline, and a TryAgain error will be returned.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AllowOffline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "writer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "Stability": {
       "type": "string",

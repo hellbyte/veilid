@@ -128,3 +128,15 @@ Map<String, dynamic> _$DHTRecordReportToJson(_DHTRecordReport instance) =>
       'local_seqs': instance.localSeqs,
       'network_seqs': instance.networkSeqs,
     };
+
+_SetDHTValueOptions _$SetDHTValueOptionsFromJson(Map<String, dynamic> json) =>
+    _SetDHTValueOptions(
+      writer: json['writer'] == null ? null : KeyPair.fromJson(json['writer']),
+      allowOffline: json['allow_offline'] as bool?,
+    );
+
+Map<String, dynamic> _$SetDHTValueOptionsToJson(_SetDHTValueOptions instance) =>
+    <String, dynamic>{
+      'writer': instance.writer?.toJson(),
+      'allow_offline': instance.allowOffline,
+    };

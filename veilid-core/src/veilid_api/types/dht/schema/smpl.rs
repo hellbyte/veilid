@@ -107,13 +107,12 @@ impl DHTSchemaSMPL {
     }
 
     /// Check a subkey value data against the schema
-    #[must_use]
     pub fn check_subkey_value_data(
         &self,
         owner: &PublicKey,
         subkey: ValueSubkey,
         value_data: &ValueData,
-    ) -> bool {
+    ) -> VeilidAPIResult<()> {
         let mut cur_subkey = subkey as usize;
 
         let max_value_len = usize::min(
@@ -127,14 +126,22 @@ impl DHTSchemaSMPL {
             if value_data.writer() == owner {
                 // Ensure value size is within additional limit
                 if value_data.data_size() <= max_value_len {
-                    return true;
+                    return Ok(());
                 }
 
                 // Value too big
-                return false;
+                apibail_invalid_argument!(
+                    "value too big",
+                    "data",
+                    format!("{:?}", value_data.data())
+                );
             }
             // Wrong writer
-            return false;
+            apibail_invalid_argument!(
+                "wrong writer",
+                "writer",
+                format!("{:?}", value_data.writer())
+            );
         }
         cur_subkey -= self.o_cnt as usize;
 
@@ -146,20 +153,28 @@ impl DHTSchemaSMPL {
                 if value_data.writer() == &m.m_key {
                     // Ensure value size is in allowed range
                     if value_data.data_size() <= max_value_len {
-                        return true;
+                        return Ok(());
                     }
 
                     // Value too big
-                    return false;
+                    apibail_invalid_argument!(
+                        "value too big",
+                        "data",
+                        format!("{:?}", value_data.data())
+                    );
                 }
                 // Wrong writer
-                return false;
+                apibail_invalid_argument!(
+                    "wrong writer",
+                    "writer",
+                    format!("{:?}", value_data.writer())
+                );
             }
             cur_subkey -= m.m_cnt as usize;
         }
 
         // Subkey out of range
-        false
+        apibail_invalid_argument!("subkey out of range", "subkey", subkey);
     }
 
     /// Check if a key is a schema member

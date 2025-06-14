@@ -1,5 +1,11 @@
 **UNRELEASED**
 
+- _BREAKING API CHANGES_:
+  - set_dht_value now accepts a new flag called `allow_offline`, which defaults to `true`.
+    - The previous `writer: Option<KeyPair>` argument position is now `options: Option<SetDHTValueOptions>`
+    - This will only be a breaking change for anyone utilizing the previous `writer` argument.
+    - `writer` is now a member of `SetDHTValueOptions`, alongside the new `allow_offline` property.
+
 - veilid-core:
   - Add private route example
   - Add `require_inbound_relay` option in VeilidConfig. Default is false, but if enabled, forces OutboundOnly/InboundRelay mode. Can be used as an extra layer of IP address obscurity for some threat models. (@neequ57)

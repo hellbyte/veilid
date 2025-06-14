@@ -64,13 +64,12 @@ impl DHTSchema {
     }
 
     /// Check a subkey value data against the schema
-    #[must_use]
     pub fn check_subkey_value_data(
         &self,
         owner: &PublicKey,
         subkey: ValueSubkey,
         value_data: &ValueData,
-    ) -> bool {
+    ) -> VeilidAPIResult<()> {
         match self {
             DHTSchema::DFLT(d) => d.check_subkey_value_data(owner, subkey, value_data),
             DHTSchema::SMPL(s) => s.check_subkey_value_data(owner, subkey, value_data),

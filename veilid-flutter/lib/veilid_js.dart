@@ -193,7 +193,7 @@ class VeilidRoutingContextJS extends VeilidRoutingContext {
 
   @override
   Future<ValueData?> setDHTValue(TypedKey key, int subkey, Uint8List data,
-      {KeyPair? writer}) async {
+      {SetDHTValueOptions? options}) async {
     final id = _ctx.requireId();
     final opt = await _wrapApiPromise<String?>(
         js_util.callMethod(wasm, 'routing_context_set_dht_value', [
@@ -201,7 +201,7 @@ class VeilidRoutingContextJS extends VeilidRoutingContext {
       jsonEncode(key),
       subkey,
       base64UrlNoPadEncode(data),
-      if (writer != null) jsonEncode(writer) else null
+      if (options != null) jsonEncode(options) else null
     ]));
     if (opt == null) {
       return null;

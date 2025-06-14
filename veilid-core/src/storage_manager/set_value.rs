@@ -142,11 +142,11 @@ impl StorageManager {
                         veilid_log!(registry debug "SetValue got value back: len={} seq={}", value.value_data().data().len(), value.value_data().seq());
 
                         // Validate with schema
-                        if !ctx.schema.check_subkey_value_data(
+                        if ctx.schema.check_subkey_value_data(
                             descriptor.owner(),
                             subkey,
                             value.value_data(),
-                        ) {
+                        ).is_err() {
                             // Validation failed, ignore this value and pretend we never saw this node
                             return Ok(FanoutCallOutput{peer_info_list: vec![], disposition: FanoutCallDisposition::Invalid});
                         }
@@ -474,7 +474,10 @@ impl StorageManager {
         };
 
         // Validate new value with schema
-        if !schema.check_subkey_value_data(actual_descriptor.owner(), subkey, value.value_data()) {
+        if schema
+            .check_subkey_value_data(actual_descriptor.owner(), subkey, value.value_data())
+            .is_err()
+        {
             // Validation failed, ignore this value
             return Ok(NetworkResult::invalid_message("failed schema validation"));
         }

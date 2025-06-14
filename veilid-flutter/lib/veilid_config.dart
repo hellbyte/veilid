@@ -267,6 +267,18 @@ sealed class VeilidConfigProtocol with _$VeilidConfigProtocol {
 ////////////
 
 @freezed
+sealed class VeilidConfigPrivacy with _$VeilidConfigPrivacy {
+  const factory VeilidConfigPrivacy({
+    required bool requireInboundRelay,
+  }) = _VeilidConfigPrivacy;
+
+  factory VeilidConfigPrivacy.fromJson(dynamic json) =>
+      _$VeilidConfigPrivacyFromJson(json as Map<String, dynamic>);
+}
+
+////////////
+
+@freezed
 sealed class VeilidConfigTLS with _$VeilidConfigTLS {
   const factory VeilidConfigTLS({
     required String certificatePath,
@@ -370,6 +382,7 @@ sealed class VeilidConfigNetwork with _$VeilidConfigNetwork {
     required VeilidConfigTLS tls,
     required VeilidConfigApplication application,
     required VeilidConfigProtocol protocol,
+    required VeilidConfigPrivacy privacy,
     String? networkKeyPassword,
   }) = _VeilidConfigNetwork;
 

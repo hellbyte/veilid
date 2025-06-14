@@ -1179,11 +1179,10 @@ impl StorageManager {
                 let schema = descriptor.schema()?;
 
                 // Validate with schema
-                if !schema.check_subkey_value_data(
-                    descriptor.owner(),
-                    first_subkey,
-                    value.value_data(),
-                ) {
+                if schema
+                    .check_subkey_value_data(descriptor.owner(), first_subkey, value.value_data())
+                    .is_err()
+                {
                     // Validation failed, ignore this value
                     // Move to the next node
                     return Ok(NetworkResult::invalid_message(format!(

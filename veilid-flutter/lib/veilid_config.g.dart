@@ -314,6 +314,17 @@ Map<String, dynamic> _$VeilidConfigProtocolToJson(
       'wss': instance.wss.toJson(),
     };
 
+_VeilidConfigPrivacy _$VeilidConfigPrivacyFromJson(Map<String, dynamic> json) =>
+    _VeilidConfigPrivacy(
+      requireInboundRelay: json['require_inbound_relay'] as bool,
+    );
+
+Map<String, dynamic> _$VeilidConfigPrivacyToJson(
+        _VeilidConfigPrivacy instance) =>
+    <String, dynamic>{
+      'require_inbound_relay': instance.requireInboundRelay,
+    };
+
 _VeilidConfigTLS _$VeilidConfigTLSFromJson(Map<String, dynamic> json) =>
     _VeilidConfigTLS(
       certificatePath: json['certificate_path'] as String,
@@ -472,6 +483,7 @@ _VeilidConfigNetwork _$VeilidConfigNetworkFromJson(Map<String, dynamic> json) =>
       tls: VeilidConfigTLS.fromJson(json['tls']),
       application: VeilidConfigApplication.fromJson(json['application']),
       protocol: VeilidConfigProtocol.fromJson(json['protocol']),
+      privacy: VeilidConfigPrivacy.fromJson(json['privacy']),
       networkKeyPassword: json['network_key_password'] as String?,
     );
 
@@ -499,6 +511,7 @@ Map<String, dynamic> _$VeilidConfigNetworkToJson(
       'tls': instance.tls.toJson(),
       'application': instance.application.toJson(),
       'protocol': instance.protocol.toJson(),
+      'privacy': instance.privacy.toJson(),
       'network_key_password': instance.networkKeyPassword,
     };
 

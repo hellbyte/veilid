@@ -696,17 +696,17 @@ class VeilidRoutingContextFFI extends VeilidRoutingContext {
 
   @override
   Future<ValueData?> setDHTValue(TypedKey key, int subkey, Uint8List data,
-      {KeyPair? writer}) async {
+      {SetDHTValueOptions? options}) async {
     _ctx.ensureValid();
     final nativeKey = jsonEncode(key).toNativeUtf8();
     final nativeData = base64UrlNoPadEncode(data).toNativeUtf8();
-    final nativeWriter =
-        writer != null ? jsonEncode(writer).toNativeUtf8() : nullptr;
+    final nativeOptions =
+        options != null ? jsonEncode(options).toNativeUtf8() : nullptr;
 
     final recvPort = ReceivePort('routing_context_set_dht_value');
     final sendPort = recvPort.sendPort;
     _ctx.ffi._routingContextSetDHTValue(sendPort.nativePort, _ctx.id!,
-        nativeKey, subkey, nativeData, nativeWriter);
+        nativeKey, subkey, nativeData, nativeOptions);
     final valueData =
         await processFutureOptJson(ValueData.fromJson, recvPort.first);
     return valueData;

@@ -435,15 +435,15 @@ impl RoutingContext {
         key: TypedRecordKey,
         subkey: ValueSubkey,
         data: Vec<u8>,
-        writer: Option<KeyPair>,
+        options: Option<SetDHTValueOptions>,
     ) -> VeilidAPIResult<Option<ValueData>> {
         veilid_log!(self debug
-            "RoutingContext::set_dht_value(self: {:?}, key: {:?}, subkey: {:?}, data: len={}, writer: {:?})", self, key, subkey, data.len(), writer);
+            "RoutingContext::set_dht_value(self: {:?}, key: {:?}, subkey: {:?}, data: len={}, options: {:?})", self, key, subkey, data.len(), options);
 
         Crypto::validate_crypto_kind(key.kind)?;
 
         let storage_manager = self.api.core_context()?.storage_manager();
-        Box::pin(storage_manager.set_value(key, subkey, data, writer)).await
+        Box::pin(storage_manager.set_value(key, subkey, data, options)).await
     }
 
     /// Add or update a watch to a DHT value that informs the user via an VeilidUpdate::ValueChange callback when the record has subkeys change.

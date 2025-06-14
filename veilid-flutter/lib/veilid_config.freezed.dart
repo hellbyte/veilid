@@ -4297,6 +4297,169 @@ class __$VeilidConfigProtocolCopyWithImpl<$Res>
 }
 
 /// @nodoc
+mixin _$VeilidConfigPrivacy implements DiagnosticableTreeMixin {
+  bool get requireInboundRelay;
+
+  /// Create a copy of VeilidConfigPrivacy
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $VeilidConfigPrivacyCopyWith<VeilidConfigPrivacy> get copyWith =>
+      _$VeilidConfigPrivacyCopyWithImpl<VeilidConfigPrivacy>(
+          this as VeilidConfigPrivacy, _$identity);
+
+  /// Serializes this VeilidConfigPrivacy to a JSON map.
+  Map<String, dynamic> toJson();
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    properties
+      ..add(DiagnosticsProperty('type', 'VeilidConfigPrivacy'))
+      ..add(DiagnosticsProperty('requireInboundRelay', requireInboundRelay));
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is VeilidConfigPrivacy &&
+            (identical(other.requireInboundRelay, requireInboundRelay) ||
+                other.requireInboundRelay == requireInboundRelay));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode => Object.hash(runtimeType, requireInboundRelay);
+
+  @override
+  String toString({DiagnosticLevel minLevel = DiagnosticLevel.info}) {
+    return 'VeilidConfigPrivacy(requireInboundRelay: $requireInboundRelay)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $VeilidConfigPrivacyCopyWith<$Res> {
+  factory $VeilidConfigPrivacyCopyWith(
+          VeilidConfigPrivacy value, $Res Function(VeilidConfigPrivacy) _then) =
+      _$VeilidConfigPrivacyCopyWithImpl;
+  @useResult
+  $Res call({bool requireInboundRelay});
+}
+
+/// @nodoc
+class _$VeilidConfigPrivacyCopyWithImpl<$Res>
+    implements $VeilidConfigPrivacyCopyWith<$Res> {
+  _$VeilidConfigPrivacyCopyWithImpl(this._self, this._then);
+
+  final VeilidConfigPrivacy _self;
+  final $Res Function(VeilidConfigPrivacy) _then;
+
+  /// Create a copy of VeilidConfigPrivacy
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? requireInboundRelay = null,
+  }) {
+    return _then(_self.copyWith(
+      requireInboundRelay: null == requireInboundRelay
+          ? _self.requireInboundRelay
+          : requireInboundRelay // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+@JsonSerializable()
+class _VeilidConfigPrivacy
+    with DiagnosticableTreeMixin
+    implements VeilidConfigPrivacy {
+  const _VeilidConfigPrivacy({required this.requireInboundRelay});
+  factory _VeilidConfigPrivacy.fromJson(Map<String, dynamic> json) =>
+      _$VeilidConfigPrivacyFromJson(json);
+
+  @override
+  final bool requireInboundRelay;
+
+  /// Create a copy of VeilidConfigPrivacy
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  _$VeilidConfigPrivacyCopyWith<_VeilidConfigPrivacy> get copyWith =>
+      __$VeilidConfigPrivacyCopyWithImpl<_VeilidConfigPrivacy>(
+          this, _$identity);
+
+  @override
+  Map<String, dynamic> toJson() {
+    return _$VeilidConfigPrivacyToJson(
+      this,
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    properties
+      ..add(DiagnosticsProperty('type', 'VeilidConfigPrivacy'))
+      ..add(DiagnosticsProperty('requireInboundRelay', requireInboundRelay));
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _VeilidConfigPrivacy &&
+            (identical(other.requireInboundRelay, requireInboundRelay) ||
+                other.requireInboundRelay == requireInboundRelay));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode => Object.hash(runtimeType, requireInboundRelay);
+
+  @override
+  String toString({DiagnosticLevel minLevel = DiagnosticLevel.info}) {
+    return 'VeilidConfigPrivacy(requireInboundRelay: $requireInboundRelay)';
+  }
+}
+
+/// @nodoc
+abstract mixin class _$VeilidConfigPrivacyCopyWith<$Res>
+    implements $VeilidConfigPrivacyCopyWith<$Res> {
+  factory _$VeilidConfigPrivacyCopyWith(_VeilidConfigPrivacy value,
+          $Res Function(_VeilidConfigPrivacy) _then) =
+      __$VeilidConfigPrivacyCopyWithImpl;
+  @override
+  @useResult
+  $Res call({bool requireInboundRelay});
+}
+
+/// @nodoc
+class __$VeilidConfigPrivacyCopyWithImpl<$Res>
+    implements _$VeilidConfigPrivacyCopyWith<$Res> {
+  __$VeilidConfigPrivacyCopyWithImpl(this._self, this._then);
+
+  final _VeilidConfigPrivacy _self;
+  final $Res Function(_VeilidConfigPrivacy) _then;
+
+  /// Create a copy of VeilidConfigPrivacy
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? requireInboundRelay = null,
+  }) {
+    return _then(_VeilidConfigPrivacy(
+      requireInboundRelay: null == requireInboundRelay
+          ? _self.requireInboundRelay
+          : requireInboundRelay // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
 mixin _$VeilidConfigTLS implements DiagnosticableTreeMixin {
   String get certificatePath;
   String get privateKeyPath;
@@ -5922,6 +6085,7 @@ mixin _$VeilidConfigNetwork implements DiagnosticableTreeMixin {
   VeilidConfigTLS get tls;
   VeilidConfigApplication get application;
   VeilidConfigProtocol get protocol;
+  VeilidConfigPrivacy get privacy;
   String? get networkKeyPassword;
 
   /// Create a copy of VeilidConfigNetwork
@@ -5965,6 +6129,7 @@ mixin _$VeilidConfigNetwork implements DiagnosticableTreeMixin {
       ..add(DiagnosticsProperty('tls', tls))
       ..add(DiagnosticsProperty('application', application))
       ..add(DiagnosticsProperty('protocol', protocol))
+      ..add(DiagnosticsProperty('privacy', privacy))
       ..add(DiagnosticsProperty('networkKeyPassword', networkKeyPassword));
   }
 
@@ -6012,6 +6177,7 @@ mixin _$VeilidConfigNetwork implements DiagnosticableTreeMixin {
                 other.application == application) &&
             (identical(other.protocol, protocol) ||
                 other.protocol == protocol) &&
+            (identical(other.privacy, privacy) || other.privacy == privacy) &&
             (identical(other.networkKeyPassword, networkKeyPassword) ||
                 other.networkKeyPassword == networkKeyPassword));
   }
@@ -6038,12 +6204,13 @@ mixin _$VeilidConfigNetwork implements DiagnosticableTreeMixin {
         tls,
         application,
         protocol,
+        privacy,
         networkKeyPassword
       ]);
 
   @override
   String toString({DiagnosticLevel minLevel = DiagnosticLevel.info}) {
-    return 'VeilidConfigNetwork(connectionInitialTimeoutMs: $connectionInitialTimeoutMs, connectionInactivityTimeoutMs: $connectionInactivityTimeoutMs, maxConnectionsPerIp4: $maxConnectionsPerIp4, maxConnectionsPerIp6Prefix: $maxConnectionsPerIp6Prefix, maxConnectionsPerIp6PrefixSize: $maxConnectionsPerIp6PrefixSize, maxConnectionFrequencyPerMin: $maxConnectionFrequencyPerMin, clientAllowlistTimeoutMs: $clientAllowlistTimeoutMs, reverseConnectionReceiptTimeMs: $reverseConnectionReceiptTimeMs, holePunchReceiptTimeMs: $holePunchReceiptTimeMs, routingTable: $routingTable, rpc: $rpc, dht: $dht, upnp: $upnp, detectAddressChanges: $detectAddressChanges, restrictedNatRetries: $restrictedNatRetries, tls: $tls, application: $application, protocol: $protocol, networkKeyPassword: $networkKeyPassword)';
+    return 'VeilidConfigNetwork(connectionInitialTimeoutMs: $connectionInitialTimeoutMs, connectionInactivityTimeoutMs: $connectionInactivityTimeoutMs, maxConnectionsPerIp4: $maxConnectionsPerIp4, maxConnectionsPerIp6Prefix: $maxConnectionsPerIp6Prefix, maxConnectionsPerIp6PrefixSize: $maxConnectionsPerIp6PrefixSize, maxConnectionFrequencyPerMin: $maxConnectionFrequencyPerMin, clientAllowlistTimeoutMs: $clientAllowlistTimeoutMs, reverseConnectionReceiptTimeMs: $reverseConnectionReceiptTimeMs, holePunchReceiptTimeMs: $holePunchReceiptTimeMs, routingTable: $routingTable, rpc: $rpc, dht: $dht, upnp: $upnp, detectAddressChanges: $detectAddressChanges, restrictedNatRetries: $restrictedNatRetries, tls: $tls, application: $application, protocol: $protocol, privacy: $privacy, networkKeyPassword: $networkKeyPassword)';
   }
 }
 
@@ -6072,6 +6239,7 @@ abstract mixin class $VeilidConfigNetworkCopyWith<$Res> {
       VeilidConfigTLS tls,
       VeilidConfigApplication application,
       VeilidConfigProtocol protocol,
+      VeilidConfigPrivacy privacy,
       String? networkKeyPassword});
 
   $VeilidConfigRoutingTableCopyWith<$Res> get routingTable;
@@ -6080,6 +6248,7 @@ abstract mixin class $VeilidConfigNetworkCopyWith<$Res> {
   $VeilidConfigTLSCopyWith<$Res> get tls;
   $VeilidConfigApplicationCopyWith<$Res> get application;
   $VeilidConfigProtocolCopyWith<$Res> get protocol;
+  $VeilidConfigPrivacyCopyWith<$Res> get privacy;
 }
 
 /// @nodoc
@@ -6113,6 +6282,7 @@ class _$VeilidConfigNetworkCopyWithImpl<$Res>
     Object? tls = null,
     Object? application = null,
     Object? protocol = null,
+    Object? privacy = null,
     Object? networkKeyPassword = freezed,
   }) {
     return _then(_self.copyWith(
@@ -6188,6 +6358,10 @@ class _$VeilidConfigNetworkCopyWithImpl<$Res>
           ? _self.protocol
           : protocol // ignore: cast_nullable_to_non_nullable
               as VeilidConfigProtocol,
+      privacy: null == privacy
+          ? _self.privacy
+          : privacy // ignore: cast_nullable_to_non_nullable
+              as VeilidConfigPrivacy,
       networkKeyPassword: freezed == networkKeyPassword
           ? _self.networkKeyPassword
           : networkKeyPassword // ignore: cast_nullable_to_non_nullable
@@ -6254,6 +6428,16 @@ class _$VeilidConfigNetworkCopyWithImpl<$Res>
       return _then(_self.copyWith(protocol: value));
     });
   }
+
+  /// Create a copy of VeilidConfigNetwork
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $VeilidConfigPrivacyCopyWith<$Res> get privacy {
+    return $VeilidConfigPrivacyCopyWith<$Res>(_self.privacy, (value) {
+      return _then(_self.copyWith(privacy: value));
+    });
+  }
 }
 
 /// @nodoc
@@ -6280,6 +6464,7 @@ class _VeilidConfigNetwork
       required this.tls,
       required this.application,
       required this.protocol,
+      required this.privacy,
       this.networkKeyPassword});
   factory _VeilidConfigNetwork.fromJson(Map<String, dynamic> json) =>
       _$VeilidConfigNetworkFromJson(json);
@@ -6320,6 +6505,8 @@ class _VeilidConfigNetwork
   final VeilidConfigApplication application;
   @override
   final VeilidConfigProtocol protocol;
+  @override
+  final VeilidConfigPrivacy privacy;
   @override
   final String? networkKeyPassword;
 
@@ -6369,6 +6556,7 @@ class _VeilidConfigNetwork
       ..add(DiagnosticsProperty('tls', tls))
       ..add(DiagnosticsProperty('application', application))
       ..add(DiagnosticsProperty('protocol', protocol))
+      ..add(DiagnosticsProperty('privacy', privacy))
       ..add(DiagnosticsProperty('networkKeyPassword', networkKeyPassword));
   }
 
@@ -6416,6 +6604,7 @@ class _VeilidConfigNetwork
                 other.application == application) &&
             (identical(other.protocol, protocol) ||
                 other.protocol == protocol) &&
+            (identical(other.privacy, privacy) || other.privacy == privacy) &&
             (identical(other.networkKeyPassword, networkKeyPassword) ||
                 other.networkKeyPassword == networkKeyPassword));
   }
@@ -6442,12 +6631,13 @@ class _VeilidConfigNetwork
         tls,
         application,
         protocol,
+        privacy,
         networkKeyPassword
       ]);
 
   @override
   String toString({DiagnosticLevel minLevel = DiagnosticLevel.info}) {
-    return 'VeilidConfigNetwork(connectionInitialTimeoutMs: $connectionInitialTimeoutMs, connectionInactivityTimeoutMs: $connectionInactivityTimeoutMs, maxConnectionsPerIp4: $maxConnectionsPerIp4, maxConnectionsPerIp6Prefix: $maxConnectionsPerIp6Prefix, maxConnectionsPerIp6PrefixSize: $maxConnectionsPerIp6PrefixSize, maxConnectionFrequencyPerMin: $maxConnectionFrequencyPerMin, clientAllowlistTimeoutMs: $clientAllowlistTimeoutMs, reverseConnectionReceiptTimeMs: $reverseConnectionReceiptTimeMs, holePunchReceiptTimeMs: $holePunchReceiptTimeMs, routingTable: $routingTable, rpc: $rpc, dht: $dht, upnp: $upnp, detectAddressChanges: $detectAddressChanges, restrictedNatRetries: $restrictedNatRetries, tls: $tls, application: $application, protocol: $protocol, networkKeyPassword: $networkKeyPassword)';
+    return 'VeilidConfigNetwork(connectionInitialTimeoutMs: $connectionInitialTimeoutMs, connectionInactivityTimeoutMs: $connectionInactivityTimeoutMs, maxConnectionsPerIp4: $maxConnectionsPerIp4, maxConnectionsPerIp6Prefix: $maxConnectionsPerIp6Prefix, maxConnectionsPerIp6PrefixSize: $maxConnectionsPerIp6PrefixSize, maxConnectionFrequencyPerMin: $maxConnectionFrequencyPerMin, clientAllowlistTimeoutMs: $clientAllowlistTimeoutMs, reverseConnectionReceiptTimeMs: $reverseConnectionReceiptTimeMs, holePunchReceiptTimeMs: $holePunchReceiptTimeMs, routingTable: $routingTable, rpc: $rpc, dht: $dht, upnp: $upnp, detectAddressChanges: $detectAddressChanges, restrictedNatRetries: $restrictedNatRetries, tls: $tls, application: $application, protocol: $protocol, privacy: $privacy, networkKeyPassword: $networkKeyPassword)';
   }
 }
 
@@ -6478,6 +6668,7 @@ abstract mixin class _$VeilidConfigNetworkCopyWith<$Res>
       VeilidConfigTLS tls,
       VeilidConfigApplication application,
       VeilidConfigProtocol protocol,
+      VeilidConfigPrivacy privacy,
       String? networkKeyPassword});
 
   @override
@@ -6492,6 +6683,8 @@ abstract mixin class _$VeilidConfigNetworkCopyWith<$Res>
   $VeilidConfigApplicationCopyWith<$Res> get application;
   @override
   $VeilidConfigProtocolCopyWith<$Res> get protocol;
+  @override
+  $VeilidConfigPrivacyCopyWith<$Res> get privacy;
 }
 
 /// @nodoc
@@ -6525,6 +6718,7 @@ class __$VeilidConfigNetworkCopyWithImpl<$Res>
     Object? tls = null,
     Object? application = null,
     Object? protocol = null,
+    Object? privacy = null,
     Object? networkKeyPassword = freezed,
   }) {
     return _then(_VeilidConfigNetwork(
@@ -6600,6 +6794,10 @@ class __$VeilidConfigNetworkCopyWithImpl<$Res>
           ? _self.protocol
           : protocol // ignore: cast_nullable_to_non_nullable
               as VeilidConfigProtocol,
+      privacy: null == privacy
+          ? _self.privacy
+          : privacy // ignore: cast_nullable_to_non_nullable
+              as VeilidConfigPrivacy,
       networkKeyPassword: freezed == networkKeyPassword
           ? _self.networkKeyPassword
           : networkKeyPassword // ignore: cast_nullable_to_non_nullable
@@ -6664,6 +6862,16 @@ class __$VeilidConfigNetworkCopyWithImpl<$Res>
   $VeilidConfigProtocolCopyWith<$Res> get protocol {
     return $VeilidConfigProtocolCopyWith<$Res>(_self.protocol, (value) {
       return _then(_self.copyWith(protocol: value));
+    });
+  }
+
+  /// Create a copy of VeilidConfigNetwork
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $VeilidConfigPrivacyCopyWith<$Res> get privacy {
+    return $VeilidConfigPrivacyCopyWith<$Res>(_self.privacy, (value) {
+      return _then(_self.copyWith(privacy: value));
     });
   }
 }

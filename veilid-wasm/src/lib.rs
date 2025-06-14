@@ -593,7 +593,7 @@ pub fn routing_context_set_dht_value(
     key: String,
     subkey: u32,
     data: String,
-    writer: Option<String>,
+    options: Option<String>,
 ) -> Promise {
     wrap_api_future_json(async move {
         let key: veilid_core::TypedRecordKey =
@@ -601,15 +601,16 @@ pub fn routing_context_set_dht_value(
         let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
             .decode(data.as_bytes())
             .map_err(VeilidAPIError::generic)?;
-        let writer: Option<veilid_core::KeyPair> = match writer {
-            Some(s) => veilid_core::deserialize_json(&s).map_err(VeilidAPIError::generic)?,
+
+        let options: Option<veilid_core::SetDHTValueOptions> = match options {
+            Some(s) => Some(veilid_core::deserialize_json(&s).map_err(VeilidAPIError::generic)?),
             None => None,
         };
 
         let routing_context = get_routing_context(id, "routing_context_set_dht_value")?;
 
         let res = routing_context
-            .set_dht_value(key, subkey, data, writer)
+            .set_dht_value(key, subkey, data, options)
             .await?;
         APIResult::Ok(res)
     })

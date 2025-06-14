@@ -225,7 +225,10 @@ describe('VeilidRoutingContext', () => {
           dhtRecord.key,
           0,
           textEncoder.encode(`${data}👋`),
-          `${dhtRecord.owner}:${dhtRecord.owner_secret}`
+          {
+            writer: `${dhtRecord.owner}:${dhtRecord.owner_secret}`,
+            allow_offline: undefined
+          }
         );
         expect(setValueRes).toBeUndefined();
       });

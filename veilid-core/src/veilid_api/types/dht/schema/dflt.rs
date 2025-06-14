@@ -62,13 +62,12 @@ impl DHTSchemaDFLT {
     }
 
     /// Check a subkey value data against the schema
-    #[must_use]
     pub fn check_subkey_value_data(
         &self,
         owner: &PublicKey,
         subkey: ValueSubkey,
         value_data: &ValueData,
-    ) -> bool {
+    ) -> VeilidAPIResult<()> {
         let subkey = subkey as usize;
 
         // Check if subkey is in owner range
@@ -80,19 +79,27 @@ impl DHTSchemaDFLT {
 
                 // Ensure value size is within additional limit
                 if value_data.data_size() <= max_value_len {
-                    return true;
+                    return Ok(());
                 }
 
                 // Value too big
-                return false;
+                apibail_invalid_argument!(
+                    "value too big",
+                    "data",
+                    format!("{:?}", value_data.data())
+                );
             }
 
             // Wrong writer
-            return false;
+            apibail_invalid_argument!(
+                "wrong writer",
+                "writer",
+                format!("{:?}", value_data.writer())
+            );
         }
 
         // Subkey out of range
-        false
+        apibail_invalid_argument!("subkey out of range", "subkey", subkey);
     }
 
     /// Check if a key is a schema member

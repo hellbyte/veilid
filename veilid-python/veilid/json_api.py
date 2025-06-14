@@ -36,6 +36,7 @@ from .types import (
     SafetySelection,
     SecretKey,
     Sequencing,
+    SetDHTValueOptions,
     SharedSecret,
     Signature,
     Stability,
@@ -721,12 +722,12 @@ class _JsonRoutingContext(RoutingContext):
         return None if ret is None else ValueData.from_json(ret)
 
     async def set_dht_value(
-        self, key: TypedKey, subkey: ValueSubkey, data: bytes, writer: Optional[KeyPair] = None
+        self, key: TypedKey, subkey: ValueSubkey, data: bytes, options: Optional[SetDHTValueOptions] = None
     ) -> Optional[ValueData]:
         assert isinstance(key, TypedKey)
         assert isinstance(subkey, ValueSubkey)
         assert isinstance(data, bytes)
-        assert writer is None or isinstance(writer, KeyPair)
+        assert options is None or isinstance(options, SetDHTValueOptions)
 
         ret = raise_api_result(
             await self.api.send_ndjson_request(
@@ -737,7 +738,7 @@ class _JsonRoutingContext(RoutingContext):
                 key=key,
                 subkey=subkey,
                 data=data,
-                writer=writer,
+                options=options,
             )
         )
         return None if ret is None else ValueData.from_json(ret)

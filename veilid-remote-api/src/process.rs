@@ -324,11 +324,11 @@ impl JsonRequestProcessor {
                 key,
                 subkey,
                 data,
-                writer,
+                options,
             } => RoutingContextResponseOp::SetDhtValue {
                 result: to_json_api_result(
                     routing_context
-                        .set_dht_value(key, subkey, data, writer)
+                        .set_dht_value(key, subkey, data, options)
                         .await,
                 ),
             },

@@ -319,12 +319,83 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
 
     // Verify subkey 0 can be set because we have overridden with the correct writer
     let set_dht_test_value_0_result = rc
-        .set_dht_value(key, 0, test_value_1.clone(), Some(keypair))
+        .set_dht_value(
+            key,
+            0,
+            test_value_1.clone(),
+            Some(SetDHTValueOptions {
+                writer: Some(keypair),
+                allow_offline: None,
+            }),
+        )
         .await;
     assert!(set_dht_test_value_0_result.is_ok());
 
     rc.close_dht_record(key).await.unwrap();
     rc.delete_dht_record(key).await.unwrap();
+}
+
+pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
+    let rc = api.routing_context().unwrap();
+
+    // Create a DHT record
+    let rec = rc
+        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .await
+        .unwrap();
+    let dht_key = *rec.key();
+
+    let test_value = String::from("Test offline value").as_bytes().to_vec();
+
+    // Test 1: Default behavior (options = None) should allow offline writes
+    let set_result = rc.set_dht_value(dht_key, 0, test_value.clone(), None).await;
+    assert!(set_result.is_ok());
+
+    // Test 2: Default behavior (allow_offline = None) should allow offline writes
+    let set_result = rc
+        .set_dht_value(
+            dht_key,
+            0,
+            test_value.clone(),
+            Some(SetDHTValueOptions {
+                writer: None,
+                allow_offline: None,
+            }),
+        )
+        .await;
+    assert!(set_result.is_ok());
+
+    // Test 3: Explicitly allow offline writes
+    let set_result = rc
+        .set_dht_value(
+            dht_key,
+            1,
+            test_value.clone(),
+            Some(SetDHTValueOptions {
+                writer: None,
+                allow_offline: Some(AllowOffline(true)),
+            }),
+        )
+        .await;
+    assert!(set_result.is_ok());
+
+    // Test 4: Disallow offline writes
+    let set_result = rc
+        .set_dht_value(
+            dht_key,
+            2,
+            test_value.clone(),
+            Some(SetDHTValueOptions {
+                writer: None,
+                allow_offline: Some(AllowOffline(false)),
+            }),
+        )
+        .await;
+    assert!(set_result.is_err());
+    assert!(set_result.unwrap_err().to_string().contains("offline"));
+
+    rc.close_dht_record(dht_key).await.unwrap();
+    rc.delete_dht_record(dht_key).await.unwrap();
 }
 
 // Network-related code to make sure veilid node is connetected to other peers
@@ -364,6 +435,7 @@ pub async fn test_all() {
     test_create_dht_record_with_owner(api.clone()).await;
     test_set_get_dht_value(api.clone()).await;
     test_open_writer_dht_value(api.clone()).await;
+    test_set_dht_value_allow_offline(api.clone()).await;
 
     api.shutdown().await;
 }

@@ -1453,4 +1453,165 @@ class __$DHTRecordReportCopyWithImpl<$Res>
   }
 }
 
+/// @nodoc
+mixin _$SetDHTValueOptions {
+  KeyPair? get writer;
+  bool? get allowOffline;
+
+  /// Create a copy of SetDHTValueOptions
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $SetDHTValueOptionsCopyWith<SetDHTValueOptions> get copyWith =>
+      _$SetDHTValueOptionsCopyWithImpl<SetDHTValueOptions>(
+          this as SetDHTValueOptions, _$identity);
+
+  /// Serializes this SetDHTValueOptions to a JSON map.
+  Map<String, dynamic> toJson();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is SetDHTValueOptions &&
+            (identical(other.writer, writer) || other.writer == writer) &&
+            (identical(other.allowOffline, allowOffline) ||
+                other.allowOffline == allowOffline));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode => Object.hash(runtimeType, writer, allowOffline);
+
+  @override
+  String toString() {
+    return 'SetDHTValueOptions(writer: $writer, allowOffline: $allowOffline)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $SetDHTValueOptionsCopyWith<$Res> {
+  factory $SetDHTValueOptionsCopyWith(
+          SetDHTValueOptions value, $Res Function(SetDHTValueOptions) _then) =
+      _$SetDHTValueOptionsCopyWithImpl;
+  @useResult
+  $Res call({KeyPair? writer, bool? allowOffline});
+}
+
+/// @nodoc
+class _$SetDHTValueOptionsCopyWithImpl<$Res>
+    implements $SetDHTValueOptionsCopyWith<$Res> {
+  _$SetDHTValueOptionsCopyWithImpl(this._self, this._then);
+
+  final SetDHTValueOptions _self;
+  final $Res Function(SetDHTValueOptions) _then;
+
+  /// Create a copy of SetDHTValueOptions
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? writer = freezed,
+    Object? allowOffline = freezed,
+  }) {
+    return _then(_self.copyWith(
+      writer: freezed == writer
+          ? _self.writer
+          : writer // ignore: cast_nullable_to_non_nullable
+              as KeyPair?,
+      allowOffline: freezed == allowOffline
+          ? _self.allowOffline
+          : allowOffline // ignore: cast_nullable_to_non_nullable
+              as bool?,
+    ));
+  }
+}
+
+/// @nodoc
+@JsonSerializable()
+class _SetDHTValueOptions implements SetDHTValueOptions {
+  const _SetDHTValueOptions({this.writer, this.allowOffline});
+  factory _SetDHTValueOptions.fromJson(Map<String, dynamic> json) =>
+      _$SetDHTValueOptionsFromJson(json);
+
+  @override
+  final KeyPair? writer;
+  @override
+  final bool? allowOffline;
+
+  /// Create a copy of SetDHTValueOptions
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  _$SetDHTValueOptionsCopyWith<_SetDHTValueOptions> get copyWith =>
+      __$SetDHTValueOptionsCopyWithImpl<_SetDHTValueOptions>(this, _$identity);
+
+  @override
+  Map<String, dynamic> toJson() {
+    return _$SetDHTValueOptionsToJson(
+      this,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _SetDHTValueOptions &&
+            (identical(other.writer, writer) || other.writer == writer) &&
+            (identical(other.allowOffline, allowOffline) ||
+                other.allowOffline == allowOffline));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode => Object.hash(runtimeType, writer, allowOffline);
+
+  @override
+  String toString() {
+    return 'SetDHTValueOptions(writer: $writer, allowOffline: $allowOffline)';
+  }
+}
+
+/// @nodoc
+abstract mixin class _$SetDHTValueOptionsCopyWith<$Res>
+    implements $SetDHTValueOptionsCopyWith<$Res> {
+  factory _$SetDHTValueOptionsCopyWith(
+          _SetDHTValueOptions value, $Res Function(_SetDHTValueOptions) _then) =
+      __$SetDHTValueOptionsCopyWithImpl;
+  @override
+  @useResult
+  $Res call({KeyPair? writer, bool? allowOffline});
+}
+
+/// @nodoc
+class __$SetDHTValueOptionsCopyWithImpl<$Res>
+    implements _$SetDHTValueOptionsCopyWith<$Res> {
+  __$SetDHTValueOptionsCopyWithImpl(this._self, this._then);
+
+  final _SetDHTValueOptions _self;
+  final $Res Function(_SetDHTValueOptions) _then;
+
+  /// Create a copy of SetDHTValueOptions
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? writer = freezed,
+    Object? allowOffline = freezed,
+  }) {
+    return _then(_SetDHTValueOptions(
+      writer: freezed == writer
+          ? _self.writer
+          : writer // ignore: cast_nullable_to_non_nullable
+              as KeyPair?,
+      allowOffline: freezed == allowOffline
+          ? _self.allowOffline
+          : allowOffline // ignore: cast_nullable_to_non_nullable
+              as bool?,
+    ));
+  }
+}
+
 // dart format on

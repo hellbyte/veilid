@@ -727,7 +727,7 @@ impl StorageManager {
         record_key: TypedRecordKey,
         subkey: ValueSubkey,
         data: Vec<u8>,
-        writer: Option<KeyPair>,
+        options: Option<SetDHTValueOptions>,
     ) -> VeilidAPIResult<Option<ValueData>> {
         let mut inner = self.inner.lock().await;
 
@@ -748,7 +748,11 @@ impl StorageManager {
         };
 
         // Use the specified writer, or if not specified, the default writer when the record was opened
-        let opt_writer = writer.or(opt_writer);
+        let opt_writer = options.as_ref().and_then(|o| o.writer).or(opt_writer);
+        let allow_offline = options
+            .unwrap_or_default()
+            .allow_offline
+            .unwrap_or_default();
 
         // If we don't have a writer then we can't write
         let Some(writer) = opt_writer else {
@@ -781,9 +785,13 @@ impl StorageManager {
         };
 
         // Validate with schema
-        if !schema.check_subkey_value_data(descriptor.owner(), subkey, &value_data) {
+        if let Err(e) = schema.check_subkey_value_data(descriptor.owner(), subkey, &value_data) {
+            veilid_log!(self debug "schema validation error: {}", e);
             // Validation failed, ignore this value
-            apibail_generic!("failed schema validation");
+            apibail_generic!(format!(
+                "failed schema validation: {}:{}",
+                record_key, subkey
+            ));
         }
 
         // Sign the new value data with the writer
@@ -821,10 +829,19 @@ impl StorageManager {
         };
 
         if already_writing || !self.dht_is_online() {
-            veilid_log!(self debug "Writing subkey offline: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
-            // Add to offline writes to flush
-            Self::add_offline_subkey_write_inner(&mut inner, record_key, subkey, safety_selection);
-            return Ok(None);
+            if allow_offline == AllowOffline(true) {
+                veilid_log!(self debug "Writing subkey offline: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
+                // Add to offline writes to flush
+                Self::add_offline_subkey_write_inner(
+                    &mut inner,
+                    record_key,
+                    subkey,
+                    safety_selection,
+                );
+                return Ok(None);
+            } else {
+                apibail_try_again!("offline, try again later");
+            }
         };
 
         // Drop the lock for network access
@@ -847,12 +864,17 @@ impl StorageManager {
             Err(e) => {
                 // Failed to write, try again later
                 let mut inner = self.inner.lock().await;
-                Self::add_offline_subkey_write_inner(
-                    &mut inner,
-                    record_key,
-                    subkey,
-                    safety_selection,
-                );
+
+                if allow_offline == AllowOffline(true) {
+                    Self::add_offline_subkey_write_inner(
+                        &mut inner,
+                        record_key,
+                        subkey,
+                        safety_selection,
+                    );
+                } else {
+                    apibail_try_again!("offline, try again later");
+                }
 
                 // Remove from active subkey writes
                 let asw = inner.active_subkey_writes.get_mut(&record_key).unwrap();

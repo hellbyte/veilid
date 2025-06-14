@@ -3944,6 +3944,7 @@
       ]
     },
     "VeilidCapability": {
+      "description": "A four-character code",
       "type": "array",
       "items": {
         "type": "integer",
