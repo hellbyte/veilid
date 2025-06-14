@@ -261,30 +261,29 @@ macro_rules! byte_array_type {
                 })
             }
         }
-
-        impl core::ops::Deref for $name {
-            type Target = [u8; $size];
-
-            fn deref(&self) -> &Self::Target {
-                &self.bytes
+        impl TryFrom<Vec<u8>> for $name {
+            type Error = VeilidAPIError;
+            fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
+                let vl = v.len();
+                Ok(Self {
+                    bytes: v.try_into().map_err(|_| {
+                        VeilidAPIError::generic(format!(
+                            "Expected a vec of length {} but it was {}",
+                            $size, vl
+                        ))
+                    })?,
+                })
             }
         }
 
-        impl core::ops::DerefMut for $name {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.bytes
-            }
-        }
-
-        impl From<[u8; $size]> for $name {
-            fn from(value: [u8; $size]) -> Self {
-                Self::new(value)
-            }
-        }
-
-        impl From<$name> for [u8; $size] {
+        impl From<$name> for Vec<u8> {
             fn from(value: $name) -> Self {
-                value.bytes
+                value.bytes.to_vec()
+            }
+        }
+        impl AsRef<[u8]> for $name {
+            fn as_ref(&self) -> &[u8] {
+                &self.bytes
             }
         }
     };

@@ -140,7 +140,7 @@ impl TableDB {
                 noncedata.extend_from_slice(&data);
                 noncedata.extend_from_slice(&ei.typed_key.value.bytes);
                 let noncehash = vcrypto.generate_hash(&noncedata);
-                out[0..NONCE_LENGTH].copy_from_slice(&noncehash[0..NONCE_LENGTH])
+                out[0..NONCE_LENGTH].copy_from_slice(&noncehash.bytes[0..NONCE_LENGTH])
             } else {
                 // Random nonce
                 random_bytes(&mut out[0..NONCE_LENGTH]);

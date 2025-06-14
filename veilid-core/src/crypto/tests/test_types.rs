@@ -283,6 +283,14 @@ pub fn test_typed_convert(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     let tk6 = TypedPublicKey::from_str(&tks6).expect("failed");
     let tks6x = tk6.to_string();
     assert!(tks6x.ends_with(&tks6));
+
+    let b = Vec::from(tk6);
+    let tk7 = TypedPublicKey::try_from(b).expect("should succeed");
+    assert_eq!(tk7, tk6);
+
+    let b = Vec::from(tk6);
+    let tk8 = TypedPublicKey::try_from(b.as_slice()).expect("should succeed");
+    assert_eq!(tk8, tk6);
 }
 
 async fn test_hash(vcrypto: &AsyncCryptoSystemGuard<'_>) {
