@@ -91,6 +91,8 @@ struct NetworkInner {
     dial_info_failure_count: BTreeMap<RoutingDomain, usize>,
     /// if we need to redo the publicinternet network class
     needs_update_network_class: bool,
+    /// result of resolving 'auto'/None detect_address_changes mode
+    resolved_detect_address_changes: bool,
     /// the next time we are allowed to check for better dialinfo when we are OutboundOnly
     next_outbound_only_dial_info_check: Timestamp,
     /// join handles for all the low level network background tasks
@@ -157,6 +159,7 @@ impl Network {
             network_needs_restart: false,
             dial_info_failure_count: BTreeMap::new(),
             needs_update_network_class: false,
+            resolved_detect_address_changes: false,
             next_outbound_only_dial_info_check: Timestamp::default(),
             join_handles: Vec::new(),
             stop_source: None,
@@ -743,7 +746,8 @@ impl Network {
         // Caution: this -must- happen first because we use unwrap() in last_network_state()
         let network_state = self.make_network_state().await?;
 
-        {
+        // Resolve 'auto'/None config fo detect_address_changes
+        let resolved_detect_address_changes = {
             let mut inner = self.inner.lock();
 
             // Create the shutdown stopper
@@ -751,7 +755,43 @@ impl Network {
 
             // Store the first network state snapshot
             inner.network_state = Some(network_state.clone());
-        }
+
+            // Process the detect_address_changes 'auto' mode
+            let detect_address_changes = self.config().with(|c| c.network.detect_address_changes);
+            if let Some(detect_address_changes) = detect_address_changes {
+                inner.resolved_detect_address_changes = detect_address_changes;
+                if inner.resolved_detect_address_changes {
+                    veilid_log!(self info "Manually-enabled detection of address changes");
+                } else {
+                    veilid_log!(self info "Manually-disabled detection of address changes");
+                }
+            } else {
+                // Check for publicly routable IPv4 and IPv6 addresses
+                let mut global_ipv4 = false;
+                let mut global_ipv6 = false;
+                for siaddr in network_state.stable_interface_addresses {
+                    if Address::from_ip_addr(siaddr).is_global() {
+                        match siaddr {
+                            IpAddr::V4(_ipv4_addr) => {
+                                global_ipv4 = true;
+                            }
+                            IpAddr::V6(_ipv6_addr) => {
+                                global_ipv6 = true;
+                            }
+                        }
+                    }
+                }
+
+                // If both ipv4 and ipv6 global addresses are present, turn off detect_address_changes otherwise turn it on
+                inner.resolved_detect_address_changes = !(global_ipv4 && global_ipv6);
+                if inner.resolved_detect_address_changes {
+                    veilid_log!(self info "Auto-enabled detection of address changes: global_ipv4={}, global_ipv6={}", global_ipv4, global_ipv6);
+                } else {
+                    veilid_log!(self info "Auto-disabled detection of address changes because this node has global IPv4 and IPv6 addresses");
+                }
+            }
+            inner.resolved_detect_address_changes
+        };
 
         // Start editing routing table
         let routing_table = self.routing_table();
@@ -768,9 +808,10 @@ impl Network {
             true,
         );
 
-        let confirmed_public_internet = self
-            .config()
-            .with(|c| !c.network.detect_address_changes || c.network.privacy.require_inbound_relay);
+        let confirmed_public_internet = !resolved_detect_address_changes
+            || self
+                .config()
+                .with(|c| c.network.privacy.require_inbound_relay);
         editor_public_internet.setup_network(
             network_state.protocol_config.outbound,
             network_state.protocol_config.inbound,
@@ -989,6 +1030,15 @@ impl Network {
         };
 
         self.inner.lock().needs_update_network_class
+    }
+
+    pub fn resolved_detect_address_changes(&self) -> bool {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            veilid_log!(self debug "ignoring due to not started up");
+            return false;
+        };
+
+        self.inner.lock().resolved_detect_address_changes
     }
 
     pub fn trigger_update_network_class(&self, routing_domain: RoutingDomain) {

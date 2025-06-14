@@ -228,7 +228,7 @@ pub fn fix_veilidconfig() -> VeilidConfig {
                 max_watch_expiration_ms: 22,
             },
             upnp: true,
-            detect_address_changes: false,
+            detect_address_changes: Some(false),
             restricted_nat_retries: 10000,
             tls: VeilidConfigTLS {
                 certificate_path: "/etc/ssl/certs/cert.pem".to_string(),

@@ -500,6 +500,15 @@ impl Network {
         false
     }
 
+    pub fn resolved_detect_address_changes(&self) -> bool {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            veilid_log!(self debug "ignoring due to not started up");
+            return false;
+        };
+
+        false
+    }
+
     pub fn trigger_update_network_class(&self, _routing_domain: RoutingDomain) {
         let Ok(_guard) = self.startup_lock.enter() else {
             veilid_log!(self debug "ignoring due to not started up");

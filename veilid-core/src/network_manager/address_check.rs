@@ -74,7 +74,7 @@ impl AddressCheck {
         let (detect_address_changes, ip6_prefix_size, require_inbound_relay) =
             registry.config().with(|c| {
                 (
-                    c.network.detect_address_changes,
+                    net.resolved_detect_address_changes(),
                     c.network.max_connections_per_ip6_prefix_size as usize,
                     c.network.privacy.require_inbound_relay,
                 )

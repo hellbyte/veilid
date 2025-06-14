@@ -255,7 +255,7 @@ pub fn config_callback(key: String) -> ConfigCallbackReturn {
         "network.dht.member_watch_limit" => Ok(Box::new(8u32)),
         "network.dht.max_watch_expiration_ms" => Ok(Box::new(600_000u32)),
         "network.upnp" => Ok(Box::new(false)),
-        "network.detect_address_changes" => Ok(Box::new(true)),
+        "network.detect_address_changes" => Ok(Box::new(Some(true))),
         "network.restricted_nat_retries" => Ok(Box::new(0u32)),
         "network.tls.certificate_path" => Ok(Box::new(get_certfile_path())),
         "network.tls.private_key_path" => Ok(Box::new(get_keyfile_path())),
@@ -400,7 +400,7 @@ pub fn test_config() {
     );
 
     assert!(!inner.network.upnp);
-    assert!(inner.network.detect_address_changes);
+    assert_eq!(inner.network.detect_address_changes, Some(true));
     assert_eq!(inner.network.restricted_nat_retries, 0u32);
     assert_eq!(inner.network.tls.certificate_path, get_certfile_path());
     assert_eq!(inner.network.tls.private_key_path, get_keyfile_path());

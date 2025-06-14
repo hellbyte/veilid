@@ -87,14 +87,10 @@ impl Network {
             return Ok(());
         }
 
-        let (detect_address_changes, upnp, require_inbound_relay) = {
+        let (upnp, require_inbound_relay) = {
             let config = self.network_manager().config();
             let c = config.get();
-            (
-                c.network.detect_address_changes,
-                c.network.upnp,
-                c.network.privacy.require_inbound_relay,
-            )
+            (c.network.upnp, c.network.privacy.require_inbound_relay)
         };
 
         if require_inbound_relay {
@@ -104,7 +100,7 @@ impl Network {
         }
 
         // If we need to figure out our network class, tick the task for it
-        if detect_address_changes {
+        if self.resolved_detect_address_changes() {
             // Check our network interfaces to see if they have changed
             self.network_interfaces_task.tick().await?;
 

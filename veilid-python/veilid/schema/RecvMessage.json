@@ -4261,7 +4261,6 @@
         "client_allowlist_timeout_ms",
         "connection_inactivity_timeout_ms",
         "connection_initial_timeout_ms",
-        "detect_address_changes",
         "dht",
         "hole_punch_receipt_time_ms",
         "max_connection_frequency_per_min",
@@ -4297,7 +4296,10 @@
           "minimum": 0.0
         },
         "detect_address_changes": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "dht": {
           "$ref": "#/definitions/VeilidConfigDHT"

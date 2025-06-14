@@ -6080,7 +6080,7 @@ mixin _$VeilidConfigNetwork implements DiagnosticableTreeMixin {
   VeilidConfigRPC get rpc;
   VeilidConfigDHT get dht;
   bool get upnp;
-  bool get detectAddressChanges;
+  bool? get detectAddressChanges;
   int get restrictedNatRetries;
   VeilidConfigTLS get tls;
   VeilidConfigApplication get application;
@@ -6234,7 +6234,7 @@ abstract mixin class $VeilidConfigNetworkCopyWith<$Res> {
       VeilidConfigRPC rpc,
       VeilidConfigDHT dht,
       bool upnp,
-      bool detectAddressChanges,
+      bool? detectAddressChanges,
       int restrictedNatRetries,
       VeilidConfigTLS tls,
       VeilidConfigApplication application,
@@ -6277,7 +6277,7 @@ class _$VeilidConfigNetworkCopyWithImpl<$Res>
     Object? rpc = null,
     Object? dht = null,
     Object? upnp = null,
-    Object? detectAddressChanges = null,
+    Object? detectAddressChanges = freezed,
     Object? restrictedNatRetries = null,
     Object? tls = null,
     Object? application = null,
@@ -6338,10 +6338,10 @@ class _$VeilidConfigNetworkCopyWithImpl<$Res>
           ? _self.upnp
           : upnp // ignore: cast_nullable_to_non_nullable
               as bool,
-      detectAddressChanges: null == detectAddressChanges
+      detectAddressChanges: freezed == detectAddressChanges
           ? _self.detectAddressChanges
           : detectAddressChanges // ignore: cast_nullable_to_non_nullable
-              as bool,
+              as bool?,
       restrictedNatRetries: null == restrictedNatRetries
           ? _self.restrictedNatRetries
           : restrictedNatRetries // ignore: cast_nullable_to_non_nullable
@@ -6496,7 +6496,7 @@ class _VeilidConfigNetwork
   @override
   final bool upnp;
   @override
-  final bool detectAddressChanges;
+  final bool? detectAddressChanges;
   @override
   final int restrictedNatRetries;
   @override
@@ -6663,7 +6663,7 @@ abstract mixin class _$VeilidConfigNetworkCopyWith<$Res>
       VeilidConfigRPC rpc,
       VeilidConfigDHT dht,
       bool upnp,
-      bool detectAddressChanges,
+      bool? detectAddressChanges,
       int restrictedNatRetries,
       VeilidConfigTLS tls,
       VeilidConfigApplication application,
@@ -6713,7 +6713,7 @@ class __$VeilidConfigNetworkCopyWithImpl<$Res>
     Object? rpc = null,
     Object? dht = null,
     Object? upnp = null,
-    Object? detectAddressChanges = null,
+    Object? detectAddressChanges = freezed,
     Object? restrictedNatRetries = null,
     Object? tls = null,
     Object? application = null,
@@ -6774,10 +6774,10 @@ class __$VeilidConfigNetworkCopyWithImpl<$Res>
           ? _self.upnp
           : upnp // ignore: cast_nullable_to_non_nullable
               as bool,
-      detectAddressChanges: null == detectAddressChanges
+      detectAddressChanges: freezed == detectAddressChanges
           ? _self.detectAddressChanges
           : detectAddressChanges // ignore: cast_nullable_to_non_nullable
-              as bool,
+              as bool?,
       restrictedNatRetries: null == restrictedNatRetries
           ? _self.restrictedNatRetries
           : restrictedNatRetries // ignore: cast_nullable_to_non_nullable

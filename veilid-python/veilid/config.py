@@ -25,7 +25,7 @@ class ConfigBase:
             value = json_data[key]
             try:
                 # See if this field's type knows how to load itself from JSON input.
-                loader = field.type.from_json
+                loader = field.type.from_json # type: ignore
             except AttributeError:
                 # No, it doesn't. Use the raw value.
                 args[key] = value
@@ -210,7 +210,7 @@ class VeilidConfigNetwork(ConfigBase):
     rpc: VeilidConfigRPC
     dht: VeilidConfigDHT
     upnp: bool
-    detect_address_changes: bool
+    detect_address_changes: Optional[bool]
     restricted_nat_retries: int
     tls: VeilidConfigTLS
     application: VeilidConfigApplication

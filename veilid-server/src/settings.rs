@@ -180,7 +180,7 @@ core:
             member_watch_limit: 8
             max_watch_expiration_ms: 600000
         upnp: false
-        detect_address_changes: false
+        detect_address_changes: auto
         restricted_nat_retries: 0
         tls:
             certificate_path: '%CERTIFICATE_PATH%'
@@ -711,6 +711,20 @@ pub struct RoutingTable {
     pub limit_attached_weak: u32,
 }
 
+fn auto_bool_from_str(s: &str) -> Result<Option<bool>, String> {
+    match s {
+        "auto" => Ok(None),
+        "true" => Ok(Some(true)),
+        "false" => Ok(Some(false)),
+        _ => Err("Expected 'auto', 'true', or 'false'".to_owned()),
+    }
+}
+
+fn auto_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    let s: String = serde::de::Deserialize::deserialize(deserializer)?;
+    auto_bool_from_str(s.as_str()).map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Network {
     pub connection_initial_timeout_ms: u32,
@@ -727,7 +741,8 @@ pub struct Network {
     pub rpc: Rpc,
     pub dht: Dht,
     pub upnp: bool,
-    pub detect_address_changes: bool,
+    #[serde(deserialize_with = "auto_bool")]
+    pub detect_address_changes: Option<bool>,
     pub restricted_nat_retries: u32,
     pub tls: Tls,
     pub application: Application,
@@ -1068,6 +1083,28 @@ impl Settings {
             }};
         }
 
+        macro_rules! set_config_value_custom {
+            ($innerkey:expr, $value:expr, $deserializer:expr) => {{
+                let innerkeyname = &stringify!($innerkey)[6..];
+                if innerkeyname == key {
+                    match $deserializer(value) {
+                        Ok(v) => {
+                            $innerkey = v;
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return Err(eyre!(
+                                "invalid type for key {}, value: {}: {}",
+                                key,
+                                value,
+                                e
+                            ))
+                        }
+                    }
+                }
+            }};
+        }
+
         set_config_value!(inner.daemon.enabled, value);
         set_config_value!(inner.daemon.pid_file, value);
         set_config_value!(inner.daemon.chroot, value);
@@ -1219,7 +1256,11 @@ impl Settings {
         set_config_value!(inner.core.network.dht.member_watch_limit, value);
         set_config_value!(inner.core.network.dht.max_watch_expiration_ms, value);
         set_config_value!(inner.core.network.upnp, value);
-        set_config_value!(inner.core.network.detect_address_changes, value);
+        set_config_value_custom!(
+            inner.core.network.detect_address_changes,
+            value,
+            auto_bool_from_str
+        );
         set_config_value!(inner.core.network.restricted_nat_retries, value);
         set_config_value!(inner.core.network.tls.certificate_path, value);
         set_config_value!(inner.core.network.tls.private_key_path, value);
@@ -1892,7 +1933,7 @@ mod tests {
         assert_eq!(s.core.network.dht.max_watch_expiration_ms, 600_000u32);
         //
         assert!(!s.core.network.upnp);
-        assert!(!s.core.network.detect_address_changes);
+        assert_eq!(s.core.network.detect_address_changes, None);
         assert_eq!(s.core.network.restricted_nat_retries, 0u32);
         //
         assert_eq!(
@@ -1986,7 +2027,7 @@ mod tests {
         );
         assert_eq!(s.core.network.protocol.wss.url, None);
         //
-        assert_eq!(s.core.network.privacy.require_inbound_relay, false);
+        assert!(!s.core.network.privacy.require_inbound_relay);
         #[cfg(feature = "geolocation")]
         assert_eq!(s.core.network.privacy.country_code_denylist, &[]);
         #[cfg(feature = "virtual-network")]

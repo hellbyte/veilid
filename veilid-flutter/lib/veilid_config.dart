@@ -377,7 +377,7 @@ sealed class VeilidConfigNetwork with _$VeilidConfigNetwork {
     required VeilidConfigRPC rpc,
     required VeilidConfigDHT dht,
     required bool upnp,
-    required bool detectAddressChanges,
+    required bool? detectAddressChanges,
     required int restrictedNatRetries,
     required VeilidConfigTLS tls,
     required VeilidConfigApplication application,

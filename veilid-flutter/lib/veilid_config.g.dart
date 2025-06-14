@@ -478,7 +478,7 @@ _VeilidConfigNetwork _$VeilidConfigNetworkFromJson(Map<String, dynamic> json) =>
       rpc: VeilidConfigRPC.fromJson(json['rpc']),
       dht: VeilidConfigDHT.fromJson(json['dht']),
       upnp: json['upnp'] as bool,
-      detectAddressChanges: json['detect_address_changes'] as bool,
+      detectAddressChanges: json['detect_address_changes'] as bool?,
       restrictedNatRetries: (json['restricted_nat_retries'] as num).toInt(),
       tls: VeilidConfigTLS.fromJson(json['tls']),
       application: VeilidConfigApplication.fromJson(json['application']),
