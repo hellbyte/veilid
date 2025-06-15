@@ -66,7 +66,7 @@ pub(crate) use self::component::*;
 pub(crate) use self::core_context::RegisteredComponents;
 pub(crate) use self::stats_accounting::*;
 
-pub(crate) use self::component::VeilidComponentGuard;
+pub use self::component::VeilidComponentGuard;
 pub use self::core_context::{api_startup, api_startup_config, api_startup_json, UpdateCallback};
 pub use self::logging::{
     ApiTracingLayer, FmtStripFields, VeilidLayerFilter, VeilidLayerLogKeyFilter,
