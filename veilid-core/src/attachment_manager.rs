@@ -208,7 +208,16 @@ impl AttachmentManager {
         let network_manager = self.network_manager();
 
         // Startup network manager
-        network_manager.startup().await?;
+        let res = network_manager.startup().await?;
+        match res {
+            StartupDisposition::Success => {
+                veilid_log!(self debug "NetworkManager startup success");
+            }
+            StartupDisposition::BindRetry => {
+                veilid_log!(self debug "NetworkManager bind retry");
+                return Ok(StartupDisposition::BindRetry);
+            }
+        }
 
         // Startup rpc processor
         if let Err(e) = rpc_processor.startup().await {
