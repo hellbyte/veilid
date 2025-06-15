@@ -75,14 +75,14 @@ impl StorageManager {
         // Run the flush stores task
         self.save_metadata_task.tick().await?;
 
-        // Check active watches
-        self.check_outbound_watches_task.tick().await?;
-
         // Check watched records
         self.check_inbound_watches_task.tick().await?;
 
         // Run online-only tasks
         if self.dht_is_online() {
+            // Check active watches
+            self.check_outbound_watches_task.tick().await?;
+
             // Run offline subkey writes task if there's work to be done
             if self.has_offline_subkey_writes().await {
                 self.offline_subkey_writes_task.tick().await?;
