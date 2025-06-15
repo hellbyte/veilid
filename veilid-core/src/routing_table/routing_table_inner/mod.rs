@@ -275,7 +275,7 @@ impl RoutingTableInner {
     }
     /// Unpublish the node's current peer info
     pub fn unpublish_peer_info(&mut self, routing_domain: RoutingDomain) {
-        self.with_routing_domain(routing_domain, |rdd| rdd.unpublish_peer_info())
+        self.with_routing_domain(routing_domain, |rdd| rdd.unpublish_peer_info(self))
     }
 
     /// Get the current published peer info

@@ -347,7 +347,7 @@ impl RoutingTable {
         let atomic_count = AtomicUsize::new(count);
         let _ = process_batched_future_queue_result(future_queue, MAX_PARALLEL_PINGS, stop_token, |res| {
             if let Err(e) = res {
-                veilid_log!(self error "[{}] Error performing status ping: {}", name, e);
+                veilid_log!(self debug "[{}] Error performing status ping: {}", name, e);
             }
             let remaining = atomic_count.fetch_sub(1, Ordering::AcqRel) - 1;
             if remaining > 0 {

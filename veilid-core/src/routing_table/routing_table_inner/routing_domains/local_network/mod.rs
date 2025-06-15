@@ -191,10 +191,19 @@ impl RoutingDomainDetail for LocalNetworkRoutingDomainDetail {
         true
     }
 
-    fn unpublish_peer_info(&self) {
+    fn unpublish_peer_info(&self, rti: &RoutingTableInner) {
         let mut ppi_lock = self.published_peer_info.lock();
         veilid_log!(self debug "[LocalNetwork] Unpublished peer info");
+        let opt_old_peer_info = ppi_lock.clone();
         *ppi_lock = None;
+
+        if let Err(e) = rti.event_bus().post(PeerInfoChangeEvent {
+            routing_domain: RoutingDomain::LocalNetwork,
+            opt_old_peer_info,
+            opt_new_peer_info: None,
+        }) {
+            veilid_log!(self debug "Failed to post event: {}", e);
+        }
     }
 
     fn ensure_dial_info_is_valid(&self, dial_info: &DialInfo) -> bool {

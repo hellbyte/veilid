@@ -40,7 +40,7 @@ pub trait RoutingDomainDetail {
 
     // Publish current peer info to the world
     fn publish_peer_info(&self, rti: &RoutingTableInner) -> bool;
-    fn unpublish_peer_info(&self);
+    fn unpublish_peer_info(&self, rti: &RoutingTableInner);
 
     // Get the contact method required for node A to reach node B in this routing domain
     // Routing table must be locked for reading to use this function
