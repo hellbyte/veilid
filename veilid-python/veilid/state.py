@@ -522,7 +522,7 @@ class VeilidAppCall:
     message: bytes
     call_id: OperationId
 
-    def __init__(self, sender: Optional[TypedKey], route_id: Optional[TypedKey], message: bytes, call_id: OperationId):
+    def __init__(self, sender: Optional[TypedKey], route_id: Optional[RouteId], message: bytes, call_id: OperationId):
         self.sender = sender
         self.route_id = route_id
         self.message = message

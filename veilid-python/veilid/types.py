@@ -1,8 +1,9 @@
 import base64
 import json
+from abc import ABC, abstractmethod
 from enum import StrEnum
 from functools import total_ordering
-from typing import Any, Optional, Self
+from typing import Any, Optional, Self, final
 
 ####################################################################
 
@@ -267,9 +268,9 @@ class VeilidVersion:
     def __eq__(self, other):
         return (
             isinstance(other, VeilidVersion)
-            and self.data == other.data
-            and self.seq == other.seq
-            and self.writer == other.writer
+            and self._major == other._major
+            and self._minor == other._minor
+            and self._patch == other._patch
         )
 
     @property
@@ -323,26 +324,19 @@ class DHTSchemaSMPLMember:
         return self.__dict__
 
 
-class DHTSchema:
+class DHTSchema(ABC):
     kind: DHTSchemaKind
 
-    def __init__(self, kind: DHTSchemaKind, **kwargs):
+    def __init__(self, kind: DHTSchemaKind):
         self.kind = kind
-        for k, v in kwargs.items():
-            setattr(self, k, v)
 
     @classmethod
     def dflt(cls, o_cnt: int) -> Self:
-        assert isinstance(o_cnt, int)
-        return cls(DHTSchemaKind.DFLT, o_cnt=o_cnt)
+        return DHTSchemaDFLT(o_cnt=o_cnt) # type: ignore
 
     @classmethod
     def smpl(cls, o_cnt: int, members: list[DHTSchemaSMPLMember]) -> Self:
-        assert isinstance(o_cnt, int)
-        assert isinstance(members, list)
-        for m in members:
-            assert isinstance(m, DHTSchemaSMPLMember)
-        return cls(DHTSchemaKind.SMPL, o_cnt=o_cnt, members=members)
+        return DHTSchemaSMPL(o_cnt=o_cnt, members=members) # type: ignore
 
     @classmethod
     def from_json(cls, j: dict) -> Self:
@@ -358,6 +352,53 @@ class DHTSchema:
     def to_json(self) -> dict:
         return self.__dict__
 
+@final
+class DHTSchemaDFLT(DHTSchema):
+    o_cnt: int
+
+    def __init__(
+        self,
+        o_cnt: int
+    ):
+        super().__init__(DHTSchemaKind.DFLT)
+
+        assert isinstance(o_cnt, int)
+        self.o_cnt = o_cnt
+
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if DHTSchemaKind(j["kind"]) == DHTSchemaKind.DFLT:
+            return cls(j["o_cnt"])
+        raise Exception("Invalid DHTSchemaDFLT")
+
+
+@final
+class DHTSchemaSMPL(DHTSchema):
+    o_cnt: int
+    members: list[DHTSchemaSMPLMember]
+
+    def __init__(
+        self,
+        o_cnt: int,
+        members: list[DHTSchemaSMPLMember]
+    ):
+        super().__init__(DHTSchemaKind.SMPL)
+
+        assert isinstance(o_cnt, int)
+        assert isinstance(members, list)
+        for m in members:
+            assert isinstance(m, DHTSchemaSMPLMember)
+
+        self.o_cnt = o_cnt
+        self.members = members
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if DHTSchemaKind(j["kind"]) == DHTSchemaKind.SMPL:
+            return cls(j["o_cnt"],
+                [DHTSchemaSMPLMember.from_json(member) for member in j["members"]])
+        raise Exception("Invalid DHTSchemaSMPL")
 
 class DHTRecordDescriptor:
     key: TypedKey
@@ -381,6 +422,8 @@ class DHTRecordDescriptor:
         return f"<{self.__class__.__name__}(key={self.key!r}, owner={self.owner!r}, owner_secret={self.owner_secret!r}, schema={self.schema!r})>"
 
     def owner_key_pair(self) -> Optional[KeyPair]:
+        if self.owner_secret is None:
+            return None
         return KeyPair.from_parts(self.owner, self.owner_secret)
 
     @classmethod
@@ -435,7 +478,7 @@ class SetDHTValueOptions:
     writer: Optional[KeyPair]
     allow_offline: Optional[bool]
 
-    def __init__(self, writer: Optional[KeyPair], allow_offline: Optional[bool] = None):
+    def __init__(self, writer: Optional[KeyPair] = None, allow_offline: Optional[bool] = None):
         self.writer = writer
         self.allow_offline = allow_offline
 
@@ -534,22 +577,20 @@ class SafetySpec:
     def to_json(self) -> dict:
         return self.__dict__
 
+class SafetySelection(ABC):
 
-class SafetySelection:
-    kind: SafetySelectionKind
-
-    def __init__(self, kind: SafetySelectionKind, **kwargs):
-        self.kind = kind
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+    @property
+    @abstractmethod
+    def kind(self) -> SafetySelectionKind:
+        pass
 
     @classmethod
     def unsafe(cls, sequencing: Sequencing = Sequencing.PREFER_ORDERED) -> Self:
-        return cls(SafetySelectionKind.UNSAFE, sequencing=sequencing)
+        return SafetySelectionUnsafe(sequencing=sequencing) # type: ignore
 
     @classmethod
     def safe(cls, safety_spec: SafetySpec) -> Self:
-        return cls(SafetySelectionKind.SAFE, safety_spec=safety_spec)
+        return SafetySelectionSafe(safety_spec=safety_spec) # type: ignore
 
     @classmethod
     def from_json(cls, j: dict) -> Self:
@@ -559,10 +600,48 @@ class SafetySelection:
             return cls.unsafe(Sequencing(j["Unsafe"]))
         raise Exception("Invalid SafetySelection")
 
+    @abstractmethod
     def to_json(self) -> dict:
-        if self.kind == SafetySelectionKind.UNSAFE:
-            return {"Unsafe": self.sequencing}
-        elif self.kind == SafetySelectionKind.SAFE:
-            return {"Safe": self.safety_spec.to_json()}
-        else:
-            raise Exception("Invalid SafetySelection")
+        pass
+
+@final
+class SafetySelectionUnsafe(SafetySelection):
+    sequencing: Sequencing
+
+    def __init__(self, sequencing: Sequencing = Sequencing.PREFER_ORDERED):
+        assert isinstance(sequencing, Sequencing)
+        self.sequencing = sequencing
+
+    @property
+    def kind(self):
+        return SafetySelectionKind.UNSAFE
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if "Unsafe" in j:
+            return cls(Sequencing(j["Unsafe"]))
+        raise Exception("Invalid SafetySelectionUnsafe")
+
+    def to_json(self) -> dict:
+        return {"Unsafe": self.sequencing}
+
+@final
+class SafetySelectionSafe(SafetySelection):
+    safety_spec: SafetySpec
+
+    def __init__(self, safety_spec: SafetySpec):
+        assert isinstance(safety_spec, SafetySpec)
+        self.safety_spec = safety_spec
+
+    @property
+    def kind(self):
+        return SafetySelectionKind.SAFE
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if "Safe" in j:
+            return cls(SafetySpec.from_json(j["Safe"]))
+        raise Exception("Invalid SafetySelectionUnsafe")
+
+    def to_json(self) -> dict:
+        return {"Safe": self.safety_spec.to_json()}

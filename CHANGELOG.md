@@ -14,6 +14,10 @@
   - Improved `TypedXXX` conversion traits, including to and from `Vec<u8>`
   - Ensure utf8 replacement characters are never emitted in logs
 
+- veilid-python:
+  - Correction of type hints
+  - Fixed transaction `__aexit__` to properly rollback transaction if not committed, and not raise an exception
+
 - veilid-server:
   - Use `detect_address_changes: auto` by default
 

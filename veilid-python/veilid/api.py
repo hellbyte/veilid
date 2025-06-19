@@ -49,7 +49,7 @@ class RoutingContext(ABC):
         pass
 
     @abstractmethod
-    async def app_call(self, target: types.TypedKey | types.RouteId, request: bytes) -> bytes:
+    async def app_call(self, target: types.TypedKey | types.RouteId, message: bytes) -> bytes:
         pass
 
     @abstractmethod
@@ -132,7 +132,7 @@ class TableDbTransaction(ABC):
     async def __aexit__(self, *excinfo):
         self.ref_count -= 1
         if self.ref_count == 0 and not self.is_done():
-            await self.release()
+            await self.rollback()
 
     @abstractmethod
     def is_done(self) -> bool:

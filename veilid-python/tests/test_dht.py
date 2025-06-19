@@ -135,6 +135,8 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
         key = rec.key
         owner = rec.owner
         secret = rec.owner_secret
+        assert secret is not None
+
         #print(f"key:{key}")
 
         cs = await api_connection.get_crypto_system(rec.key.kind())
@@ -151,6 +153,7 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
         assert vdtemp is None
 
         vdtemp = await rc.get_dht_value(key, ValueSubkey(1), False)
+        assert vdtemp is not None
         assert vdtemp.data == va
         assert vdtemp.seq == 0
         assert vdtemp.writer == owner
@@ -164,9 +167,11 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
         await sync(rc, [rec])
 
         vdtemp = await rc.get_dht_value(key, ValueSubkey(0), True)
+        assert vdtemp is not None
         assert vdtemp.data == vb
 
         vdtemp = await rc.get_dht_value(key, ValueSubkey(1), True)
+        assert vdtemp is not None
         assert vdtemp.data == va
 
         # Equal value should not trigger sequence number update
@@ -191,7 +196,7 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
         assert rec.key == key
         assert rec.owner == owner
         assert rec.owner_secret == secret
-        assert rec.schema.kind == veilid.DHTSchemaKind.DFLT
+        assert isinstance(rec.schema, veilid.DHTSchemaDFLT)
         assert rec.schema.o_cnt == 2
 
         # Verify subkey 1 can be set before it is get but newer is available online
@@ -225,7 +230,7 @@ async def test_open_writer_dht_value(api_connection: veilid.VeilidAPI):
         assert rec.key == key
         assert rec.owner == owner
         assert rec.owner_secret is None
-        assert rec.schema.kind == veilid.DHTSchemaKind.DFLT
+        assert isinstance(rec.schema, veilid.DHTSchemaDFLT)
         assert rec.schema.o_cnt == 2
 
         # Verify subkey 1 can NOT be set because we have the wrong writer
@@ -261,6 +266,7 @@ async def test_open_writer_dht_value_no_offline(api_connection: veilid.VeilidAPI
         key = rec.key
         owner = rec.owner
         secret = rec.owner_secret
+        assert secret is not None
         #print(f"key:{key}")
 
         cs = await api_connection.get_crypto_system(rec.key.kind())
@@ -277,6 +283,7 @@ async def test_open_writer_dht_value_no_offline(api_connection: veilid.VeilidAPI
         assert vdtemp is None
 
         vdtemp = await rc.get_dht_value(key, ValueSubkey(1), False)
+        assert vdtemp is not None
         assert vdtemp.data == va
         assert vdtemp.seq == 0
         assert vdtemp.writer == owner
@@ -287,12 +294,12 @@ async def test_open_writer_dht_value_no_offline(api_connection: veilid.VeilidAPI
         vdtemp = await rc.set_dht_value(key, ValueSubkey(0), vb, veilid.SetDHTValueOptions(None, False))
         assert vdtemp is None
 
-        await sync(rc, [rec])
-
         vdtemp = await rc.get_dht_value(key, ValueSubkey(0), True)
+        assert vdtemp is not None
         assert vdtemp.data == vb
 
         vdtemp = await rc.get_dht_value(key, ValueSubkey(1), True)
+        assert vdtemp is not None
         assert vdtemp.data == va
 
         # Equal value should not trigger sequence number update
@@ -316,7 +323,7 @@ async def test_open_writer_dht_value_no_offline(api_connection: veilid.VeilidAPI
         assert rec.key == key
         assert rec.owner == owner
         assert rec.owner_secret == secret
-        assert rec.schema.kind == veilid.DHTSchemaKind.DFLT
+        assert isinstance(rec.schema, veilid.DHTSchemaDFLT)
         assert rec.schema.o_cnt == 2
 
         # Verify subkey 1 can be set before it is get but newer is available online
@@ -348,7 +355,7 @@ async def test_open_writer_dht_value_no_offline(api_connection: veilid.VeilidAPI
         assert rec.key == key
         assert rec.owner == owner
         assert rec.owner_secret is None
-        assert rec.schema.kind == veilid.DHTSchemaKind.DFLT
+        assert isinstance(rec.schema, veilid.DHTSchemaDFLT)
         assert rec.schema.o_cnt == 2
 
         # Verify subkey 1 can NOT be set because we have the wrong writer
@@ -457,9 +464,11 @@ async def test_watch_dht_values():
             upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
 
             # Server 0: Verify the update came back with the first changed subkey's data
+            assert isinstance(upd.detail, veilid.VeilidValueChange)
             assert upd.detail.key == rec0.key
             assert upd.detail.count == 0xFFFFFFFE
             assert upd.detail.subkeys == [(3, 3)]
+            assert upd.detail.value is not None
             assert upd.detail.value.data == b"BLAH BLAH"
 
             # Server 1: Now set subkey and trigger an update
@@ -471,9 +480,11 @@ async def test_watch_dht_values():
             upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
 
             # Server 0: Verify the update came back with the first changed subkey's data
+            assert isinstance(upd.detail, veilid.VeilidValueChange)
             assert upd.detail.key == rec0.key
             assert upd.detail.count == 0xFFFFFFFD
             assert upd.detail.subkeys == [(4, 4)]
+            assert upd.detail.value is not None
             assert upd.detail.value.data == b"BZORT"
 
             # Server 0: Cancel some subkeys we don't care about
@@ -489,9 +500,11 @@ async def test_watch_dht_values():
             upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
 
             # Server 0: Verify only one update came back
+            assert isinstance(upd.detail, veilid.VeilidValueChange)
             assert upd.detail.key == rec0.key
             assert upd.detail.count == 0xFFFFFFFC
             assert upd.detail.subkeys == [(4, 4)]
+            assert upd.detail.value is not None
             assert upd.detail.value.data == b"BZORT BZORT"
 
             # Server 0: Now we should NOT get any other update
@@ -512,6 +525,7 @@ async def test_watch_dht_values():
             upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
 
             # Server 0: Verify only one update came back
+            assert isinstance(upd.detail, veilid.VeilidValueChange)
             assert upd.detail.key == rec0.key
             assert upd.detail.count == 0
             assert upd.detail.subkeys == []
@@ -618,6 +632,7 @@ async def test_watch_many_dht_values():
                 # Server 0: Wait for the update
                 try:
                     upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
+                    assert isinstance(upd.detail, veilid.VeilidValueChange)
                     missing_records.remove(upd.detail.key)
                 except:
                     # Dump which records didn't get updates
@@ -689,6 +704,7 @@ async def _run_test_schema_limit(api_connection: veilid.VeilidAPI, open_record: 
         desc1 = await rc.open_dht_record(desc.key)
         for n in range(count):
             vd0 = await rc.get_dht_value(desc1.key, ValueSubkey(n))
+            assert vd0 is not None
             assert vd0.data == test_data
             print(f'  {n}')
 
@@ -728,7 +744,7 @@ async def test_schema_limit_dflt(api_connection: veilid.VeilidAPI):
 @pytest.mark.asyncio
 async def test_schema_limit_smpl(api_connection: veilid.VeilidAPI):
 
-    async def open_record(rc: veilid.RoutingContext, count: int) -> tuple[veilid.TypedKey, veilid.PublicKey, veilid.SecretKey]:
+    async def open_record(rc: veilid.RoutingContext, count: int) -> tuple[veilid.DHTRecordDescriptor, veilid.KeyPair]:
         cs = await api_connection.best_crypto_system()
         async with cs:
             writer_keypair = await cs.generate_key_pair()
@@ -817,6 +833,7 @@ async def test_dht_integration_writer_reader():
 
                 desc1 = await rc1.open_dht_record(desc.key)
                 vd1 = await rc1.get_dht_value(desc1.key, ValueSubkey(0))
+                assert vd1 is not None
                 assert vd1.data == TEST_DATA
                 await rc1.close_dht_record(desc1.key)
                 
@@ -877,9 +894,11 @@ async def test_dht_write_read_local():
                 desc1 = await rc0.open_dht_record(desc0.key)
                 
                 vd0 = await rc0.get_dht_value(desc1.key, ValueSubkey(0), force_refresh=True)
+                assert vd0 is not None
                 assert vd0.data == TEST_DATA
                 
                 vd1 = await rc0.get_dht_value(desc1.key, ValueSubkey(1), force_refresh=True)
+                assert vd1 is not None
                 assert vd1.data == TEST_DATA2
                 await rc0.close_dht_record(desc1.key)
                 
@@ -1082,8 +1101,8 @@ async def sync_win(
                 max(0, int(cur_cols/2) - int(WIDTH/2)))
             win.border(0,0,0,0)
         win.addstr(1, 1, "syncing records to the network", curses.color_pair(0))
-        for n, rr in enumerate(records):
-            key = rr.key
+        for n, rd in enumerate(records):
+            key = rd.key
             win.addstr(n+2, GRAPHWIDTH+1, key, curses.color_pair(0))
 
             if key in donerecords:
