@@ -1,6 +1,8 @@
+mod active_subkey_writes;
 mod debug;
 mod get_value;
 mod inspect_value;
+mod offline_subkey_writes;
 mod outbound_watch_manager;
 mod record_store;
 mod rehydrate;
@@ -12,11 +14,13 @@ mod watch_value;
 use super::*;
 
 use hashlink::LinkedHashMap;
+use offline_subkey_writes::*;
 use outbound_watch_manager::*;
 use record_store::*;
 use rehydrate::*;
 use routing_table::*;
 use rpc_processor::*;
+use stop_token::future::FutureExt as _;
 
 pub use record_store::{InboundWatchParameters, InboundWatchResult};
 
@@ -81,12 +85,12 @@ struct StorageManagerInner {
     pub local_record_store: Option<RecordStore<LocalRecordDetail>>,
     /// Records that have been pushed to this node for distribution by other nodes, that we make an effort to republish
     pub remote_record_store: Option<RecordStore<RemoteRecordDetail>>,
-    /// Record subkeys that have not been pushed to the network because they were written to offline
-    pub offline_subkey_writes:
-        LinkedHashMap<TypedRecordKey, tasks::offline_subkey_writes::OfflineSubkeyWrite>,
+    /// Record subkeys to commit to the network in the background,
+    /// either because they were written to offline, or due to a rehydration action
+    pub offline_subkey_writes: LinkedHashMap<TypedRecordKey, OfflineSubkeyWrite>,
     /// Record subkeys that are currently being written to in the foreground
     pub active_subkey_writes: HashMap<TypedRecordKey, ValueSubkeyRangeSet>,
-    /// Records that have rehydration requests
+    /// Records that have pending rehydration requests
     pub rehydration_requests: HashMap<TypedRecordKey, RehydrationRequest>,
     /// State management for outbound watches
     pub outbound_watch_manager: OutboundWatchManager,
@@ -122,6 +126,7 @@ impl fmt::Debug for StorageManagerInner {
 pub(crate) struct StorageManager {
     registry: VeilidComponentRegistry,
     inner: AsyncMutex<StorageManagerInner>,
+    startup_lock: Arc<StartupLock>,
 
     // Background processes
     save_metadata_task: TickTask<EyreReport>,
@@ -197,6 +202,7 @@ impl StorageManager {
         let this = StorageManager {
             registry,
             inner: AsyncMutex::new(inner),
+            startup_lock: Arc::new(StartupLock::new()),
 
             save_metadata_task: TickTask::new("save_metadata_task", SAVE_METADATA_INTERVAL_SECS),
             flush_record_stores_task: TickTask::new(
@@ -276,6 +282,8 @@ impl StorageManager {
 
     #[instrument(level = "debug", skip_all, err)]
     async fn init_async(&self) -> EyreResult<()> {
+        let guard = self.startup_lock.startup()?;
+
         veilid_log!(self debug "startup storage manager");
         let table_store = self.table_store();
         let config = self.config();
@@ -300,6 +308,8 @@ impl StorageManager {
 
         // Start deferred results processors
         self.background_operation_processor.init();
+
+        guard.success();
 
         Ok(())
     }
@@ -355,6 +365,13 @@ impl StorageManager {
     async fn terminate_async(&self) {
         veilid_log!(self debug "starting storage manager shutdown");
 
+        // Proceed with shutdown
+        let guard = self
+            .startup_lock
+            .shutdown()
+            .await
+            .expect("should be started up");
+
         // Stop deferred result processor
         self.background_operation_processor.terminate().await;
 
@@ -382,6 +399,8 @@ impl StorageManager {
             // Reset inner state
             *inner = Self::new_inner();
         }
+
+        guard.success();
 
         veilid_log!(self debug "finished storage manager shutdown");
     }
@@ -507,6 +526,10 @@ impl StorageManager {
         owner: Option<KeyPair>,
         safety_selection: SafetySelection,
     ) -> VeilidAPIResult<DHTRecordDescriptor> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Validate schema
         schema.validate()?;
 
@@ -533,6 +556,10 @@ impl StorageManager {
         writer: Option<KeyPair>,
         safety_selection: SafetySelection,
     ) -> VeilidAPIResult<DHTRecordDescriptor> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let mut inner = self.inner.lock().await;
 
         // See if we have a local record already or not
@@ -609,6 +636,10 @@ impl StorageManager {
     /// Close an opened local record
     #[instrument(level = "trace", target = "stor", skip_all)]
     pub async fn close_record(&self, record_key: TypedRecordKey) -> VeilidAPIResult<()> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Attempt to close the record, returning the opened record if it wasn't already closed
         let mut inner = self.inner.lock().await;
         Self::close_record_inner(&mut inner, record_key)?;
@@ -618,6 +649,10 @@ impl StorageManager {
     /// Close all opened records
     #[instrument(level = "trace", target = "stor", skip_all)]
     pub async fn close_all_records(&self) -> VeilidAPIResult<()> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Attempt to close the record, returning the opened record if it wasn't already closed
         let mut inner = self.inner.lock().await;
         let keys = inner.opened_records.keys().copied().collect::<Vec<_>>();
@@ -631,6 +666,10 @@ impl StorageManager {
     /// Delete a local record
     #[instrument(level = "trace", target = "stor", skip_all)]
     pub async fn delete_record(&self, record_key: TypedRecordKey) -> VeilidAPIResult<()> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Ensure the record is closed
         let mut inner = self.inner.lock().await;
         Self::close_record_inner(&mut inner, record_key)?;
@@ -652,6 +691,10 @@ impl StorageManager {
         subkey: ValueSubkey,
         force_refresh: bool,
     ) -> VeilidAPIResult<Option<ValueData>> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let mut inner = self.inner.lock().await;
         let safety_selection = {
             let Some(opened_record) = inner.opened_records.get(&record_key) else {
@@ -661,8 +704,9 @@ impl StorageManager {
         };
 
         // See if the requested subkey is our local record store
-        let last_get_result =
-            Self::handle_get_local_value_inner(&mut inner, record_key, subkey, true).await?;
+        let last_get_result = self
+            .handle_get_local_value_inner(&mut inner, record_key, subkey, true)
+            .await?;
 
         // Return the existing value if we have one unless we are forcing a refresh
         if !force_refresh {
@@ -720,41 +764,6 @@ impl StorageManager {
         Ok(out)
     }
 
-    // Returns false if we were not already writing
-    // Returns true if this subkey was already being written to
-    fn mark_active_subkey_write_inner(
-        &self,
-        inner: &mut StorageManagerInner,
-        record_key: TypedRecordKey,
-        subkey: ValueSubkey,
-    ) -> bool {
-        let asw = inner.active_subkey_writes.entry(record_key).or_default();
-        if asw.contains(subkey) {
-            veilid_log!(self debug "Already writing to this subkey: {}:{}", record_key, subkey);
-            true
-        } else {
-            // Add to our list of active subkey writes
-            asw.insert(subkey);
-            false
-        }
-    }
-
-    fn unmark_active_subkey_write_inner(
-        &self,
-        inner: &mut StorageManagerInner,
-        record_key: TypedRecordKey,
-        subkey: ValueSubkey,
-    ) {
-        // Remove from active subkey writes
-        let asw = inner.active_subkey_writes.get_mut(&record_key).unwrap();
-        if !asw.remove(subkey) {
-            veilid_log!(self error "missing active subkey write: {}:{}", record_key, subkey);
-        }
-        if asw.is_empty() {
-            inner.active_subkey_writes.remove(&record_key);
-        }
-    }
-
     /// Set the value of a subkey on an opened local record
     #[instrument(level = "trace", target = "stor", skip_all)]
     pub async fn set_value(
@@ -764,6 +773,10 @@ impl StorageManager {
         data: Vec<u8>,
         options: Option<SetDHTValueOptions>,
     ) -> VeilidAPIResult<Option<ValueData>> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let mut inner = self.inner.lock().await;
 
         // Get cryptosystem
@@ -795,8 +808,9 @@ impl StorageManager {
         };
 
         // See if the subkey we are modifying has a last known local value
-        let last_get_result =
-            Self::handle_get_local_value_inner(&mut inner, record_key, subkey, true).await?;
+        let last_get_result = self
+            .handle_get_local_value_inner(&mut inner, record_key, subkey, true)
+            .await?;
 
         // Get the descriptor and schema for the key
         let Some(descriptor) = last_get_result.opt_descriptor else {
@@ -838,37 +852,43 @@ impl StorageManager {
             writer.secret,
         )?);
 
-        // Write the value locally first
-        veilid_log!(self debug "Writing subkey locally: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
-        Self::handle_set_local_value_inner(
-            &mut inner,
-            record_key,
-            subkey,
-            signed_value_data.clone(),
-            InboundWatchUpdateMode::NoUpdate,
-        )
-        .await?;
-
-        // Note that we are writing this subkey actively
-        // If it appears we are already doing this, then put it to the offline queue
-        let already_writing = self.mark_active_subkey_write_inner(&mut inner, record_key, subkey);
-
-        if already_writing || !self.dht_is_online() {
-            if allow_offline == AllowOffline(true) {
-                veilid_log!(self debug "Writing subkey offline: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
-                // Add to offline writes to flush
-                Self::add_offline_subkey_write_inner(
-                    &mut inner,
-                    record_key,
-                    subkey,
-                    safety_selection,
-                );
-                return Ok(None);
-            } else {
-                self.unmark_active_subkey_write_inner(&mut inner, record_key, subkey);
+        // Check if we are offline
+        // This is a race, but an optimization to avoid fanout if it is likely to fail
+        if !self.dht_is_online() {
+            if allow_offline == AllowOffline(false) {
                 apibail_try_again!("offline, try again later");
             }
+            veilid_log!(self debug "Writing subkey offline because we are offline: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
+            // Add to offline writes to flush
+            self.add_offline_subkey_write_inner(
+                &mut inner,
+                record_key,
+                subkey,
+                safety_selection,
+                signed_value_data,
+            );
+            return Ok(None);
         };
+
+        // Note that we are writing this subkey in the foreground
+        // If it appears we are already doing this, then put it to the background/offline queue
+        let opt_guard = self.mark_active_subkey_write_inner(&mut inner, record_key, subkey);
+        if opt_guard.is_none() {
+            if allow_offline == AllowOffline(false) {
+                apibail_try_again!("offline, try again later");
+            }
+            veilid_log!(self debug "Writing subkey offline due to concurrent foreground write: {}:{} len={}", record_key, subkey, signed_value_data.value_data().data().len() );
+            // Add to offline writes to flush
+            self.add_offline_subkey_write_inner(
+                &mut inner,
+                record_key,
+                subkey,
+                safety_selection,
+                signed_value_data,
+            );
+            return Ok(None);
+        }
+        let guard = opt_guard.unwrap();
 
         // Drop the lock for network access
         drop(inner);
@@ -891,20 +911,20 @@ impl StorageManager {
                 // Failed to write, try again later
                 let mut inner = self.inner.lock().await;
 
+                // Remove from active subkey writes
+                self.unmark_active_subkey_write_inner(&mut inner, guard);
+
                 if allow_offline == AllowOffline(true) {
-                    Self::add_offline_subkey_write_inner(
+                    self.add_offline_subkey_write_inner(
                         &mut inner,
                         record_key,
                         subkey,
                         safety_selection,
+                        signed_value_data.clone(),
                     );
                 } else {
-                    self.unmark_active_subkey_write_inner(&mut inner, record_key, subkey);
                     apibail_try_again!("offline, try again later");
                 }
-
-                // Remove from active subkey writes
-                self.unmark_active_subkey_write_inner(&mut inner, record_key, subkey);
 
                 if matches!(e, VeilidAPIError::TryAgain { message: _ }) {
                     return Ok(None);
@@ -913,16 +933,110 @@ impl StorageManager {
             }
         };
 
-        let process = || async {
-            // Wait for the first result
-            let Ok(result) = res_rx.recv_async().await else {
+        let out = if allow_offline == AllowOffline(true) {
+            // Process one fanout result in the foreground, and if necessary, more in the background
+            // This trades off possibly having a consensus conflict, which requires watching for ValueChanged
+            // for lower latency. Can only be done if we are allowing offline processing because
+            // the network could go down after the first fanout result is processed and before we complete fanout.
+            self.background_process_set_value_results(
+                res_rx,
+                record_key,
+                subkey,
+                signed_value_data,
+                safety_selection,
+            )
+            .await
+        } else {
+            // Process all fanout results in the foreground.
+            // Takes longer but ensures the value is fully committed to the network.
+            self.foreground_process_set_value_results(
+                res_rx,
+                record_key,
+                subkey,
+                signed_value_data,
+                safety_selection,
+            )
+            .await
+        };
+
+        // Remove active subkey write
+        let mut inner = self.inner.lock().await;
+
+        // Remove from active subkey writes
+        self.unmark_active_subkey_write_inner(&mut inner, guard);
+
+        if matches!(out, Err(VeilidAPIError::TryAgain { message: _ })) {
+            return Ok(None);
+        }
+
+        out
+    }
+
+    async fn background_process_set_value_results(
+        &self,
+        res_rx: flume::Receiver<VeilidAPIResult<set_value::OutboundSetValueResult>>,
+        record_key: TypedRecordKey,
+        subkey: ValueSubkey,
+        signed_value_data: Arc<SignedValueData>,
+        safety_selection: SafetySelection,
+    ) -> VeilidAPIResult<Option<ValueData>> {
+        // Wait for the first result
+        let Ok(result) = res_rx.recv_async().await else {
+            apibail_internal!("failed to receive results");
+        };
+        let result = result?;
+        let partial = result.fanout_result.kind.is_incomplete();
+
+        // Process the returned result
+        let out = self
+            .process_outbound_set_value_result(
+                record_key,
+                subkey,
+                signed_value_data.value_data().clone(),
+                safety_selection,
+                result,
+            )
+            .await?;
+
+        // If there's more to process, do it in the background
+        if partial {
+            self.process_deferred_outbound_set_value_result(
+                res_rx,
+                record_key,
+                subkey,
+                out.clone()
+                    .unwrap_or_else(|| signed_value_data.value_data().clone()),
+                safety_selection,
+            );
+        }
+
+        Ok(out)
+    }
+
+    async fn foreground_process_set_value_results(
+        &self,
+        res_rx: flume::Receiver<VeilidAPIResult<set_value::OutboundSetValueResult>>,
+        record_key: TypedRecordKey,
+        subkey: ValueSubkey,
+        signed_value_data: Arc<SignedValueData>,
+        safety_selection: SafetySelection,
+    ) -> VeilidAPIResult<Option<ValueData>> {
+        let Some(stop_token) = self.startup_lock.stop_token() else {
+            apibail_not_initialized!();
+        };
+
+        loop {
+            let timeout_res = res_rx.recv_async().timeout_at(stop_token.clone()).await;
+            let Ok(res) = timeout_res else {
+                apibail_not_initialized!();
+            };
+            let Ok(result) = res else {
                 apibail_internal!("failed to receive results");
             };
             let result = result?;
-            let partial = result.fanout_result.kind.is_incomplete();
+            let is_incomplete = result.fanout_result.kind.is_incomplete();
 
-            // Process the returned result
-            let out = self
+            let opt_value_data = self
                 .process_outbound_set_value_result(
                     record_key,
                     subkey,
@@ -931,35 +1045,10 @@ impl StorageManager {
                     result,
                 )
                 .await?;
-
-            // If there's more to process, do it in the background
-            if partial {
-                self.process_deferred_outbound_set_value_result(
-                    res_rx,
-                    record_key,
-                    subkey,
-                    out.clone()
-                        .unwrap_or_else(|| signed_value_data.value_data().clone()),
-                    safety_selection,
-                );
+            if !is_incomplete {
+                return Ok(opt_value_data);
             }
-
-            Ok(out)
-        };
-
-        let out = process().await;
-
-        // Remove active subkey write
-        let mut inner = self.inner.lock().await;
-
-        // Remove from active subkey writes
-        self.unmark_active_subkey_write_inner(&mut inner, record_key, subkey);
-
-        if matches!(out, Err(VeilidAPIError::TryAgain { message: _ })) {
-            return Ok(None);
         }
-
-        out
     }
 
     /// Create, update or cancel an outbound watch to a DHT value
@@ -971,6 +1060,10 @@ impl StorageManager {
         expiration: Timestamp,
         count: u32,
     ) -> VeilidAPIResult<bool> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Obtain the watch change lock
         // (may need to wait for background operations to complete on the watch)
         let watch_lock = self.outbound_watch_lock_table.lock_tag(record_key).await;
@@ -1069,6 +1162,10 @@ impl StorageManager {
         record_key: TypedRecordKey,
         subkeys: ValueSubkeyRangeSet,
     ) -> VeilidAPIResult<bool> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Obtain the watch change lock
         // (may need to wait for background operations to complete on the watch)
         let watch_lock = self.outbound_watch_lock_table.lock_tag(record_key).await;
@@ -1138,6 +1235,10 @@ impl StorageManager {
         subkeys: ValueSubkeyRangeSet,
         scope: DHTReportScope,
     ) -> VeilidAPIResult<DHTRecordReport> {
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let subkeys = if subkeys.is_empty() {
             ValueSubkeyRangeSet::full()
         } else {
@@ -1496,7 +1597,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn open_existing_record_inner(
+    async fn open_existing_record_inner(
         &self,
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
@@ -1563,7 +1664,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn open_new_record_inner(
+    async fn open_new_record_inner(
         &self,
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
@@ -1621,7 +1722,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn get_value_nodes(
+    async fn get_value_nodes(
         &self,
         record_key: TypedRecordKey,
     ) -> VeilidAPIResult<Option<Vec<NodeRef>>> {
@@ -1652,9 +1753,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn process_fanout_results_inner<
-        I: IntoIterator<Item = (ValueSubkeyRangeSet, FanoutResult)>,
-    >(
+    fn process_fanout_results_inner<I: IntoIterator<Item = (ValueSubkeyRangeSet, FanoutResult)>>(
         inner: &mut StorageManagerInner,
         vcrypto: &CryptoSystemGuard<'_>,
         record_key: TypedRecordKey,
@@ -1734,11 +1833,20 @@ impl StorageManager {
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
     async fn handle_get_local_value_inner(
+        &self,
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
         subkey: ValueSubkey,
         want_descriptor: bool,
     ) -> VeilidAPIResult<GetResult> {
+        // See if the value is in the offline subkey writes first,
+        // since it may not have been committed yet to the local record store
+        if let Some(get_result) =
+            self.get_offline_subkey_writes_subkey(inner, record_key, subkey, want_descriptor)?
+        {
+            return Ok(get_result);
+        }
+
         // See if it's in the local record store
         let Some(local_record_store) = inner.local_record_store.as_mut() else {
             apibail_not_initialized!();
@@ -1757,13 +1865,22 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub(super) async fn handle_set_local_value_inner(
+    async fn handle_set_local_value_inner(
+        &self,
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
         subkey: ValueSubkey,
         signed_value_data: Arc<SignedValueData>,
         watch_update_mode: InboundWatchUpdateMode,
     ) -> VeilidAPIResult<()> {
+        // See if this new data supercedes any offline subkey writes
+        self.remove_old_offline_subkey_writes_inner(
+            inner,
+            record_key,
+            subkey,
+            signed_value_data.clone(),
+        );
+
         // See if it's in the local record store
         let Some(local_record_store) = inner.local_record_store.as_mut() else {
             apibail_not_initialized!();
@@ -1831,7 +1948,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub(super) async fn handle_set_remote_value_inner(
+    async fn handle_set_remote_value_inner(
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
         subkey: ValueSubkey,
@@ -1869,7 +1986,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub(super) async fn handle_inspect_remote_value_inner(
+    async fn handle_inspect_remote_value_inner(
         &self,
         inner: &mut StorageManagerInner,
         record_key: TypedRecordKey,
@@ -1911,27 +2028,7 @@ impl StorageManager {
     }
 
     #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn add_offline_subkey_write_inner(
-        inner: &mut StorageManagerInner,
-        record_key: TypedRecordKey,
-        subkey: ValueSubkey,
-        safety_selection: SafetySelection,
-    ) {
-        inner
-            .offline_subkey_writes
-            .entry(record_key)
-            .and_modify(|x| {
-                x.subkeys.insert(subkey);
-            })
-            .or_insert(tasks::offline_subkey_writes::OfflineSubkeyWrite {
-                safety_selection,
-                subkeys: ValueSubkeyRangeSet::single(subkey),
-                subkeys_in_flight: ValueSubkeyRangeSet::new(),
-            });
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn process_deferred_results<T: Send + 'static>(
+    fn process_deferred_results<T: Send + 'static>(
         &self,
         receiver: flume::Receiver<T>,
         handler: impl FnMut(T) -> PinBoxFutureStatic<bool> + Send + 'static,

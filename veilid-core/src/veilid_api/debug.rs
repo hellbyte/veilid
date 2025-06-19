@@ -1641,7 +1641,7 @@ impl VeilidAPI {
     }
 
     async fn debug_record_set(&self, args: Vec<String>) -> VeilidAPIResult<String> {
-        let opt_arg_add = if args.len() >= 2 && get_dht_key_no_safety(&args[1]).is_some() {
+        let mut opt_arg_add = if args.len() >= 2 && get_dht_key_no_safety(&args[1]).is_some() {
             1
         } else {
             0
@@ -1658,14 +1658,43 @@ impl VeilidAPI {
         )?;
         let data =
             get_debug_argument_at(&args, 2 + opt_arg_add, "debug_record_set", "data", get_data)?;
-        let writer = get_debug_argument_at(
+        let writer = match get_debug_argument_at(
             &args,
             3 + opt_arg_add,
             "debug_record_set",
             "writer",
             get_keypair,
-        )
-        .ok();
+        ) {
+            Ok(v) => {
+                opt_arg_add += 1;
+                Some(v)
+            }
+            Err(_) => None,
+        };
+        let allow_offline = if args.len() > 3 + opt_arg_add {
+            get_debug_argument_at(
+                &args,
+                3 + opt_arg_add,
+                "debug_record_set",
+                "allow_offline",
+                get_string,
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        let allow_offline = if let Some(allow_offline) = allow_offline {
+            if &allow_offline == "online" || &allow_offline == "false" {
+                Some(AllowOffline(false))
+            } else if &allow_offline == "offline" || &allow_offline == "true" {
+                Some(AllowOffline(true))
+            } else {
+                return Ok(format!("Unknown allow_offline: {}", allow_offline));
+            }
+        } else {
+            None
+        };
 
         // Do a record set
         let value = match rc
@@ -1675,7 +1704,7 @@ impl VeilidAPI {
                 data,
                 Some(SetDHTValueOptions {
                     writer,
-                    allow_offline: None,
+                    allow_offline,
                 }),
             )
             .await
@@ -1710,7 +1739,7 @@ impl VeilidAPI {
             "subkey",
             get_number::<u32>,
         )?;
-        let force_refresh = if args.len() >= 3 + opt_arg_add {
+        let force_refresh = if args.len() > 2 + opt_arg_add {
             Some(get_debug_argument_at(
                 &args,
                 2 + opt_arg_add,
@@ -2222,7 +2251,7 @@ DHT Operations:
            create <dhtschema> [<cryptokind> [<safety>]] - create a new dht record
            open <key>[+<safety>] [<writer>] - open an existing dht record
            close [<key>] - close an opened/created dht record
-           set [<key>] <subkey> <data> - write a value to a dht record subkey
+           set [<key>] <subkey> <data> [<writer>] [offline|online]- write a value to a dht record subkey
            get [<key>] <subkey> [force] - read a value from a dht record subkey
            delete <key> - delete the local copy of a dht record (not from the network)
            info [<key>] [subkey] - display information about a dht record or subkey

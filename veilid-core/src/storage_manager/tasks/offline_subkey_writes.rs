@@ -4,14 +4,6 @@ use stop_token::future::FutureExt as _;
 
 impl_veilid_log_facility!("stor");
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct OfflineSubkeyWrite {
-    pub safety_selection: SafetySelection,
-    pub subkeys: ValueSubkeyRangeSet,
-    #[serde(default)]
-    pub subkeys_in_flight: ValueSubkeyRangeSet,
-}
-
 #[derive(Debug)]
 enum OfflineSubkeyWriteResult {
     Finished(set_value::OutboundSetValueResult),
@@ -49,7 +41,8 @@ impl StorageManager {
         };
         let get_result = {
             let mut inner = self.inner.lock().await;
-            Self::handle_get_local_value_inner(&mut inner, key, subkey, true).await
+            self.handle_get_local_value_inner(&mut inner, key, subkey, true)
+                .await
         };
         let Ok(get_result) = get_result else {
             veilid_log!(self debug "Offline subkey write had no subkey result: {}:{}", key, subkey);
@@ -85,7 +78,7 @@ impl StorageManager {
                                 // Record the newer value and send and update since it is different than what we just set
                                 let mut inner = self.inner.lock().await;
 
-                                Self::handle_set_local_value_inner(
+                                self.handle_set_local_value_inner(
                                     &mut inner,
                                     key,
                                     subkey,
@@ -177,36 +170,14 @@ impl StorageManager {
         // Debug print the result
         veilid_log!(self debug "Offline write result: {:?}", result);
 
-        // Get the offline subkey write record
-        match inner
-            .offline_subkey_writes
-            .entry(result.work_item.record_key)
-        {
-            hashlink::linked_hash_map::Entry::Occupied(mut o) => {
-                let finished = {
-                    let osw = o.get_mut();
-
-                    // Mark in-flight subkeys as having been completed
-                    let subkeys_still_offline =
-                        result.work_item.subkeys.difference(&result.written_subkeys);
-                    // Now any left over are still offline, so merge them with any subkeys that have been added while we were working
-                    osw.subkeys = osw.subkeys.union(&subkeys_still_offline);
-                    // And clear the subkeys in flight since we're done with this key for now
-                    osw.subkeys_in_flight =
-                        osw.subkeys_in_flight.difference(&result.written_subkeys);
-
-                    // If we have no new work to do, and not still doing work, then this record is done
-                    osw.subkeys.is_empty() && osw.subkeys_in_flight.is_empty()
-                };
-                if finished {
-                    veilid_log!(self debug "Offline write finished key {}", result.work_item.record_key);
-                    o.remove();
-                }
-            }
-            hashlink::linked_hash_map::Entry::Vacant(_) => {
-                veilid_log!(self warn "offline write work items should always be on offline_subkey_writes entries that exist: ignoring key {}", result.work_item.record_key);
-            }
-        }
+        // Mark the offline subkey write as no longer in-flight
+        let subkeys_still_offline = result.work_item.subkeys.difference(&result.written_subkeys);
+        self.finish_offline_subkey_writes_inner(
+            &mut inner,
+            result.work_item.record_key,
+            result.written_subkeys,
+            subkeys_still_offline,
+        );
 
         // Keep the list of nodes that returned a value for later reference
         let crypto = self.crypto();

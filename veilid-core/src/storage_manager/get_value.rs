@@ -390,7 +390,7 @@ impl StorageManager {
 
         // If we got a new value back then write it to the opened record
         if Some(get_result_value.value_data().seq()) != opt_last_seq {
-            Self::handle_set_local_value_inner(
+            self.handle_set_local_value_inner(
                 &mut inner,
                 record_key,
                 subkey,
@@ -415,8 +415,9 @@ impl StorageManager {
         // See if this is a remote or local value
         let (_is_local, last_get_result) = {
             // See if the subkey we are getting has a last known local value
-            let mut last_get_result =
-                Self::handle_get_local_value_inner(&mut inner, key, subkey, true).await?;
+            let mut last_get_result = self
+                .handle_get_local_value_inner(&mut inner, key, subkey, true)
+                .await?;
             // If this is local, it must have a descriptor already
             if last_get_result.opt_descriptor.is_some() {
                 if !want_descriptor {

@@ -140,6 +140,40 @@ impl StorageManager {
             .await;
     }
 
+    async fn rehydrate_single_subkey_inner(
+        &self,
+        inner: &mut StorageManagerInner,
+        record_key: TypedRecordKey,
+        subkey: ValueSubkey,
+        safety_selection: SafetySelection,
+    ) -> bool {
+        // Get value to rehydrate with
+        let get_result = match self
+            .handle_get_local_value_inner(inner, record_key, subkey, false)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                veilid_log!(self debug "Missing local record for rehydrating subkey: record={} subkey={}: {}", record_key, subkey, e);
+                return false;
+            }
+        };
+
+        let data = match get_result.opt_value {
+            Some(v) => v,
+            None => {
+                veilid_log!(self debug "Missing local subkey data for rehydrating subkey: record={} subkey={}", record_key, subkey);
+                return false;
+            }
+        };
+
+        // Add to offline writes to flush
+        veilid_log!(self debug "Rehydrating: record={} subkey={}", record_key, subkey);
+        self.add_offline_subkey_write_inner(inner, record_key, subkey, safety_selection, data);
+
+        true
+    }
+
     #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
     pub(super) async fn rehydrate_all_subkeys(
         &self,
@@ -156,15 +190,13 @@ impl StorageManager {
         let mut rehydrated = ValueSubkeyRangeSet::new();
         for (n, subkey) in local_inspect_result.subkeys().iter().enumerate() {
             if local_inspect_result.seqs()[n].is_some() {
-                // Add to offline writes to flush
-                veilid_log!(self debug "Rehydrating: record={} subkey={}", record_key, subkey);
-                rehydrated.insert(subkey);
-                Self::add_offline_subkey_write_inner(
-                    &mut inner,
-                    record_key,
-                    subkey,
-                    safety_selection,
-                );
+                // Rehydrate subkey
+                if self
+                    .rehydrate_single_subkey_inner(&mut inner, record_key, subkey, safety_selection)
+                    .await
+                {
+                    rehydrated.insert(subkey);
+                }
             }
         }
 
@@ -214,15 +246,13 @@ impl StorageManager {
             // Does the online subkey have enough consensus?
             // If not, schedule it to be written in the background
             if sfr.consensus_nodes.len() < consensus_count {
-                // Add to offline writes to flush
-                veilid_log!(self debug "Rehydrating: record={} subkey={}", record_key, subkey);
-                rehydrated.insert(subkey);
-                Self::add_offline_subkey_write_inner(
-                    &mut inner,
-                    record_key,
-                    subkey,
-                    safety_selection,
-                );
+                // Rehydrate subkey
+                if self
+                    .rehydrate_single_subkey_inner(&mut inner, record_key, subkey, safety_selection)
+                    .await
+                {
+                    rehydrated.insert(subkey);
+                }
             }
         }
 

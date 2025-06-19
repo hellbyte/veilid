@@ -1171,9 +1171,9 @@ impl StorageManager {
             // Set the local value
             let mut report_value_change = false;
             if let Some(value) = &value {
-                let last_get_result =
-                    Self::handle_get_local_value_inner(inner, record_key, first_subkey, true)
-                        .await?;
+                let last_get_result = self
+                    .handle_get_local_value_inner(inner, record_key, first_subkey, true)
+                    .await?;
 
                 let descriptor = last_get_result.opt_descriptor.unwrap();
                 let schema = descriptor.schema()?;
@@ -1211,7 +1211,7 @@ impl StorageManager {
 
                 // Keep the value because it is newer than the one we have
                 if report_value_change {
-                    Self::handle_set_local_value_inner(
+                    self.handle_set_local_value_inner(
                         inner,
                         record_key,
                         first_subkey,

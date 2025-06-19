@@ -277,19 +277,19 @@ impl StorageManager {
     pub(super) fn process_deferred_outbound_set_value_result(
         &self,
         res_rx: flume::Receiver<Result<set_value::OutboundSetValueResult, VeilidAPIError>>,
-        key: TypedRecordKey,
+        record_key: TypedRecordKey,
         subkey: ValueSubkey,
-        last_value_data: ValueData,
+        requested_value_data: ValueData,
         safety_selection: SafetySelection,
     ) {
         let registry = self.registry();
-        let last_value_data = Arc::new(Mutex::new(last_value_data));
+        let last_requested_value_data = Arc::new(Mutex::new(requested_value_data));
         self.process_deferred_results(
             res_rx,
             Box::new(
                 move |result: VeilidAPIResult<set_value::OutboundSetValueResult>| -> PinBoxFutureStatic<bool> {
                     let registry = registry.clone();
-                    let last_value_data = last_value_data.clone();
+                    let last_requested_value_data = last_requested_value_data.clone();
                     Box::pin(async move {
                         let this = registry.storage_manager();
 
@@ -301,8 +301,8 @@ impl StorageManager {
                             }
                         };
                         let is_incomplete = result.fanout_result.kind.is_incomplete();
-                        let lvd = last_value_data.lock().clone();
-                        let value_data = match this.process_outbound_set_value_result(key, subkey, lvd, safety_selection, result).await {
+                        let requested_value_data = last_requested_value_data.lock().clone();
+                        let value_data = match this.process_outbound_set_value_result(record_key, subkey, requested_value_data, safety_selection, result).await {
                             Ok(Some(v)) => v,
                             Ok(None) => {
                                 return is_incomplete;
@@ -320,7 +320,7 @@ impl StorageManager {
                         // if the sequence number changed since our first partial update
                         // Send with a max count as this is not attached to any watch
                         let changed = {
-                            let mut lvd = last_value_data.lock();
+                            let mut lvd = last_requested_value_data.lock();
                             if lvd.seq() != value_data.seq() {
                                 *lvd = value_data.clone();
                                 true
@@ -329,7 +329,7 @@ impl StorageManager {
                             }
                         };
                         if changed {
-                            this.update_callback_value_change(key,ValueSubkeyRangeSet::single(subkey), u32::MAX, Some(value_data));
+                            this.update_callback_value_change(record_key,ValueSubkeyRangeSet::single(subkey), u32::MAX, Some(value_data));
                         }
 
                         // Return done
@@ -345,7 +345,7 @@ impl StorageManager {
         &self,
         record_key: TypedRecordKey,
         subkey: ValueSubkey,
-        last_value_data: ValueData,
+        requested_value_data: ValueData,
         safety_selection: SafetySelection,
         result: set_value::OutboundSetValueResult,
     ) -> Result<Option<ValueData>, VeilidAPIError> {
@@ -362,7 +362,13 @@ impl StorageManager {
         let was_offline = self.check_fanout_set_offline(record_key, subkey, &result.fanout_result);
         if was_offline {
             // Failed to write, try again later
-            Self::add_offline_subkey_write_inner(&mut inner, record_key, subkey, safety_selection);
+            self.add_offline_subkey_write_inner(
+                &mut inner,
+                record_key,
+                subkey,
+                safety_selection,
+                result.signed_value_data.clone(),
+            );
         }
 
         // Keep the list of nodes that returned a value for later reference
@@ -376,19 +382,18 @@ impl StorageManager {
                 .with(|c| c.network.dht.set_value_count as usize),
         );
 
+        // Record the set value locally since it was successfully set online
+        self.handle_set_local_value_inner(
+            &mut inner,
+            record_key,
+            subkey,
+            result.signed_value_data.clone(),
+            InboundWatchUpdateMode::UpdateAll,
+        )
+        .await?;
+
         // Return the new value if it differs from what was asked to set
-        if result.signed_value_data.value_data() != &last_value_data {
-            // Record the newer value and send and update since it is different than what we just set
-
-            Self::handle_set_local_value_inner(
-                &mut inner,
-                record_key,
-                subkey,
-                result.signed_value_data.clone(),
-                InboundWatchUpdateMode::UpdateAll,
-            )
-            .await?;
-
+        if result.signed_value_data.value_data() != &requested_value_data {
             return Ok(Some(result.signed_value_data.value_data().clone()));
         }
 
@@ -413,8 +418,9 @@ impl StorageManager {
         // See if this is a remote or local value
         let (is_local, last_get_result) = {
             // See if the subkey we are modifying has a last known local value
-            let last_get_result =
-                Self::handle_get_local_value_inner(&mut inner, key, subkey, true).await?;
+            let last_get_result = self
+                .handle_get_local_value_inner(&mut inner, key, subkey, true)
+                .await?;
             // If this is local, it must have a descriptor already
             if last_get_result.opt_descriptor.is_some() {
                 (true, last_get_result)
@@ -484,7 +490,7 @@ impl StorageManager {
 
         // Do the set and return no new value
         let res = if is_local {
-            Self::handle_set_local_value_inner(
+            self.handle_set_local_value_inner(
                 &mut inner,
                 key,
                 subkey,
