@@ -202,8 +202,6 @@ impl AttachmentManager {
     }
 
     async fn startup(&self) -> EyreResult<StartupDisposition> {
-        let guard = self.startup_context.startup_lock.startup()?;
-
         let rpc_processor = self.rpc_processor();
         let network_manager = self.network_manager();
 
@@ -233,9 +231,6 @@ impl AttachmentManager {
             return Err(e);
         }
 
-        // Startup successful
-        guard.success();
-
         // Inform api clients that things have changed
         veilid_log!(self trace "sending network state update to api clients");
         network_manager.send_network_update();
@@ -244,13 +239,6 @@ impl AttachmentManager {
     }
 
     async fn shutdown(&self) {
-        let guard = self
-            .startup_context
-            .startup_lock
-            .shutdown()
-            .await
-            .expect("should be started up");
-
         let routing_table = self.routing_table();
         let rpc_processor = self.rpc_processor();
         let network_manager = self.network_manager();
@@ -264,10 +252,7 @@ impl AttachmentManager {
         // Shutdown RPCProcessor
         rpc_processor.shutdown().await;
 
-        // Shutdown successful
-        guard.success();
-
-        // send update
+        // Send update
         veilid_log!(self debug "sending network state update to api clients");
         network_manager.send_network_update();
     }
@@ -370,6 +355,8 @@ impl AttachmentManager {
 
     #[instrument(level = "debug", skip_all, err)]
     pub async fn init_async(&self) -> EyreResult<()> {
+        let guard = self.startup_context.startup_lock.startup()?;
+        guard.success();
         Ok(())
     }
 
@@ -385,10 +372,23 @@ impl AttachmentManager {
     }
 
     #[instrument(level = "debug", skip_all)]
-    pub async fn terminate_async(&self) {}
+    pub async fn terminate_async(&self) {
+        let guard = self
+            .startup_context
+            .startup_lock
+            .shutdown()
+            .await
+            .expect("should be initialized");
+
+        // Shutdown successful
+        guard.success();
+    }
 
     #[instrument(level = "trace", skip_all)]
     pub async fn attach(&self) -> bool {
+        let Ok(_guard) = self.startup_context.startup_lock.enter() else {
+            return false;
+        };
         // Create long-running connection maintenance routine
         let mut inner = self.inner.lock();
         if inner.attachment_maintainer_jh.is_some() {
@@ -406,6 +406,10 @@ impl AttachmentManager {
 
     #[instrument(level = "trace", skip_all)]
     pub async fn detach(&self) -> bool {
+        let Ok(_guard) = self.startup_context.startup_lock.enter() else {
+            return false;
+        };
+
         let attachment_maintainer_jh = {
             let mut inner = self.inner.lock();
             let attachment_maintainer_jh = inner.attachment_maintainer_jh.take();
