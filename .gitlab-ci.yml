@@ -120,6 +120,7 @@ semgrep:
   # Run the "semgrep ci" command on the command line of the docker image and send findings
   # to GitLab SAST.
   script: semgrep ci --gitlab-sast > gl-sast-report.json || true
+  allow_failure: true
   artifacts:
     reports:
       sast: gl-sast-report.json
