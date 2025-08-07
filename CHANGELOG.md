@@ -1,5 +1,8 @@
 **UNRELEASED**
 
+
+**Changed in Veilid 0.4.8**
+
 - _BREAKING API CHANGES_:
   - set_dht_value now accepts a new flag called `allow_offline`, which defaults to `true`.
     - The previous `writer: Option<KeyPair>` argument position is now `options: Option<SetDHTValueOptions>`
@@ -13,6 +16,7 @@
   - Add 'auto' mode for detect_address_changes
   - Improved `TypedXXX` conversion traits, including to and from `Vec<u8>`
   - Ensure utf8 replacement characters are never emitted in logs
+  - Export `CRYPTO_KIND_VLD0` constant
 
 - veilid-python:
   - Correction of type hints

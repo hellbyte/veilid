@@ -22,7 +22,11 @@ pub(crate) use receipt::*;
 pub use types::*;
 
 #[cfg(feature = "enable-crypto-none")]
+pub use none::CRYPTO_KIND_NONE;
+#[cfg(feature = "enable-crypto-none")]
 pub(crate) use none::*;
+#[cfg(feature = "enable-crypto-vld0")]
+pub use vld0::CRYPTO_KIND_VLD0;
 #[cfg(feature = "enable-crypto-vld0")]
 pub(crate) use vld0::*;
 
