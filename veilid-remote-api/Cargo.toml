@@ -1,7 +1,7 @@
 [package]
 # --- Bumpversion match - do not reorder
 name = "veilid-remote-api"
-version = "0.4.7"
+version = "0.4.8"
 # ---
 description = "Library that provides the ability to control a Veilid node remotely"
 repository.workspace = true
@@ -16,7 +16,7 @@ homepage = "https://veilid.gitlab.io/developer-book/"
 path = "src/lib.rs"
 
 [dependencies]
-veilid-core = { version = "0.4.7", path = "../veilid-core" }
+veilid-core = { version = "0.4.8", path = "../veilid-core" }
 
 tracing = { version = "^0", features = ["log", "attributes"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
