@@ -98,12 +98,20 @@ build_cache:
     - echo "No need to rebuild cache"
     - fi
   rules:
+    # Do not run in pipeline dry runs or nightly releases
     - if: $CI_COMMIT_MESSAGE =~ /\[ci dryrun]/ || $IS_NIGHTLY == "true"
       when: never
+    # Run if branch is not Main and in response to branch push
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+      changes:
+        - veilid-*/**/*
+        - "**/*[Cc]argo*"
+    # Run if branch is not Main and in response to branch merge request
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - veilid-*/**/*
         - "**/*[Cc]argo*"
+    # Run if branch is a merge request of Main
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - veilid-*/**/*
@@ -128,6 +136,17 @@ test_build:
     - earthly --use-inline-cache +unit-tests-linux --BASE=container $project_args --CACHE_TAG=$CACHE_TAG --CACHE_NAME=$CACHE_NAME
   resource_group: test
   rules:
+    # Run if branch is not Main and in response to branch push
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+      changes:
+        - veilid-*/**/*
+        - "**/*[Cc]argo*"
+    # Run if branch is not Main and in response to branch merge request
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - veilid-*/**/*
+        - "**/*[Cc]argo*"
+    # Run if branch is a merge request of Main
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - veilid-*/**/*
