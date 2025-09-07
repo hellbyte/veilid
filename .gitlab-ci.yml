@@ -53,26 +53,57 @@ build_cache:
   stage: prepare
   script:
     - 'echo "CI_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE"'
+    - 'echo "CI_COMMIT_BRANCH: $CI_COMMIT_BRANCH"'
+    - 'echo "CI_DEFAULT_BRANCH: $CI_DEFAULT_BRANCH"'
     - apk update && apk add jq && apk add curl
-    - if ! docker manifest inspect $CI_REGISTRY_IMAGE/build-cache:latest > /dev/null; then
+    # Determine cache tag based on branch use branch name as tag, sanitize for Docker tag compatibility
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        CACHE_TAG="$CI_DEFAULT_BRANCH"
+        CACHE_NAME="build-cache"
+      else
+        CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        CACHE_NAME="build-cache-branch"
+      fi
+    - 'echo "Using cache tag: $CACHE_TAG in repository: $CACHE_NAME"'
+    # Check if cache exists
+    - if ! docker manifest inspect $CI_REGISTRY_IMAGE/$CACHE_NAME:$CACHE_TAG > /dev/null 2>&1; then
     - CACHE_EPOCH=0
+    - echo "Cache not found, will create new cache"
     - else
-    - 'CONT_REPO_ID=$(curl "https://gitlab.com/api/graphql" --header "Content-Type: application/json" --request POST --data "{\"query\": \"query { project(fullPath: \\\"$CI_PROJECT_PATH\\\" ) { containerRepositories( name: \\\"build-cache\\\" ) { nodes { id }}}} \"}" | jq -r ".data.project.containerRepositories.nodes[0].id")'
+    - 'CONT_REPO_ID=$(curl "https://gitlab.com/api/graphql" --header "Content-Type: application/json" --request POST --data "{\"query\": \"query { project(fullPath: \\\"$CI_PROJECT_PATH\\\" ) { containerRepositories( name: \\\"$CACHE_NAME\\\" ) { nodes { id }}}} \"}" | jq -r ".data.project.containerRepositories.nodes[0].id")'
     - echo "CONTAINER REPO ID = $CONT_REPO_ID"
-    - 'CACHE_TS=$(curl "https://gitlab.com/api/graphql" --header "Content-Type: application/json" --request POST --data "{\"query\": \"query { containerRepository(id: \\\"$CONT_REPO_ID\\\") { tags( first: 1 name: \\\"latest\\\" ) { nodes { location publishedAt }}}} \"}" | jq -r ".data.containerRepository.tags.nodes[0].publishedAt" | cut -d "+" -f1 | sed "s/T/ /g" )'
+    - 'CACHE_TS=$(curl "https://gitlab.com/api/graphql" --header "Content-Type: application/json" --request POST --data "{\"query\": \"query { containerRepository(id: \\\"$CONT_REPO_ID\\\") { tags( first: 1 name: \\\"$CACHE_TAG\\\" ) { nodes { location publishedAt }}}} \"}" | jq -r ".data.containerRepository.tags.nodes[0].publishedAt" | cut -d "+" -f1 | sed "s/T/ /g" )'
     - CACHE_EPOCH=$(date -d "$CACHE_TS" +%s)
+    - 'echo "Cache found with timestamp: $CACHE_TS"'
+    # Check if branch cache is older than 7 days (for non-default branches)
+    - |
+      if [[ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]]; then
+        CURRENT_EPOCH=$(date +%s)
+        SEVEN_DAYS_SECONDS=$((7 * 24 * 60 * 60))
+        CACHE_AGE=$((CURRENT_EPOCH - CACHE_EPOCH))
+        if [[ $CACHE_AGE -gt $SEVEN_DAYS_SECONDS ]]; then
+          echo "Branch cache is older than 7 days, will rebuild"
+          CACHE_EPOCH=0
+        fi
+      fi
     - fi
     - EARTHLY_EPOCH=$(git log -1 --format=%ct Earthfile)
     - echo "CACHE EPOCH = $CACHE_EPOCH, EARTHLY EPOCH = $EARTHLY_EPOCH"
+    # Build cache if needed
     - if [[ $EARTHLY_EPOCH -gt $CACHE_EPOCH ]] || [[ "$CI_PIPELINE_SOURCE" == "schedule" ]] || [[ "$CI_PIPELINE_SOURCE" == "web" ]] ; then
     - *earthly_setup
-    - earthly --use-inline-cache --save-inline-cache --strict --push -P +build-linux-cache $project_args
+    - earthly --use-inline-cache --save-inline-cache --strict --push -P +build-linux-cache $project_args --CACHE_TAG=$CACHE_TAG --CACHE_NAME=$CACHE_NAME
     - else
-    - echo "No need to rebuild"
+    - echo "No need to rebuild cache"
     - fi
   rules:
     - if: $CI_COMMIT_MESSAGE =~ /\[ci dryrun]/ || $IS_NIGHTLY == "true"
       when: never
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - veilid-*/**/*
+        - "**/*[Cc]argo*"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - veilid-*/**/*
@@ -83,8 +114,18 @@ test_build:
   extends: .base
   stage: test
   script:
+    # Use branch name as tag, sanitize for Docker tag compatibility
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        CACHE_TAG="$CI_DEFAULT_BRANCH"
+        CACHE_NAME="build-cache"
+      else
+        CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        CACHE_NAME="build-cache-branch"
+      fi
+    - 'echo "Using cache from: $CACHE_NAME:$CACHE_TAG"'
     - *earthly_setup
-    - earthly --use-inline-cache +unit-tests-linux --BASE=container $project_args
+    - earthly --use-inline-cache +unit-tests-linux --BASE=container $project_args --CACHE_TAG=$CACHE_TAG --CACHE_NAME=$CACHE_NAME
   resource_group: test
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
