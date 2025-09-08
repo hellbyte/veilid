@@ -76,7 +76,7 @@ build_cache:
     - 'CACHE_TS=$(curl "https://gitlab.com/api/graphql" --header "Content-Type: application/json" --request POST --data "{\"query\": \"query { containerRepository(id: \\\"$CONT_REPO_ID\\\") { tags( first: 1 name: \\\"$CACHE_TAG\\\" ) { nodes { location publishedAt }}}} \"}" | jq -r ".data.containerRepository.tags.nodes[0].publishedAt" | cut -d "+" -f1 | sed "s/T/ /g" )'
     - CACHE_EPOCH=$(date -d "$CACHE_TS" +%s)
     - 'echo "Cache found with timestamp: $CACHE_TS"'
-    # Check if branch cache is older than 7 days (for non-default branches)
+    # Check if branch cache is older than 7 days
     - |
       if [[ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]]; then
         CURRENT_EPOCH=$(date +%s)
@@ -117,19 +117,19 @@ build_cache:
         - veilid-*/**/*
         - "**/*[Cc]argo*"
 
-# Runs a basic unit test build, this task will use the `build-cache:latest` as set up in the projects Container Registry
+# Runs a basic unit test build
 test_build:
   extends: .base
   stage: test
   script:
     # Use branch name as tag, sanitize for Docker tag compatibility
     - |
-      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+      if [[ -z "$CI_COMMIT_BRANCH" ]]; then
         CACHE_TAG="$CI_DEFAULT_BRANCH"
         CACHE_NAME="build-cache"
       else
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
-        CACHE_NAME="build-cache-branch"
+        CACHE_NAME="build-cache"
       fi
     - 'echo "Using cache from: $CACHE_NAME:$CACHE_TAG"'
     - *earthly_setup

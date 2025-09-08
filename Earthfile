@@ -157,7 +157,9 @@ build-linux-cache:
     # RUN cargo chef cook --zigbuild --release --target aarch64-apple-darwin --recipe-path recipe.json -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core -p veilid-remote-api
     RUN veilid-wasm/wasm_remap_paths.sh cargo chef cook --zigbuild --release --target wasm32-unknown-unknown --recipe-path recipe.json -p veilid-wasm
     ARG CI_REGISTRY_IMAGE=registry.gitlab.com/veilid/veilid
-    SAVE IMAGE --push $CI_REGISTRY_IMAGE/build-cache:latest
+    ARG CACHE_NAME
+    ARG CACHE_TAG
+    SAVE IMAGE --push $CI_REGISTRY_IMAGE/$CACHE_NAME:$CACHE_TAG
 
 # Import the whole veilid code repository from the earthly host
 code-linux:
