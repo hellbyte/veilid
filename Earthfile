@@ -7,7 +7,7 @@ VERSION 0.8
 ## `+build-linux-cache` target, and defaulting to `registry.gitlab.com/veilid/veilid` if not specified
 ##
 ## BASE - tells the build whether it should run in the default mode which runs the complete build, or run by starting
-## with the remote `container` value which uses `build-cache:latest` as set up in the projects Container Registry
+## with the remote `container` value which uses `$CACHE_NAME:$CACHE_TAG` as set up in the projects Container Registry
 ##
 ########################################################################################################################
 
@@ -172,8 +172,9 @@ code-linux:
         FROM +deps-linux
     ELSE
         ARG CI_REGISTRY_IMAGE=registry.gitlab.com/veilid/veilid
-        FROM $CI_REGISTRY_IMAGE/build-cache:latest
-        # FROM registry.gitlab.com/veilid/build-cache:latest
+        ARG CACHE_NAME
+        ARG CACHE_TAG
+        FROM $CI_REGISTRY_IMAGE/$CACHE_NAME:$CACHE_TAG
     END
     COPY --keep-ts --dir .cargo build_docs.sh files scripts veilid-cli veilid-core veilid-server veilid-tools veilid-flutter veilid-wasm veilid-remote-api Cargo.lock Cargo.toml /veilid
     # Check to make sure Cargo.lock is up to date
