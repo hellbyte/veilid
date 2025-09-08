@@ -55,11 +55,12 @@ build_cache:
     - 'echo "CI_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE"'
     - 'echo "CI_COMMIT_BRANCH: $CI_COMMIT_BRANCH"'
     - 'echo "CI_DEFAULT_BRANCH: $CI_DEFAULT_BRANCH"'
+    - 'echo "CI_MERGE_REQUEST_TARGET_BRANCH_NAME: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME"'
     - apk update && apk add jq && apk add curl
     # Determine cache tag based on branch use branch name as tag, sanitize for Docker tag compatibility
     - |
       if [[ -z "$CI_COMMIT_BRANCH" ]]; then
-        CACHE_TAG="$CI_DEFAULT_BRANCH"
+        CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
         CACHE_NAME="build-cache"
       else
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
@@ -125,7 +126,7 @@ test_build:
     # Use branch name as tag, sanitize for Docker tag compatibility
     - |
       if [[ -z "$CI_COMMIT_BRANCH" ]]; then
-        CACHE_TAG="$CI_DEFAULT_BRANCH"
+        CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
         CACHE_NAME="build-cache"
       else
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
