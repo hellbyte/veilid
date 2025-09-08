@@ -58,14 +58,14 @@ build_cache:
     - apk update && apk add jq && apk add curl
     # Determine cache tag based on branch use branch name as tag, sanitize for Docker tag compatibility
     - |
-      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+      if [[ "$CI_COMMIT_BRANCH" == null ]]; then
         CACHE_TAG="$CI_DEFAULT_BRANCH"
         CACHE_NAME="build-cache"
       else
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
-        CACHE_NAME="build-cache-branch"
+        CACHE_NAME="build-cache"
       fi
-    - 'echo "Using cache tag: $CACHE_TAG in repository: $CACHE_NAME"'
+    - 'echo "Using cache tag: $CACHE_TAG in image: $CACHE_NAME"'
     # Check if cache exists
     - if ! docker manifest inspect $CI_REGISTRY_IMAGE/$CACHE_NAME:$CACHE_TAG > /dev/null 2>&1; then
     - CACHE_EPOCH=0
