@@ -6,7 +6,6 @@ CARGO_ARCH=$2
 IS_NIGHTLY=$3
 BUILD_DATE=$(date '+%Y%m%d')
 CARGO_VERSION="$(/veilid/package/cargo_version.sh /veilid/veilid-cli/Cargo.toml)"
-rm -rf /dpkg
 mkdir -p /dpkg/out
     
 # veilid-cli dpkg control

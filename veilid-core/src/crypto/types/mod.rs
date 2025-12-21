@@ -33,97 +33,49 @@ pub fn compare_crypto_kind(a: &CryptoKind, b: &CryptoKind) -> cmp::Ordering {
 /// Intersection of crypto kind vectors
 #[must_use]
 pub fn common_crypto_kinds(a: &[CryptoKind], b: &[CryptoKind]) -> Vec<CryptoKind> {
-    let mut out = Vec::new();
-    for ack in a {
-        if b.contains(ack) {
-            out.push(*ack);
-        }
-    }
-    out
+    a.iter().filter(|ack| b.contains(ack)).copied().collect()
 }
-
 mod byte_array_types;
 mod crypto_typed;
 mod crypto_typed_group;
 mod keypair;
+mod record_key;
 
 pub use byte_array_types::*;
-pub use crypto_typed::*;
-pub use crypto_typed_group::*;
 pub use keypair::*;
+pub use record_key::*;
 
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedPublicKey = CryptoTyped<PublicKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSecretKey = CryptoTyped<SecretKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedKeyPair = CryptoTyped<KeyPair>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSignature = CryptoTyped<Signature>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSharedSecret = CryptoTyped<SharedSecret>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedRouteId = CryptoTyped<RouteId>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedRecordKey = CryptoTyped<RecordKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedNodeId = CryptoTyped<NodeId>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedHashDigest = CryptoTyped<HashDigest>;
-
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedPublicKeyGroup = CryptoTypedGroup<PublicKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSecretKeyGroup = CryptoTypedGroup<SecretKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedKeyPairGroup = CryptoTypedGroup<KeyPair>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSignatureGroup = CryptoTypedGroup<Signature>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedSharedSecretGroup = CryptoTypedGroup<SharedSecret>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedRouteIdGroup = CryptoTypedGroup<RouteId>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedRecordKeyGroup = CryptoTypedGroup<RecordKey>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedNodeIdGroup = CryptoTypedGroup<NodeId>;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), declare)]
-pub type TypedHashDigestGroup = CryptoTypedGroup<HashDigest>;
-
-impl From<TypedNodeId> for TypedHashDigest {
-    fn from(value: TypedNodeId) -> Self {
-        TypedHashDigest::new(value.kind, value.value.into())
-    }
+macro_rules! impl_crypto_typed_and_group {
+    ($visibility:vis $name:ident) => {
+        impl_crypto_typed!($visibility $name);
+        impl_crypto_typed_group!($visibility $name);
+    };
 }
 
-impl From<TypedRecordKey> for TypedHashDigest {
-    fn from(value: TypedRecordKey) -> Self {
-        TypedHashDigest::new(value.kind, value.value.into())
-    }
+macro_rules! impl_crypto_typed_and_group_and_vec {
+    ($visibility:vis $name:ident) => {
+        impl_crypto_typed!($visibility $name);
+        impl_crypto_typed_group!($visibility $name);
+        impl_crypto_typed_vec!($visibility $name);
+    };
 }
 
-impl From<TypedNodeId> for TypedPublicKey {
-    fn from(value: TypedNodeId) -> Self {
-        TypedPublicKey::new(value.kind, value.value.into())
-    }
-}
+// CryptoKind typed, with group and vector conversions
+impl_crypto_typed_and_group_and_vec!(pub EncapsulationKey);
+impl_crypto_typed_and_group_and_vec!(pub DecapsulationKey);
+impl_crypto_typed_and_group_and_vec!(pub PublicKey);
+impl_crypto_typed_and_group_and_vec!(pub SecretKey);
+impl_crypto_typed_and_group_and_vec!(pub Signature);
+impl_crypto_typed_and_group_and_vec!(pub SharedSecret);
+impl_crypto_typed_and_group_and_vec!(pub HashDigest);
+impl_crypto_typed_and_group_and_vec!(pub OpaqueRecordKey);
+impl_crypto_typed_and_group_and_vec!(pub NodeId);
+impl_crypto_typed_and_group_and_vec!(pub RouteId);
+impl_crypto_typed_and_group_and_vec!(pub MemberId);
 
-impl From<TypedPublicKey> for TypedNodeId {
-    fn from(value: TypedPublicKey) -> Self {
-        TypedNodeId::new(value.kind, value.value.into())
-    }
-}
+// No vector representation
+impl_crypto_typed_and_group!(pub KeyPair);
+impl_crypto_typed_and_group!(pub RecordKey);
 
-impl From<TypedNodeIdGroup> for TypedPublicKeyGroup {
-    fn from(value: TypedNodeIdGroup) -> Self {
-        let items: Vec<TypedPublicKey> = value.iter().map(|node_id| (*node_id).into()).collect();
-        TypedPublicKeyGroup::from(items)
-    }
-}
-
-impl From<TypedPublicKeyGroup> for TypedNodeIdGroup {
-    fn from(value: TypedPublicKeyGroup) -> Self {
-        let items: Vec<TypedNodeId> = value.iter().map(|node_id| (*node_id).into()).collect();
-        TypedNodeIdGroup::from(items)
-    }
-}
+// Internal types
+impl_crypto_typed!(pub(crate) HashCoordinate);

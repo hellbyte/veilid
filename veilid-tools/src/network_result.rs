@@ -46,10 +46,9 @@ fn io_error_kind_from_error<T>(e: io::Error) -> io::Result<NetworkResult<T>> {
         | io::ErrorKind::BrokenPipe
         | io::ErrorKind::ConnectionAborted
         | io::ErrorKind::ConnectionRefused
-        | io::ErrorKind::ConnectionReset => Ok(NetworkResult::NoConnection(e)),
-        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
-            Ok(NetworkResult::InvalidMessage(e.to_string()))
-        }
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::InvalidInput => Ok(NetworkResult::NoConnection(e)),
+        io::ErrorKind::InvalidData => Ok(NetworkResult::InvalidMessage(e.to_string())),
         io::ErrorKind::AddrNotAvailable | io::ErrorKind::AddrInUse => {
             Ok(NetworkResult::AlreadyExists(e))
         }

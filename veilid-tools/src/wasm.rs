@@ -113,6 +113,6 @@ pub fn ws_err_to_io_error(err: WsErr) -> io::Error {
         WsErr::InvalidEncoding => io::Error::new(io::ErrorKind::InvalidInput, err.to_string()),
         WsErr::CantDecodeBlob => io::Error::new(io::ErrorKind::InvalidInput, err.to_string()),
         WsErr::UnknownDataType => io::Error::new(io::ErrorKind::InvalidInput, err.to_string()),
-        _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
+        _ => io::Error::other(err.to_string()),
     }
 }

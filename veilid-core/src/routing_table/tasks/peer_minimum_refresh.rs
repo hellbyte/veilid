@@ -22,18 +22,15 @@ impl RoutingTable {
         // Get counts by crypto kind
         let live_entry_counts = self.inner.read().cached_live_entry_counts();
 
-        let (min_peer_count, min_peer_refresh_time_ms) = self.config().with(|c| {
-            (
-                c.network.dht.min_peer_count as usize,
-                c.network.dht.min_peer_refresh_time_ms,
-            )
-        });
+        let min_peer_count = self.config().network.dht.min_peer_count as usize;
+        let min_peer_refresh_time =
+            TimestampDuration::new_ms(self.config().network.dht.min_peer_refresh_time_ms.into());
 
         // For the PublicInternet routing domain, get list of all peers we know about
         // even the unreliable ones, and ask them to find nodes close to our node too
 
         let mut ord = FuturesOrdered::new();
-        let cur_ts = get_timestamp();
+        let cur_ts = Timestamp::now();
 
         for crypto_kind in VALID_CRYPTO_KINDS {
             // Do we need to peer minimum refresh this crypto kind?
@@ -51,7 +48,9 @@ impl RoutingTable {
 
             let mut filters = VecDeque::new();
             let filter = Box::new(
-                move |rti: &RoutingTableInner, opt_entry: Option<Arc<BucketEntry>>| {
+                move |rti: &RoutingTableInner,
+                      opt_entry: Option<Arc<BucketEntry>>,
+                      _cur_ts: Timestamp| {
                     let entry = opt_entry.unwrap().clone();
                     entry.with(rti, |_rti, e| {
                         // Keep only the entries that contain the crypto kind we're looking for
@@ -68,9 +67,7 @@ impl RoutingTable {
                         }
                         // Keep only the entries we haven't talked to in the min_peer_refresh_time
                         if let Some(last_q_ts) = e.peer_stats().rpc_stats.last_question_ts {
-                            if cur_ts.saturating_sub(last_q_ts.as_u64())
-                                < (min_peer_refresh_time_ms as u64 * 1_000u64)
-                            {
+                            if cur_ts.duration_since(last_q_ts) < min_peer_refresh_time {
                                 return false;
                             }
                         }

@@ -1,10 +1,10 @@
-use super::{inspect_value::OutboundInspectValueResult, *};
+use super::{inspect_record::OutboundInspectValueResult, *};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RehydrateReport {
     /// The record key rehydrated
-    record_key: TypedRecordKey,
+    opaque_record_key: OpaqueRecordKey,
     /// The requested range of subkeys to rehydrate if necessary
     subkeys: ValueSubkeyRangeSet,
     /// The requested consensus count,
@@ -22,9 +22,9 @@ pub(super) struct RehydrationRequest {
 impl StorageManager {
     /// Add a background rehydration request
     #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn add_rehydration_request(
+    pub fn add_rehydration_request(
         &self,
-        record_key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         consensus_count: usize,
     ) {
@@ -32,11 +32,11 @@ impl StorageManager {
             subkeys,
             consensus_count,
         };
-        veilid_log!(self debug "Adding rehydration request: {} {:?}", record_key, req);
-        let mut inner = self.inner.lock().await;
+        veilid_log!(self debug "Adding rehydration request: {} {:?}", opaque_record_key, req);
+        let mut inner = self.inner.lock();
         inner
             .rehydration_requests
-            .entry(record_key)
+            .entry(opaque_record_key)
             .and_modify(|r| {
                 r.subkeys = r.subkeys.union(&req.subkeys);
                 r.consensus_count.max_assign(req.consensus_count);
@@ -52,14 +52,20 @@ impl StorageManager {
     /// If a newer copy of a subkey's data is available online, the background
     /// write will pick up the newest subkey data as it does the SetValue fanout
     /// and will drive the newest values to consensus.
-    #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
+    #[instrument(level = "trace", target = "stor", skip(self), ret)]
     pub(super) async fn rehydrate_record(
         &self,
-        record_key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         consensus_count: usize,
     ) -> VeilidAPIResult<RehydrateReport> {
-        veilid_log!(self debug "Checking for record rehydration: {} {} @ consensus {}", record_key, subkeys, consensus_count);
+        let Ok(_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
+        let local_record_store = self.get_local_record_store()?;
+
+        veilid_log!(self debug "Checking for record rehydration: {} {} @ consensus {}", opaque_record_key, subkeys, consensus_count);
         // Get subkey range for consideration
         let subkeys = if subkeys.is_empty() {
             ValueSubkeyRangeSet::full()
@@ -67,20 +73,31 @@ impl StorageManager {
             subkeys
         };
 
-        // Get safety selection
-        let mut inner = self.inner.lock().await;
+        let peek_lock = self
+            .record_lock_table
+            .peek_lock(opaque_record_key.clone())
+            .await;
+
         let safety_selection = {
-            if let Some(opened_record) = inner.opened_records.get(&record_key) {
+            let inner = self.inner.lock();
+            // If this record key is in any transaction, disallow this operation at this time
+            if inner
+                .outbound_transaction_manager
+                .get_transaction_by_record(&opaque_record_key)
+                .is_some()
+            {
+                apibail_try_again!("not rehydrating while records is in transaction");
+            }
+            if let Some(opened_record) = inner.opened_records.get(&opaque_record_key) {
                 opened_record.safety_selection()
             } else {
                 // See if it's in the local record store
-                let Some(local_record_store) = inner.local_record_store.as_mut() else {
-                    apibail_not_initialized!();
-                };
-                let Some(safety_selection) =
-                    local_record_store.with_record(record_key, |rec| rec.detail().safety_selection)
+                let Some(safety_selection) = local_record_store
+                    .with_record(&opaque_record_key, |rec| {
+                        rec.detail().safety_selection.clone()
+                    })?
                 else {
-                    apibail_key_not_found!(record_key);
+                    apibail_key_not_found!(opaque_record_key);
                 };
                 safety_selection
             }
@@ -88,7 +105,7 @@ impl StorageManager {
 
         // See if the requested record is our local record store
         let local_inspect_result = self
-            .handle_inspect_local_value_inner(&mut inner, record_key, subkeys.clone(), true)
+            .handle_inspect_local_values_with_peek_lock(&peek_lock, subkeys.clone(), true)
             .await?;
 
         // Get rpc processor and drop mutex so we don't block while getting the value from the network
@@ -96,30 +113,31 @@ impl StorageManager {
             apibail_try_again!("offline, try again later");
         };
 
-        // Drop the lock for network access
-        drop(inner);
-
         // Trim inspected subkey range to subkeys we have data for locally
         let local_inspect_result = local_inspect_result.strip_none_seqs();
 
-        // Get the inspect record report from the network
-        let result = self
+        // Get the inspect record report from the network with only the subkeys for which we have
+        // sequence numbers we have locally
+        let outbound_inspect_result = self
             .outbound_inspect_value(
-                record_key,
+                &opaque_record_key,
                 local_inspect_result.subkeys().clone(),
-                safety_selection,
+                safety_selection.clone(),
                 InspectResult::default(),
                 true,
             )
             .await?;
 
         // If online result had no subkeys, then trigger writing the entire record in the background
-        if result.inspect_result.subkeys().is_empty()
-            || result.inspect_result.opt_descriptor().is_none()
+        if outbound_inspect_result.inspect_result.subkeys().is_empty()
+            || outbound_inspect_result
+                .inspect_result
+                .opt_descriptor()
+                .is_none()
         {
             return self
                 .rehydrate_all_subkeys(
-                    record_key,
+                    opaque_record_key,
                     subkeys,
                     consensus_count,
                     safety_selection,
@@ -130,84 +148,47 @@ impl StorageManager {
 
         return self
             .rehydrate_required_subkeys(
-                record_key,
+                opaque_record_key,
                 subkeys,
                 consensus_count,
                 safety_selection,
                 local_inspect_result,
-                result,
+                outbound_inspect_result,
             )
             .await;
-    }
-
-    async fn rehydrate_single_subkey_inner(
-        &self,
-        inner: &mut StorageManagerInner,
-        record_key: TypedRecordKey,
-        subkey: ValueSubkey,
-        safety_selection: SafetySelection,
-    ) -> bool {
-        // Get value to rehydrate with
-        let get_result = match self
-            .handle_get_local_value_inner(inner, record_key, subkey, false)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                veilid_log!(self debug "Missing local record for rehydrating subkey: record={} subkey={}: {}", record_key, subkey, e);
-                return false;
-            }
-        };
-
-        let data = match get_result.opt_value {
-            Some(v) => v,
-            None => {
-                veilid_log!(self debug "Missing local subkey data for rehydrating subkey: record={} subkey={}", record_key, subkey);
-                return false;
-            }
-        };
-
-        // Add to offline writes to flush
-        veilid_log!(self debug "Rehydrating: record={} subkey={}", record_key, subkey);
-        self.add_offline_subkey_write_inner(inner, record_key, subkey, safety_selection, data);
-
-        true
     }
 
     #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
     pub(super) async fn rehydrate_all_subkeys(
         &self,
-        record_key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         consensus_count: usize,
         safety_selection: SafetySelection,
         local_inspect_result: InspectResult,
     ) -> VeilidAPIResult<RehydrateReport> {
-        let mut inner = self.inner.lock().await;
-
-        veilid_log!(self debug "Rehydrating all subkeys: record={} subkeys={}", record_key, subkeys);
+        veilid_log!(self debug "Rehydrating all subkeys: record={} subkeys={}", opaque_record_key, subkeys);
 
         let mut rehydrated = ValueSubkeyRangeSet::new();
         for (n, subkey) in local_inspect_result.subkeys().iter().enumerate() {
             if local_inspect_result.seqs()[n].is_some() {
-                // Rehydrate subkey
-                if self
-                    .rehydrate_single_subkey_inner(&mut inner, record_key, subkey, safety_selection)
-                    .await
-                {
-                    rehydrated.insert(subkey);
-                }
+                self.add_offline_subkey_write(
+                    opaque_record_key.clone(),
+                    subkey,
+                    safety_selection.clone(),
+                );
+                rehydrated.insert(subkey);
             }
         }
 
         if rehydrated.is_empty() {
-            veilid_log!(self debug "Record wanted full rehydrating, but no subkey data available: record={} subkeys={}", record_key, subkeys);
+            veilid_log!(self debug "Record wanted full rehydrating, but no subkey data available: record={} subkeys={}", opaque_record_key, subkeys);
         } else {
-            veilid_log!(self debug "Record full rehydrating: record={} subkeys={} rehydrated={}", record_key, subkeys, rehydrated);
+            veilid_log!(self debug "Record full rehydrating: record={} subkeys={} rehydrated={}", opaque_record_key, subkeys, rehydrated);
         }
 
         return Ok(RehydrateReport {
-            record_key,
+            opaque_record_key,
             subkeys,
             consensus_count,
             rehydrated,
@@ -217,49 +198,57 @@ impl StorageManager {
     #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
     pub(super) async fn rehydrate_required_subkeys(
         &self,
-        record_key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         consensus_count: usize,
         safety_selection: SafetySelection,
         local_inspect_result: InspectResult,
         outbound_inspect_result: OutboundInspectValueResult,
     ) -> VeilidAPIResult<RehydrateReport> {
-        let mut inner = self.inner.lock().await;
-
-        // Get cryptosystem
-        let crypto = self.crypto();
-        let Some(vcrypto) = crypto.get(record_key.kind) else {
-            apibail_generic!("unsupported cryptosystem");
-        };
-
         // For each subkey, determine if we should rehydrate it
         let mut rehydrated = ValueSubkeyRangeSet::new();
         for (n, subkey) in local_inspect_result.subkeys().iter().enumerate() {
-            if local_inspect_result.seqs()[n].is_none() {
-                apibail_internal!(format!("None sequence number found in local inspect results. Should have been stripped by strip_none_seqs(): {:?}", local_inspect_result));
+            let local_seq = local_inspect_result.seqs()[n];
+            if local_seq.is_none() {
+                apibail_internal!("None sequence number found in local inspect results. Should have been stripped by strip_none_seqs(): {:?}", local_inspect_result);
+            };
+
+            // Find matching network sequence number position
+            // (they must line up because subkey range is the same for both local and network inspect results)
+            let mut rehydrate = false;
+
+            let network_seq = outbound_inspect_result.inspect_result.seqs()[n];
+            if local_seq > network_seq {
+                // If our copy is newer, push it to the network
+                rehydrate = true;
+            } else {
+                // If our copy is older or equal, rehydrate only if there isn't enough consensus
+                let sfr = outbound_inspect_result
+                    .subkey_fanout_results
+                    .get(n)
+                    .unwrap();
+
+                // Does the online subkey have enough consensus?
+                // If not, schedule it to be written in the background
+                if sfr.consensus_nodes.len() < consensus_count {
+                    rehydrate = true;
+                }
             }
 
-            let sfr = outbound_inspect_result
-                .subkey_fanout_results
-                .get(n)
-                .unwrap();
-            // Does the online subkey have enough consensus?
-            // If not, schedule it to be written in the background
-            if sfr.consensus_nodes.len() < consensus_count {
-                // Rehydrate subkey
-                if self
-                    .rehydrate_single_subkey_inner(&mut inner, record_key, subkey, safety_selection)
-                    .await
-                {
-                    rehydrated.insert(subkey);
-                }
+            if rehydrate {
+                self.add_offline_subkey_write(
+                    opaque_record_key.clone(),
+                    subkey,
+                    safety_selection.clone(),
+                );
+                rehydrated.insert(subkey);
             }
         }
 
         if rehydrated.is_empty() {
-            veilid_log!(self debug "Record did not need rehydrating: record={} local_subkeys={}", record_key, local_inspect_result.subkeys());
+            veilid_log!(self debug "Record did not need rehydrating: record={} local_subkeys={}", opaque_record_key, local_inspect_result.subkeys());
         } else {
-            veilid_log!(self debug "Record rehydrating: record={} local_subkeys={} rehydrated={}", record_key, local_inspect_result.subkeys(), rehydrated);
+            veilid_log!(self debug "Record rehydrating: record={} local_subkeys={} rehydrated={}", opaque_record_key, local_inspect_result.subkeys(), rehydrated);
         }
 
         // Keep the list of nodes that returned a value for later reference
@@ -270,18 +259,22 @@ impl StorageManager {
             .map(ValueSubkeyRangeSet::single)
             .zip(outbound_inspect_result.subkey_fanout_results.into_iter());
 
-        Self::process_fanout_results_inner(
-            &mut inner,
-            &vcrypto,
-            record_key,
+        let existed = self.process_fanout_results(
+            opaque_record_key.clone(),
             results_iter,
             false,
-            self.config()
-                .with(|c| c.network.dht.set_value_count as usize),
-        );
+            self.config().network.dht.consensus_width as usize,
+        )?;
+
+        if !existed {
+            veilid_log!(self debug
+                "record was rehydrated but was deleted locally: {}",
+                opaque_record_key
+            );
+        }
 
         Ok(RehydrateReport {
-            record_key,
+            opaque_record_key,
             subkeys,
             consensus_count,
             rehydrated,

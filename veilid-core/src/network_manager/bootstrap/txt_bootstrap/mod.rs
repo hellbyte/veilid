@@ -19,13 +19,17 @@ impl NetworkManager {
         // Get the minimum bootstrap version we are supporting
         // If no keys are available, allow v0.
         // If bootstrap keys are specified, require at least v1.
-        let min_boot_version = self.config().with(|c| {
-            if c.network.routing_table.bootstrap_keys.is_empty() {
-                BOOTSTRAP_TXT_VERSION_0
-            } else {
-                BOOTSTRAP_TXT_VERSION_1
-            }
-        });
+        let min_boot_version = if self
+            .config()
+            .network
+            .routing_table
+            .bootstrap_keys
+            .is_empty()
+        {
+            BOOTSTRAP_TXT_VERSION_0
+        } else {
+            BOOTSTRAP_TXT_VERSION_1
+        };
 
         // Resolve bootstrap servers and recurse their TXT entries
         // This only operates in the PublicInternet routing domain because DNS is inherently
@@ -124,30 +128,43 @@ impl NetworkManager {
         let peers: Vec<Arc<PeerInfo>> = bsrecs
             .into_iter()
             .filter_map(|bsrec| {
-                if routing_table.matches_own_node_id(bsrec.node_ids()) {
+                if routing_table.matches_own_public_key(bsrec.public_keys()) {
                     veilid_log!(self debug "Ignoring own node in bootstrap list");
                     None
                 } else {
                     // Get crypto support from list of node ids
-                    let crypto_support = bsrec.node_ids().kinds();
+                    let crypto_info_list: Vec<CryptoInfo> = bsrec.public_keys().iter().filter_map(|pk| {
+                        match pk.kind() {
+                            CRYPTO_KIND_VLD0 =>
+                                Some(CryptoInfo::VLD0 { public_key: pk.value() }),
 
-                    // Make unsigned SignedNodeInfo
-                    let sni = SignedNodeInfo::Direct(SignedDirectNodeInfo::with_no_signature(
-                        NodeInfo::new(
-                            NetworkClass::InboundCapable, // Bootstraps are always inbound capable
-                            ProtocolTypeSet::all(), // Bootstraps are always capable of all protocols
-                            AddressTypeSet::all(),  // Bootstraps are always IPV4 and IPV6 capable
-                            bsrec.envelope_support().to_vec(), // Envelope support is as specified in the bootstrap list
-                            crypto_support, // Crypto support is derived from list of node ids
-                            vec![],         // Bootstrap needs no capabilities
-                            bsrec.dial_info_details().to_vec(), // Dial info is as specified in the bootstrap list
-                        ),
-                    ));
+                            ck => {
+                                veilid_log!(self warn "Ignoring unsupported bootstrap crypto kind: {}", ck);
+                                None
+                            }
+                        }
+                    }).collect();
 
-                    let bspi = match PeerInfo::new(
+                    // Make unsigned node info
+                    let timestamp = bsrec
+                        .timestamp_secs()
+                        .map(|tss| Timestamp::new(tss * 1_000_000u64))
+                        .unwrap_or_else(Timestamp::now);
+                    let ni = NodeInfo::new(
+                        timestamp,
+                        bsrec.envelope_support().to_vec(), // Envelope support is as specified in the bootstrap list
+                        crypto_info_list, // Crypto support is derived from list of node ids
+                        vec![],           // Bootstrap needs no capabilities
+                        ProtocolTypeSet::all(), // Bootstraps are always capable of all protocols
+                        AddressTypeSet::all(), // Bootstraps are always IPV4 and IPV6 capable
+                        bsrec.dial_info_details().to_vec(), // Dial info is as specified in the bootstrap list
+                        vec![],                             // No relays for bootstrap nodes
+                    );
+
+                    let bspi = match PeerInfo::new_from_unsigned(
+                        &routing_table,
                         RoutingDomain::PublicInternet,
-                        bsrec.node_ids().clone(),
-                        sni,
+                        ni,
                     ) {
                         Ok(v) => v,
                         Err(e) => {
@@ -198,7 +215,7 @@ impl NetworkManager {
 
         // Cache result if we have one
         if !txt_strings.is_empty() {
-            let exp_ts = cur_ts + TXT_LOOKUP_EXPIRATION;
+            let exp_ts = cur_ts.later(TXT_LOOKUP_EXPIRATION);
             self.inner
                 .lock()
                 .txt_lookup_cache

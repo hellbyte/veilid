@@ -158,7 +158,7 @@ async fn veilid_api_scope<'a, F: Future<Output = Result<T, Box<dyn std::error::E
 ) -> Result<T, Box<dyn std::error::Error>> {
     // Startup Veilid node
     // Note: future is boxed due to its size and our aggressive clippy lints
-    let veilid_api = Box::pin(api_startup_config(Arc::new(update_callback), veilid_config)).await?;
+    let veilid_api = Box::pin(api_startup(Arc::new(update_callback), veilid_config)).await?;
 
     // Attach to the network
     veilid_api.attach().await?;
@@ -184,13 +184,13 @@ async fn create_route(
     veilid_api_scope(update_callback, config, |veilid_api| async move {
 
         // Create a new private route endpoint
-        let (route_id, route_blob) =
+        let RouteBlob { route_id, blob }  =
             try_again_loop(|| async { veilid_api.new_private_route().await }).await?;
 
         // Print the blob
         println!(
             "Route id created: {route_id}\nConnect with this private route blob:\ncargo run --example private-route-example -- --connect {}",
-            data_encoding::BASE64.encode(&route_blob)
+            data_encoding::BASE64.encode(&blob)
         );
 
         // Wait for enter key to exit the application
@@ -233,7 +233,7 @@ async fn open_route(
                         if val.is_empty() {
                             break;
                         }
-                        try_again_loop(|| async { rc.app_message(Target::PrivateRoute(route_id), val.as_bytes().to_vec()).await })
+                        try_again_loop(|| async { rc.app_message(Target::RouteId(route_id.clone()), val.as_bytes().to_vec()).await })
                             .await?;
                     } else {
                         break;

@@ -1,255 +1,239 @@
 use super::*;
-use core::convert::TryFrom;
-
-static LOREM_IPSUM:&str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. ";
-static CHEEZBURGER: &str = "I can has cheezburger";
-static EMPTY_KEY: [u8; PUBLIC_KEY_LENGTH] = [0u8; PUBLIC_KEY_LENGTH];
-static EMPTY_KEY_SECRET: [u8; SECRET_KEY_LENGTH] = [0u8; SECRET_KEY_LENGTH];
+use crate::crypto::tests::fixtures::*;
 
 pub async fn test_generate_secret(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     // Verify keys generate
-    let (dht_key, dht_key_secret) = vcrypto.generate_keypair().await.into_split();
-    let (dht_key2, dht_key_secret2) = vcrypto.generate_keypair().await.into_split();
+    let (public_key, secret_key) = vcrypto.generate_keypair().await.into_split();
+    let (public_key2, secret_key2) = vcrypto.generate_keypair().await.into_split();
 
     // Verify byte patterns are different between public and secret
-    assert_ne!(dht_key.bytes, dht_key_secret.bytes);
-    assert_ne!(dht_key2.bytes, dht_key_secret2.bytes);
+    assert_ne!(
+        public_key.ref_value().bytes(),
+        secret_key.ref_value().bytes()
+    );
+    assert_ne!(
+        public_key2.ref_value().bytes(),
+        secret_key2.ref_value().bytes()
+    );
 
     // Verify the keys and secrets are different across keypairs
-    assert_ne!(dht_key, dht_key2);
-    assert_ne!(dht_key_secret, dht_key_secret2);
+    assert_ne!(public_key, public_key2);
+    assert_ne!(secret_key, secret_key2);
 }
 
 pub async fn test_sign_and_verify(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     // Make two keys
-    let (dht_key, dht_key_secret) = vcrypto.generate_keypair().await.into_split();
-    let (dht_key2, dht_key_secret2) = vcrypto.generate_keypair().await.into_split();
+    let (public_key, secret_key) = vcrypto.generate_keypair().await.into_split();
+    let (public_key2, secret_key2) = vcrypto.generate_keypair().await.into_split();
     // Sign the same message twice
-    let dht_sig = vcrypto
-        .sign(&dht_key, &dht_key_secret, LOREM_IPSUM.as_bytes())
+    let sig = vcrypto
+        .sign(&public_key, &secret_key, LOREM_IPSUM)
         .await
         .unwrap();
-    trace!("dht_sig: {:?}", dht_sig);
-    let dht_sig_b = vcrypto
-        .sign(&dht_key, &dht_key_secret, LOREM_IPSUM.as_bytes())
+    trace!("sig: {:?}", sig);
+    let sig_b = vcrypto
+        .sign(&public_key, &secret_key, LOREM_IPSUM)
         .await
         .unwrap();
     // Sign a second message
-    let dht_sig_c = vcrypto
-        .sign(&dht_key, &dht_key_secret, CHEEZBURGER.as_bytes())
+    let sig_c = vcrypto
+        .sign(&public_key, &secret_key, CHEEZBURGER)
         .await
         .unwrap();
-    trace!("dht_sig_c: {:?}", dht_sig_c);
+    trace!("sig_c: {:?}", sig_c);
     // Verify they are the same signature
-    assert_eq!(dht_sig, dht_sig_b);
+    assert_eq!(sig, sig_b);
     // Sign the same message with a different key
-    let dht_sig2 = vcrypto
-        .sign(&dht_key2, &dht_key_secret2, LOREM_IPSUM.as_bytes())
+    let sig2 = vcrypto
+        .sign(&public_key2, &secret_key2, LOREM_IPSUM)
         .await
         .unwrap();
     // Verify a different key gives a different signature
-    assert_ne!(dht_sig2, dht_sig_b);
+    assert_ne!(sig2, sig_b);
 
     // Try using the wrong secret to sign
     let a1 = vcrypto
-        .sign(&dht_key, &dht_key_secret, LOREM_IPSUM.as_bytes())
+        .sign(&public_key, &secret_key, LOREM_IPSUM)
         .await
         .unwrap();
     let a2 = vcrypto
-        .sign(&dht_key2, &dht_key_secret2, LOREM_IPSUM.as_bytes())
+        .sign(&public_key2, &secret_key2, LOREM_IPSUM)
         .await
         .unwrap();
     let _b1 = vcrypto
-        .sign(&dht_key, &dht_key_secret2, LOREM_IPSUM.as_bytes())
+        .sign(&public_key, &secret_key2, LOREM_IPSUM)
         .await
         .unwrap_err();
     let _b2 = vcrypto
-        .sign(&dht_key2, &dht_key_secret, LOREM_IPSUM.as_bytes())
+        .sign(&public_key2, &secret_key, LOREM_IPSUM)
         .await
         .unwrap_err();
 
     assert_ne!(a1, a2);
 
     assert_eq!(
-        vcrypto.verify(&dht_key, LOREM_IPSUM.as_bytes(), &a1).await,
+        vcrypto.verify(&public_key, LOREM_IPSUM, &a1).await,
         Ok(true)
     );
     assert_eq!(
-        vcrypto.verify(&dht_key2, LOREM_IPSUM.as_bytes(), &a2).await,
+        vcrypto.verify(&public_key2, LOREM_IPSUM, &a2).await,
         Ok(true)
     );
     assert_eq!(
-        vcrypto.verify(&dht_key, LOREM_IPSUM.as_bytes(), &a2).await,
+        vcrypto.verify(&public_key, LOREM_IPSUM, &a2).await,
         Ok(false)
     );
     assert_eq!(
-        vcrypto.verify(&dht_key2, LOREM_IPSUM.as_bytes(), &a1).await,
+        vcrypto.verify(&public_key2, LOREM_IPSUM, &a1).await,
         Ok(false)
     );
 
     // Try verifications that should work
     assert_eq!(
-        vcrypto
-            .verify(&dht_key, LOREM_IPSUM.as_bytes(), &dht_sig)
-            .await,
+        vcrypto.verify(&public_key, LOREM_IPSUM, &sig).await,
         Ok(true)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key, LOREM_IPSUM.as_bytes(), &dht_sig_b)
-            .await,
+        vcrypto.verify(&public_key, LOREM_IPSUM, &sig_b).await,
         Ok(true)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key2, LOREM_IPSUM.as_bytes(), &dht_sig2)
-            .await,
+        vcrypto.verify(&public_key2, LOREM_IPSUM, &sig2).await,
         Ok(true)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key, CHEEZBURGER.as_bytes(), &dht_sig_c)
-            .await,
+        vcrypto.verify(&public_key, CHEEZBURGER, &sig_c).await,
         Ok(true)
     );
     // Try verifications that shouldn't work
     assert_eq!(
-        vcrypto
-            .verify(&dht_key2, LOREM_IPSUM.as_bytes(), &dht_sig)
-            .await,
+        vcrypto.verify(&public_key2, LOREM_IPSUM, &sig).await,
         Ok(false)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key, LOREM_IPSUM.as_bytes(), &dht_sig2)
-            .await,
+        vcrypto.verify(&public_key, LOREM_IPSUM, &sig2).await,
         Ok(false)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key2, CHEEZBURGER.as_bytes(), &dht_sig_c)
-            .await,
+        vcrypto.verify(&public_key2, CHEEZBURGER, &sig_c).await,
         Ok(false)
     );
     assert_eq!(
-        vcrypto
-            .verify(&dht_key, CHEEZBURGER.as_bytes(), &dht_sig)
-            .await,
+        vcrypto.verify(&public_key, CHEEZBURGER, &sig).await,
         Ok(false)
     );
 }
 
 pub async fn test_key_conversions(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     // Test default key
-    let (dht_key, dht_key_secret) = (PublicKey::default(), SecretKey::default());
-    assert_eq!(dht_key.bytes, EMPTY_KEY);
-    assert_eq!(dht_key_secret.bytes, EMPTY_KEY_SECRET);
-    let dht_key_string = String::from(&dht_key);
-    trace!("dht_key_string: {:?}", dht_key_string);
-    let dht_key_string2 = String::from(&dht_key);
-    trace!("dht_key_string2: {:?}", dht_key_string2);
-    assert_eq!(dht_key_string, dht_key_string2);
+    let (public_key, secret_key) = (
+        PublicKey::new(
+            vcrypto.kind(),
+            BarePublicKey::new(&vec![0u8; vcrypto.public_key_length()]),
+        ),
+        SecretKey::new(
+            vcrypto.kind(),
+            BareSecretKey::new(&vec![0u8; vcrypto.secret_key_length()]),
+        ),
+    );
+    let public_key_string = public_key.to_string();
+    trace!("public_key_string: {:?}", public_key_string);
+    let public_key_string2 = public_key.to_string();
+    trace!("public_key_string2: {:?}", public_key_string2);
+    assert_eq!(public_key_string, public_key_string2);
 
-    let dht_key_secret_string = String::from(&dht_key_secret);
-    trace!("dht_key_secret_string: {:?}", dht_key_secret_string);
-    assert_eq!(dht_key_secret_string, dht_key_string);
+    let secret_key_string = secret_key.to_string();
+    trace!("secret_key_string: {:?}", secret_key_string);
+    assert_eq!(secret_key_string, public_key_string);
 
     // Make different keys
-    let (dht_key2, dht_key_secret2) = vcrypto.generate_keypair().await.into_split();
-    trace!("dht_key2: {:?}", dht_key2);
-    trace!("dht_key_secret2: {:?}", dht_key_secret2);
-    let (dht_key3, _dht_key_secret3) = vcrypto.generate_keypair().await.into_split();
-    trace!("dht_key3: {:?}", dht_key3);
-    trace!("_dht_key_secret3: {:?}", _dht_key_secret3);
+    let (public_key2, secret_key2) = vcrypto.generate_keypair().await.into_split();
+    trace!("public_key2: {:?}", public_key2);
+    trace!("secret_key2: {:?}", secret_key2);
+    let (public_key3, secret_key3) = vcrypto.generate_keypair().await.into_split();
+    trace!("public_key3: {:?}", public_key3);
+    trace!("secret_key3: {:?}", secret_key3);
 
-    let dht_key2_string = String::from(&dht_key2);
-    let dht_key2_string2 = String::from(&dht_key2);
-    let dht_key3_string = String::from(&dht_key3);
-    assert_eq!(dht_key2_string, dht_key2_string2);
-    assert_ne!(dht_key3_string, dht_key2_string);
-    let dht_key_secret2_string = String::from(&dht_key_secret2);
-    assert_ne!(dht_key_secret2_string, dht_key_secret_string);
-    assert_ne!(dht_key_secret2_string, dht_key2_string);
+    let public_key2_string = public_key2.to_string();
+    let public_key2_string2 = public_key2.to_string();
+    let public_key3_string = public_key3.to_string();
+    assert_eq!(public_key2_string, public_key2_string2);
+    assert_ne!(public_key3_string, public_key2_string);
+    let secret_key2_string = secret_key2.to_string();
+    assert_ne!(secret_key2_string, secret_key_string);
+    assert_ne!(secret_key2_string, public_key2_string);
 
     // Assert they convert back correctly
-    let dht_key_back = PublicKey::try_from(dht_key_string.as_str()).unwrap();
-    let dht_key_back2 = PublicKey::try_from(dht_key_string2.as_str()).unwrap();
-    assert_eq!(dht_key_back, dht_key_back2);
-    assert_eq!(dht_key_back, dht_key);
-    assert_eq!(dht_key_back2, dht_key);
+    let public_key_back = PublicKey::try_from(public_key_string.as_str()).unwrap();
+    let public_key_back2 = PublicKey::try_from(public_key_string2.as_str()).unwrap();
+    assert_eq!(public_key_back, public_key_back2);
+    assert_eq!(public_key_back, public_key);
+    assert_eq!(public_key_back2, public_key);
 
-    let dht_key_secret_back = SecretKey::try_from(dht_key_secret_string.as_str()).unwrap();
-    assert_eq!(dht_key_secret_back, dht_key_secret);
+    let secret_key_back = SecretKey::try_from(secret_key_string.as_str()).unwrap();
+    assert_eq!(secret_key_back, secret_key);
 
-    let dht_key2_back = PublicKey::try_from(dht_key2_string.as_str()).unwrap();
-    let dht_key2_back2 = PublicKey::try_from(dht_key2_string2.as_str()).unwrap();
-    assert_eq!(dht_key2_back, dht_key2_back2);
-    assert_eq!(dht_key2_back, dht_key2);
-    assert_eq!(dht_key2_back2, dht_key2);
+    let public_key2_back = PublicKey::try_from(public_key2_string.as_str()).unwrap();
+    let public_key2_back2 = PublicKey::try_from(public_key2_string2.as_str()).unwrap();
+    assert_eq!(public_key2_back, public_key2_back2);
+    assert_eq!(public_key2_back, public_key2);
+    assert_eq!(public_key2_back2, public_key2);
 
-    let dht_key_secret2_back = SecretKey::try_from(dht_key_secret2_string.as_str()).unwrap();
-    assert_eq!(dht_key_secret2_back, dht_key_secret2);
+    let secret_key2_back = SecretKey::try_from(secret_key2_string.as_str()).unwrap();
+    assert_eq!(secret_key2_back, secret_key2);
 
     // Assert string roundtrip
-    assert_eq!(String::from(&dht_key2_back), dht_key2_string);
+    assert_eq!(secret_key2_back.to_string(), secret_key2_string);
+
     // These conversions should fail
-    assert!(PublicKey::try_from("whatever").is_err());
-    assert!(SecretKey::try_from("whatever").is_err());
-    assert!(PublicKey::try_from("").is_err());
-    assert!(SecretKey::try_from("").is_err());
-    assert!(PublicKey::try_from(" ").is_err());
-    assert!(SecretKey::try_from(" ").is_err());
-    assert!(PublicKey::try_from(
-        "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-    )
-    .is_err());
-    assert!(SecretKey::try_from(
-        "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-    )
-    .is_err());
+    assert!(BarePublicKey::try_from("whatever!").is_err());
+    assert!(BareSecretKey::try_from("whatever!").is_err());
+    assert!(BarePublicKey::try_from(" ").is_err());
+    assert!(BareSecretKey::try_from(" ").is_err());
 }
 
 pub async fn test_encode_decode(vcrypto: &AsyncCryptoSystemGuard<'_>) {
-    let dht_key = PublicKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
-    let dht_key_secret =
-        SecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
-    let dht_key_b = PublicKey::new(EMPTY_KEY);
-    let dht_key_secret_b = SecretKey::new(EMPTY_KEY_SECRET);
-    assert_eq!(dht_key, dht_key_b);
-    assert_eq!(dht_key_secret, dht_key_secret_b);
+    let public_key =
+        BarePublicKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+    let secret_key =
+        BareSecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+    let public_key_b = BarePublicKey::new(&EMPTY_KEY);
+    let secret_key_b = BareSecretKey::new(&EMPTY_KEY_SECRET);
+    assert_eq!(public_key, public_key_b);
+    assert_eq!(secret_key, secret_key_b);
 
-    let (dht_key2, dht_key_secret2) = vcrypto.generate_keypair().await.into_split();
+    let (public_key2, secret_key2) = vcrypto.generate_keypair().await.value().into_split();
 
-    let e1 = dht_key.encode();
+    let e1 = public_key.encode();
     trace!("e1:  {:?}", e1);
     assert_eq!(e1, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned());
-    let e1s = dht_key_secret.encode();
+    let e1s = secret_key.encode();
     trace!("e1s: {:?}", e1s);
-    let e2 = dht_key2.encode();
+    let e2 = public_key2.encode();
     trace!("e2:  {:?}", e2);
-    let e2s = dht_key_secret2.encode();
+    let e2s = secret_key2.encode();
     trace!("e2s: {:?}", e2s);
 
-    let d1 = PublicKey::try_decode(e1.as_str()).unwrap();
+    let d1 = BarePublicKey::try_decode(e1.as_str()).unwrap();
     trace!("d1:  {:?}", d1);
-    assert_eq!(dht_key, d1);
+    assert_eq!(public_key, d1);
 
-    let d1s = SecretKey::try_decode(e1s.as_str()).unwrap();
+    let d1s = BareSecretKey::try_decode(e1s.as_str()).unwrap();
     trace!("d1s: {:?}", d1s);
-    assert_eq!(dht_key_secret, d1s);
+    assert_eq!(secret_key, d1s);
 
-    let d2 = PublicKey::try_decode(e2.as_str()).unwrap();
+    let d2 = BarePublicKey::try_decode(e2.as_str()).unwrap();
     trace!("d2:  {:?}", d2);
-    assert_eq!(dht_key2, d2);
+    assert_eq!(public_key2, d2);
 
-    let d2s = SecretKey::try_decode(e2s.as_str()).unwrap();
+    let d2s = BareSecretKey::try_decode(e2s.as_str()).unwrap();
     trace!("d2s: {:?}", d2s);
-    assert_eq!(dht_key_secret2, d2s);
+    assert_eq!(secret_key2, d2s);
 
     // Failures
-    let f1 = SecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    let f1 = BareSecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!");
     assert!(f1.is_err());
-    let f2 = SecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&");
+    let f2 = BareSecretKey::try_decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&");
     assert!(f2.is_err());
 }
 
@@ -258,7 +242,8 @@ pub fn test_typed_convert(vcrypto: &AsyncCryptoSystemGuard<'_>) {
         "{}:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzdQ",
         vcrypto.kind()
     );
-    let tk1 = TypedPublicKey::from_str(&tks1).expect("failed");
+    let tk1 = PublicKey::from_str(&tks1).expect("failed");
+    assert!(vcrypto.check_public_key(&tk1).is_ok());
     let tks1x = tk1.to_string();
     assert_eq!(tks1, tks1x);
 
@@ -266,30 +251,36 @@ pub fn test_typed_convert(vcrypto: &AsyncCryptoSystemGuard<'_>) {
         "{}:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzd",
         vcrypto.kind()
     );
-    let _tk2 = TypedPublicKey::from_str(&tks2).expect_err("succeeded when it shouldnt have");
+    let _tk2 = PublicKey::from_str(&tks2).expect_err("should fail");
 
-    let tks3 = "XXXX:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzdQ".to_string();
-    let tk3 = TypedPublicKey::from_str(&tks3).expect("failed");
-    let tks3x = tk3.to_string();
-    assert_eq!(tks3, tks3x);
+    let tks3 = format!(
+        "{}:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZ",
+        vcrypto.kind()
+    );
+    let tk3 = PublicKey::from_str(&tks3).expect("failed");
+    assert!(vcrypto.check_public_key(&tk3).is_err());
 
-    let tks4 = "XXXX:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzd".to_string();
-    let _tk4 = TypedPublicKey::from_str(&tks4).expect_err("succeeded when it shouldnt have");
+    let tks4 = "XXXX:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzdQ".to_string();
+    let tk4 = PublicKey::from_str(&tks4).expect("failed");
+    let tks4x = tk4.to_string();
+    assert_eq!(tks4, tks4x);
+    // Enable this when we switch crypto to using typed keys too
+    //assert!(vcrypto.check_public_key(&tk4).is_err());
 
     let tks5 = "XXX:7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzdQ".to_string();
-    let _tk5 = TypedPublicKey::from_str(&tks5).expect_err("succeeded when it shouldnt have");
+    let _tk5 = PublicKey::from_str(&tks5).expect_err("should fail");
 
     let tks6 = "7lxDEabK_qgjbe38RtBa3IZLrud84P6NhGP-pRTZzdQ".to_string();
-    let tk6 = TypedPublicKey::from_str(&tks6).expect("failed");
+    let tk6 = PublicKey::from_str(&tks6).expect("failed");
     let tks6x = tk6.to_string();
     assert!(tks6x.ends_with(&tks6));
 
-    let b = Vec::from(tk6);
-    let tk7 = TypedPublicKey::try_from(b).expect("should succeed");
+    let b = Vec::from(tk6.clone());
+    let tk7 = PublicKey::try_from(b).expect("should succeed");
     assert_eq!(tk7, tk6);
 
-    let b = Vec::from(tk6);
-    let tk8 = TypedPublicKey::try_from(b.as_slice()).expect("should succeed");
+    let b = Vec::from(tk6.clone());
+    let tk8 = PublicKey::try_from(b.as_slice()).expect("should succeed");
     assert_eq!(tk8, tk6);
 }
 
@@ -300,23 +291,23 @@ async fn test_hash(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     let k2 = vcrypto.generate_hash("abcd".as_bytes()).await;
     let k3 = vcrypto.generate_hash("".as_bytes()).await;
     let k4 = vcrypto.generate_hash(" ".as_bytes()).await;
-    let k5 = vcrypto.generate_hash(LOREM_IPSUM.as_bytes()).await;
-    let k6 = vcrypto.generate_hash(CHEEZBURGER.as_bytes()).await;
+    let k5 = vcrypto.generate_hash(LOREM_IPSUM).await;
+    let k6 = vcrypto.generate_hash(CHEEZBURGER).await;
 
-    s.insert(k1);
-    s.insert(k2);
-    s.insert(k3);
-    s.insert(k4);
-    s.insert(k5);
-    s.insert(k6);
+    s.insert(k1.clone());
+    s.insert(k2.clone());
+    s.insert(k3.clone());
+    s.insert(k4.clone());
+    s.insert(k5.clone());
+    s.insert(k6.clone());
     assert_eq!(s.len(), 6);
 
     let v1 = vcrypto.generate_hash("abc".as_bytes()).await;
     let v2 = vcrypto.generate_hash("abcd".as_bytes()).await;
     let v3 = vcrypto.generate_hash("".as_bytes()).await;
     let v4 = vcrypto.generate_hash(" ".as_bytes()).await;
-    let v5 = vcrypto.generate_hash(LOREM_IPSUM.as_bytes()).await;
-    let v6 = vcrypto.generate_hash(CHEEZBURGER.as_bytes()).await;
+    let v5 = vcrypto.generate_hash(LOREM_IPSUM).await;
+    let v6 = vcrypto.generate_hash(CHEEZBURGER).await;
 
     assert_eq!(k1, v1);
     assert_eq!(k2, v2);
@@ -325,24 +316,43 @@ async fn test_hash(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     assert_eq!(k5, v5);
     assert_eq!(k6, v6);
 
-    vcrypto.validate_hash("abc".as_bytes(), &v1).await;
-    vcrypto.validate_hash("abcd".as_bytes(), &v2).await;
-    vcrypto.validate_hash("".as_bytes(), &v3).await;
-    vcrypto.validate_hash(" ".as_bytes(), &v4).await;
-    vcrypto.validate_hash(LOREM_IPSUM.as_bytes(), &v5).await;
-    vcrypto.validate_hash(CHEEZBURGER.as_bytes(), &v6).await;
+    vcrypto
+        .validate_hash("abc".as_bytes(), &v1)
+        .await
+        .expect("should succeed");
+    vcrypto
+        .validate_hash("abcd".as_bytes(), &v2)
+        .await
+        .expect("should succeed");
+    vcrypto
+        .validate_hash("".as_bytes(), &v3)
+        .await
+        .expect("should succeed");
+    vcrypto
+        .validate_hash(" ".as_bytes(), &v4)
+        .await
+        .expect("should succeed");
+    vcrypto
+        .validate_hash(LOREM_IPSUM, &v5)
+        .await
+        .expect("should succeed");
+    vcrypto
+        .validate_hash(CHEEZBURGER, &v6)
+        .await
+        .expect("should succeed");
 }
 
 async fn test_operations(vcrypto: &AsyncCryptoSystemGuard<'_>) {
-    let k1 = vcrypto.generate_hash(LOREM_IPSUM.as_bytes()).await;
-    let k2 = vcrypto.generate_hash(CHEEZBURGER.as_bytes()).await;
+    // xxx we should make this fixed byte arrays when we add another cryptosystem
+    let k1 = vcrypto.generate_hash(LOREM_IPSUM).await;
+    let k2 = vcrypto.generate_hash(CHEEZBURGER).await;
     let k3 = vcrypto.generate_hash("abc".as_bytes()).await;
 
     // Get distance
-    let d1 = vcrypto.distance(&k1, &k2).await;
-    let d2 = vcrypto.distance(&k2, &k1).await;
-    let d3 = vcrypto.distance(&k1, &k3).await;
-    let d4 = vcrypto.distance(&k2, &k3).await;
+    let d1 = k1.to_hash_coordinate().distance(&k2.to_hash_coordinate());
+    let d2 = k2.to_hash_coordinate().distance(&k1.to_hash_coordinate());
+    let d3 = k1.to_hash_coordinate().distance(&k3.to_hash_coordinate());
+    let d4 = k2.to_hash_coordinate().distance(&k3.to_hash_coordinate());
 
     trace!("d1={:?}", d1);
     trace!("d2={:?}", d2);
@@ -390,23 +400,23 @@ async fn test_operations(vcrypto: &AsyncCryptoSystemGuard<'_>) {
 }
 
 pub fn test_public_key_ordering() {
-    let k1 = PublicKey::new([
+    let k1 = BarePublicKey::new(&[
         128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
     ]);
-    let k2 = PublicKey::new([
+    let k2 = BarePublicKey::new(&[
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
     ]);
-    let k3 = PublicKey::new([
+    let k3 = BarePublicKey::new(&[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 128,
     ]);
-    let k4 = PublicKey::new([
+    let k4 = BarePublicKey::new(&[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 1,
     ]);
-    let k5 = PublicKey::new([
+    let k5 = BarePublicKey::new(&[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
     ]);

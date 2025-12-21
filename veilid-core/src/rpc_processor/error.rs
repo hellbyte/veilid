@@ -52,7 +52,6 @@ impl RPCError {
     pub fn map_network<M: ToString, X: ToString>(message: M) -> impl FnOnce(X) -> Self {
         move |x| Self::Network(format!("{}: {}", message.to_string(), x.to_string()))
     }
-    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
     pub fn try_again<X: ToString>(x: X) -> Self {
         Self::TryAgain(x.to_string())
     }
@@ -101,4 +100,78 @@ impl<T> ToRPCNetworkResult<T> for VeilidAPIResult<T> {
             Ok(v) => Ok(NetworkResult::value(v)),
         }
     }
+}
+
+impl From<capnp::NotInSchema> for RPCError {
+    fn from(_value: capnp::NotInSchema) -> Self {
+        RPCError::ignore("not in schema")
+    }
+}
+
+impl From<capnp::Error> for RPCError {
+    fn from(value: capnp::Error) -> Self {
+        RPCError::protocol(value)
+    }
+}
+
+pub trait RPCErrorIgnoreOk<T> {
+    fn ignore_ok(self) -> Result<Option<T>, RPCError>;
+}
+
+impl<T> RPCErrorIgnoreOk<T> for Result<T, RPCError> {
+    fn ignore_ok(self) -> Result<Option<T>, RPCError> {
+        match self {
+            Ok(v) => Ok(Some(v)),
+            Err(RPCError::Ignore(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! rpc_ignore_missing_property {
+    ($reader:expr, $propname:tt) => {
+        paste::paste! {
+            if !$reader.[<has_ $propname>]() {
+                return Err(RPCError::ignore(concat!("missing ", stringify!($propname))));
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! rpc_ignore_max_len {
+    ($reader:expr, $max_len:expr) => {{
+        let _len = $reader.len() as usize;
+        if _len > $max_len {
+            return Err(RPCError::ignore(concat!(
+                stringify!($reader),
+                " length > ",
+                stringify!($max_len)
+            )));
+        }
+        _len
+    }};
+}
+
+#[macro_export]
+macro_rules! rpc_ignore_min_max_len {
+    ($reader:expr, $min_len:expr, $max_len:expr) => {{
+        let _len = $reader.len() as usize;
+        if _len < $min_len {
+            return Err(RPCError::ignore(concat!(
+                stringify!($reader),
+                " length < ",
+                stringify!($min_len)
+            )));
+        }
+        if _len > $max_len {
+            return Err(RPCError::ignore(concat!(
+                stringify!($reader),
+                " length > ",
+                stringify!($max_len)
+            )));
+        }
+        _len
+    }};
 }

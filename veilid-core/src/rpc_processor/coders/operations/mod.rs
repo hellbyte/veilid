@@ -10,12 +10,15 @@ mod operation_route;
 mod operation_set_value;
 mod operation_signal;
 mod operation_status;
+mod operation_transact_begin;
+mod operation_transact_command;
 
 mod operation_validate_dial_info;
 mod operation_value_changed;
 mod operation_watch_value;
 mod question;
 mod respond_to;
+mod signed_operation;
 mod statement;
 
 #[cfg(feature = "unstable-blockstore")]
@@ -30,7 +33,7 @@ mod operation_complete_tunnel;
 #[cfg(feature = "unstable-tunnels")]
 mod operation_start_tunnel;
 
-pub use operation_inspect_value::MAX_INSPECT_VALUE_A_SEQS_LEN;
+pub use operation_transact_command::TransactCommand;
 
 pub(in crate::rpc_processor) use answer::*;
 pub(in crate::rpc_processor) use operation::*;
@@ -44,11 +47,14 @@ pub(in crate::rpc_processor) use operation_route::*;
 pub(in crate::rpc_processor) use operation_set_value::*;
 pub(in crate::rpc_processor) use operation_signal::*;
 pub(in crate::rpc_processor) use operation_status::*;
+pub(in crate::rpc_processor) use operation_transact_begin::*;
+pub(in crate::rpc_processor) use operation_transact_command::*;
 pub(in crate::rpc_processor) use operation_validate_dial_info::*;
 pub(in crate::rpc_processor) use operation_value_changed::*;
 pub(in crate::rpc_processor) use operation_watch_value::*;
 pub(in crate::rpc_processor) use question::*;
 pub(in crate::rpc_processor) use respond_to::*;
+pub(in crate::rpc_processor) use signed_operation::*;
 pub(in crate::rpc_processor) use statement::*;
 
 #[cfg(feature = "unstable-blockstore")]

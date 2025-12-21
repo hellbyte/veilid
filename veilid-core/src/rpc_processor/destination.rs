@@ -107,7 +107,7 @@ impl Destination {
         }
     }
 
-    pub fn get_target_node_ids(&self) -> Option<TypedNodeIdGroup> {
+    pub fn get_target_node_ids(&self) -> Option<NodeIdGroup> {
         match self {
             Destination::Direct {
                 node,
@@ -151,10 +151,10 @@ impl Destination {
                 // Add the remote private route if we're going to keep the id
                 let route_id = routing_table
                     .route_spec_store()
-                    .add_remote_private_route(private_route.clone())
+                    .import_single_remote_route(private_route.clone())
                     .map_err(RPCError::protocol)?;
 
-                Ok(Target::PrivateRoute(route_id))
+                Ok(Target::RouteId(route_id))
             }
         }
     }
@@ -198,20 +198,30 @@ impl Destination {
                 let mut opt_routing_domain = None;
                 for target_rd in node.routing_domain_set() {
                     // Check out inbound/outbound relay to match routing domain
-                    if let Some(relay_node) = routing_table.relay_node(target_rd) {
-                        if relay.same_entry(&relay_node) {
+                    for rdr in routing_table.relays(target_rd) {
+                        if relay.same_entry(&rdr.relay_node) {
                             // Relay for this destination is one of our routing domain relays (our inbound or outbound)
                             opt_routing_domain = Some(target_rd);
                             break;
                         }
                     }
+                    if opt_routing_domain.is_some() {
+                        break;
+                    }
                     // Check remote node's published relay to see if that who is relaying
-                    if let Some(target_relay) = node.relay(target_rd).ok().flatten() {
-                        if relay.same_entry(&target_relay) {
+                    for relay_id in node
+                        .node_info(target_rd)
+                        .map(|ni| ni.relay_ids())
+                        .unwrap_or_default()
+                    {
+                        if relay.node_ids().contains(&relay_id) {
                             // Relay for this destination is one of its published relays
                             opt_routing_domain = Some(target_rd);
                             break;
                         }
+                    }
+                    if opt_routing_domain.is_some() {
+                        break;
                     }
                 }
                 if opt_routing_domain.is_none() {
@@ -237,6 +247,40 @@ impl Destination {
             opt_routing_domain,
         })
     }
+
+    pub fn destination_key(&self) -> Result<PublicKey, RPCError> {
+        match self {
+            Destination::Direct {
+                node,
+                safety_selection: _,
+            } => {
+                let routing_domain = node
+                    .best_routing_domain()
+                    .ok_or_else(|| RPCError::internal("no reachable routing domain"))?;
+                let public_key = node
+                    .best_public_key(routing_domain)
+                    .ok_or_else(|| RPCError::internal("no public key in routing domain"))?;
+                Ok(public_key)
+            }
+            Destination::Relay {
+                relay: _,
+                node,
+                safety_selection: _,
+            } => {
+                let routing_domain = node
+                    .best_routing_domain()
+                    .ok_or_else(|| RPCError::internal("no reachable routing domain"))?;
+                let public_key = node
+                    .best_public_key(routing_domain)
+                    .ok_or_else(|| RPCError::internal("no public key in routing domain"))?;
+                Ok(public_key)
+            }
+            Destination::PrivateRoute {
+                private_route,
+                safety_selection: _,
+            } => Ok(private_route.public_key.clone()),
+        }
+    }
 }
 
 impl fmt::Display for Destination {
@@ -247,7 +291,7 @@ impl fmt::Display for Destination {
                 safety_selection,
             } => {
                 let sr = if matches!(safety_selection, SafetySelection::Safe(_)) {
-                    "+SR"
+                    "%SR"
                 } else {
                     ""
                 };
@@ -260,7 +304,7 @@ impl fmt::Display for Destination {
                 safety_selection,
             } => {
                 let sr = if matches!(safety_selection, SafetySelection::Safe(_)) {
-                    "+SR"
+                    "%SR"
                 } else {
                     ""
                 };
@@ -272,12 +316,12 @@ impl fmt::Display for Destination {
                 safety_selection,
             } => {
                 let sr = if matches!(safety_selection, SafetySelection::Safe(_)) {
-                    "+SR"
+                    "%SR"
                 } else {
                     ""
                 };
 
-                write!(f, "{}{}", private_route.public_key, sr)
+                write!(f, "PR%{}{}", private_route.public_key, sr)
             }
         }
     }
@@ -293,21 +337,21 @@ impl RPCProcessor {
         match target {
             Target::NodeId(node_id) => {
                 // Resolve node
-                let nr = match self.resolve_node(node_id, safety_selection).await? {
+                let nr = match self.resolve_node(node_id, safety_selection.clone()).await? {
                     Some(nr) => nr,
                     None => {
                         return Err(RPCError::network("could not resolve node id"));
                     }
                 };
                 // Apply sequencing to match safety selection
-                let nr = nr.sequencing_filtered(safety_selection.get_sequencing());
+                let nr = nr.default_filtered_with_sequencing(safety_selection.get_sequencing());
 
                 Ok(rpc_processor::Destination::Direct {
                     node: nr,
                     safety_selection,
                 })
             }
-            Target::PrivateRoute(rsid) => {
+            Target::RouteId(rsid) => {
                 // Get remote private route
                 let Some(private_route) = self
                     .routing_table()
@@ -347,18 +391,14 @@ impl RPCProcessor {
                     let crypto_kind = target
                         .best_node_id()
                         .ok_or_else(|| RPCError::protocol("no supported node id"))?
-                        .kind;
+                        .kind();
                     let pr_key = network_result_try!(rss
-                        .get_private_route_for_safety_spec(
-                            crypto_kind,
-                            safety_spec,
-                            &target.node_ids(),
-                        )
+                        .select_single_route(crypto_kind, safety_spec, &target.node_ids(), false)
                         .to_rpc_network_result()?);
 
                     // Get the assembled route for response
                     let private_route = network_result_try!(rss
-                        .assemble_private_route(&pr_key, None)
+                        .assemble_single_private_route(&pr_key, None)
                         .to_rpc_network_result()?);
 
                     Ok(NetworkResult::Value(RespondTo::PrivateRoute(private_route)))
@@ -378,17 +418,17 @@ impl RPCProcessor {
                     let crypto_kind = target
                         .best_node_id()
                         .ok_or_else(|| RPCError::protocol("no supported node id"))?
-                        .kind;
+                        .kind();
 
                     let mut avoid_nodes = relay.node_ids();
-                    avoid_nodes.add_all(&target.node_ids());
-                    let pr_key = network_result_try!(rss
-                        .get_private_route_for_safety_spec(crypto_kind, safety_spec, &avoid_nodes,)
+                    avoid_nodes.add_all_from_slice(&target.node_ids());
+                    let allocated_route_key = network_result_try!(rss
+                        .select_single_route(crypto_kind, safety_spec, &avoid_nodes, false)
                         .to_rpc_network_result()?);
 
                     // Get the assembled route for response
                     let private_route = network_result_try!(rss
-                        .assemble_private_route(&pr_key, None)
+                        .assemble_single_private_route(&allocated_route_key, None)
                         .to_rpc_network_result()?);
 
                     Ok(NetworkResult::Value(RespondTo::PrivateRoute(private_route)))
@@ -404,7 +444,7 @@ impl RPCProcessor {
                     ));
                 };
 
-                let crypto_kind = private_route.public_key.kind;
+                let crypto_kind = private_route.public_key.kind();
 
                 match safety_selection {
                     SafetySelection::Unsafe(_) => {
@@ -420,17 +460,17 @@ impl RPCProcessor {
 
                         // Determine if we can use optimized nodeinfo
                         let route_node = if rss.has_remote_private_route_seen_our_node_info(
-                            &private_route.public_key.value,
+                            &private_route.public_key,
                             &published_peer_info,
                         ) {
-                            RouteNode::NodeId(routing_table.node_id(crypto_kind).value)
+                            RouteNode::NodeId(routing_table.node_id(crypto_kind))
                         } else {
                             RouteNode::PeerInfo(published_peer_info)
                         };
 
                         Ok(NetworkResult::value(RespondTo::PrivateRoute(
                             PrivateRoute::new_stub(
-                                routing_table.node_id(crypto_kind).into(),
+                                routing_table.public_key(crypto_kind),
                                 route_node,
                             ),
                         )))
@@ -440,26 +480,27 @@ impl RPCProcessor {
 
                         // Check for loopback test
                         let opt_private_route_id =
-                            rss.get_route_id_for_key(&private_route.public_key.value);
+                            rss.get_route_id_for_key(&private_route.public_key);
                         let pr_key = if opt_private_route_id.is_some()
                             && safety_spec.preferred_route == opt_private_route_id
                         {
                             // Private route is also safety route during loopback test
-                            private_route.public_key.value
+                            private_route.public_key.clone()
                         } else {
                             // Get the private route to respond to that matches the safety route spec we sent the request with
                             network_result_try!(rss
-                                .get_private_route_for_safety_spec(
+                                .select_single_route(
                                     crypto_kind,
                                     safety_spec,
                                     &[avoid_node_id],
+                                    true,
                                 )
                                 .to_rpc_network_result()?)
                         };
 
                         // Get the assembled route for response
                         let private_route = network_result_try!(rss
-                            .assemble_private_route(&pr_key, None)
+                            .assemble_single_private_route(&pr_key, None)
                             .to_rpc_network_result()?);
 
                         Ok(NetworkResult::Value(RespondTo::PrivateRoute(private_route)))
@@ -521,7 +562,7 @@ impl RPCProcessor {
                         // If this was received over our private route, it's okay to respond to a private route via our safety route
                         NetworkResult::value(Destination::private_route(
                             pr.clone(),
-                            SafetySelection::Safe(detail.safety_spec),
+                            SafetySelection::Safe(detail.safety_spec.clone()),
                         ))
                     }
                 }

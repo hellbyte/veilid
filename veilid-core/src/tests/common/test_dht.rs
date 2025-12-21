@@ -1,42 +1,44 @@
-use super::test_veilid_config::*;
+use crate::crypto::tests::fixtures::*;
+use crate::tests::fixtures::*;
 use crate::*;
-
-const TEST_CRYPTO_KIND: CryptoKind = VALID_CRYPTO_KINDS[0];
 
 use lazy_static::*;
 
 lazy_static! {
-    static ref BOGUS_KEY: TypedRecordKey = TypedRecordKey::from(CryptoTyped::new(
+    static ref BOGUS_KEY: RecordKey = RecordKey::new(
         TEST_CRYPTO_KIND,
-        RecordKey::new([0u8; 32])
-    ));
+        BareRecordKey::new(
+            BareOpaqueRecordKey::new(&[0u8; 32]),
+            Some(BareSharedSecret::new(&[1u8; 32]))
+        )
+    );
 }
 
 pub async fn test_get_dht_value_unopened(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
-    let result = rc.get_dht_value(*BOGUS_KEY, 0, false).await;
+    let result = rc.get_dht_value(BOGUS_KEY.clone(), 0, false).await;
     assert_err!(result);
 }
 
 pub async fn test_open_dht_record_nonexistent_no_writer(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
-    let result = rc.get_dht_value(*BOGUS_KEY, 0, false).await;
+    let result = rc.get_dht_value(BOGUS_KEY.clone(), 0, false).await;
     assert_err!(result);
 }
 
 pub async fn test_close_dht_record_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
-    let result = rc.close_dht_record(*BOGUS_KEY).await;
+    let result = rc.close_dht_record(BOGUS_KEY.clone()).await;
     assert_err!(result);
 }
 
 pub async fn test_delete_dht_record_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
-    let result = rc.delete_dht_record(*BOGUS_KEY).await;
+    let result = rc.delete_dht_record(BOGUS_KEY.clone()).await;
     assert_err!(result);
 }
 
@@ -44,12 +46,12 @@ pub async fn test_create_delete_dht_record_simple(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(TEST_CRYPTO_KIND))
+        .create_dht_record(TEST_CRYPTO_KIND, DHTSchema::dflt(1).unwrap(), None)
         .await
         .unwrap();
 
-    let dht_key = *rec.key();
-    rc.close_dht_record(dht_key).await.unwrap();
+    let dht_key = rec.key();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
@@ -62,18 +64,18 @@ pub async fn test_create_dht_record_with_owner(api: VeilidAPI) {
 
     let rec = rc
         .create_dht_record(
+            TEST_CRYPTO_KIND,
             DHTSchema::dflt(1).unwrap(),
-            Some(owner_keypair),
-            Some(TEST_CRYPTO_KIND),
+            Some(owner_keypair.clone()),
         )
         .await
         .unwrap();
 
-    assert_eq!(rec.owner(), &owner_keypair.key);
+    assert_eq!(rec.ref_owner(), &owner_keypair.key());
 
-    let dht_key = *rec.key();
-    rc.close_dht_record(dht_key).await.unwrap();
-    rc.delete_dht_record(dht_key).await.unwrap();
+    let dht_key = rec.key();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
+    rc.delete_dht_record(dht_key.clone()).await.unwrap();
 }
 
 pub async fn test_get_dht_record_key(api: VeilidAPI) {
@@ -86,20 +88,28 @@ pub async fn test_get_dht_record_key(api: VeilidAPI) {
 
     // create the record normally
     let rec = rc
-        .create_dht_record(schema.clone(), Some(owner_keypair), Some(TEST_CRYPTO_KIND))
+        .create_dht_record(
+            TEST_CRYPTO_KIND,
+            schema.clone(),
+            Some(owner_keypair.clone()),
+        )
         .await
         .unwrap();
 
     // recreate the record key from the metadata alone
-    let key = rc
-        .get_dht_record_key(schema.clone(), &owner_keypair.key, Some(TEST_CRYPTO_KIND))
+    let key = api
+        .get_dht_record_key(
+            schema.clone(),
+            owner_keypair.key(),
+            rec.key().encryption_key(),
+        )
         .unwrap();
 
     // keys should be the same
-    assert_eq!(key, *rec.key());
+    assert_eq!(key, rec.key());
 
-    let dht_key = *rec.key();
-    rc.close_dht_record(dht_key).await.unwrap();
+    let dht_key = rec.key();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
@@ -107,14 +117,14 @@ pub async fn test_get_dht_value_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(TEST_CRYPTO_KIND))
+        .create_dht_record(TEST_CRYPTO_KIND, DHTSchema::dflt(1).unwrap(), None)
         .await
         .unwrap();
-    let dht_key = *rec.key();
-    let result = rc.get_dht_value(dht_key, 0, false).await;
+    let dht_key = rec.key();
+    let result = rc.get_dht_value(dht_key.clone(), 0, false).await;
     assert_eq!(result.expect("should not be error"), None);
 
-    rc.close_dht_record(dht_key).await.unwrap();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
@@ -122,17 +132,19 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(TEST_CRYPTO_KIND))
+        .create_dht_record(TEST_CRYPTO_KIND, DHTSchema::dflt(2).unwrap(), None)
         .await
         .unwrap();
-    let dht_key = *rec.key();
+    let dht_key = rec.key();
 
     let test_value = String::from("BLAH BLAH BLAH").as_bytes().to_vec();
     // convert string to byte array
-    let set_dht_value_result = rc.set_dht_value(dht_key, 0, test_value.clone(), None).await;
+    let set_dht_value_result = rc
+        .set_dht_value(dht_key.clone(), 0, test_value.clone(), None)
+        .await;
     assert_eq!(set_dht_value_result.expect("should be Ok(None)"), None);
 
-    let get_dht_value_result_0_non_force = rc.get_dht_value(dht_key, 0, false).await;
+    let get_dht_value_result_0_non_force = rc.get_dht_value(dht_key.clone(), 0, false).await;
     assert_eq!(
         get_dht_value_result_0_non_force
             .expect("should not be error")
@@ -142,7 +154,7 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
     );
 
     // works in python, fails in rust
-    let get_dht_value_result_0_force = rc.get_dht_value(dht_key, 0, true).await;
+    let get_dht_value_result_0_force = rc.get_dht_value(dht_key.clone(), 0, true).await;
     assert_eq!(
         get_dht_value_result_0_force
             .expect("should not be error")
@@ -151,7 +163,7 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
         test_value.clone()
     );
 
-    let get_dht_value_result_1_non_force = rc.get_dht_value(dht_key, 1, false).await;
+    let get_dht_value_result_1_non_force = rc.get_dht_value(dht_key.clone(), 1, false).await;
     assert_eq!(
         get_dht_value_result_1_non_force.expect("should not be error"),
         None
@@ -162,7 +174,7 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
     //     get_dht_value_result_1_non_force.expect("should hold value")
     // );
 
-    rc.close_dht_record(dht_key).await.unwrap();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
@@ -170,13 +182,13 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(2).unwrap(), None, Some(TEST_CRYPTO_KIND))
+        .create_dht_record(TEST_CRYPTO_KIND, DHTSchema::dflt(2).unwrap(), None)
         .await
         .unwrap();
-    let key = *rec.key();
+    let key = rec.key();
     let owner = rec.owner();
     let secret = rec.owner_secret().unwrap();
-    let keypair = KeyPair::new(*owner, *secret);
+    let keypair = KeyPair::new_from_parts(owner.clone(), secret.value());
 
     let test_value_1 = String::from("Qwertyuiop Asdfghjkl Zxcvbnm")
         .as_bytes()
@@ -192,28 +204,32 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     // 5. Read data from subkey 0 with force_refresh, check data
     // 6. Read data from subkey 1 with force_refresh, check data
     // 7. Overwrite value 1 twice, check that there's no errors
-    let set_dht_test_value_1_result = rc.set_dht_value(key, 1, test_value_1.clone(), None).await;
+    let set_dht_test_value_1_result = rc
+        .set_dht_value(key.clone(), 1, test_value_1.clone(), None)
+        .await;
     assert!(set_dht_test_value_1_result.is_ok());
 
-    let get_dht_value_result_1_non_force = rc.get_dht_value(key, 1, false).await;
+    let get_dht_value_result_1_non_force = rc.get_dht_value(key.clone(), 1, false).await;
     assert!(get_dht_value_result_1_non_force.is_ok());
     let get_dht_value_result_1_non_force = get_dht_value_result_1_non_force
         .unwrap()
         .expect("should hold value");
     assert_eq!(get_dht_value_result_1_non_force.data(), test_value_1);
-    assert_eq!(get_dht_value_result_1_non_force.seq(), 0);
+    assert_eq!(get_dht_value_result_1_non_force.seq(), 0.into());
     assert_eq!(get_dht_value_result_1_non_force.writer(), owner);
 
-    let get_dht_value_result_0_non_force = rc.get_dht_value(key, 0, false).await;
+    let get_dht_value_result_0_non_force = rc.get_dht_value(key.clone(), 0, false).await;
     assert_eq!(
         get_dht_value_result_0_non_force.expect("should not be error"),
         None
     );
 
-    let set_dht_test_value_0_result = rc.set_dht_value(key, 0, test_data_2.clone(), None).await;
+    let set_dht_test_value_0_result = rc
+        .set_dht_value(key.clone(), 0, test_data_2.clone(), None)
+        .await;
     assert!(set_dht_test_value_0_result.is_ok());
 
-    let get_dht_value_result_0_force = rc.get_dht_value(key, 0, true).await;
+    let get_dht_value_result_0_force = rc.get_dht_value(key.clone(), 0, true).await;
     assert_eq!(
         get_dht_value_result_0_force
             .expect("should be OK(result)")
@@ -222,7 +238,7 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
         test_data_2
     );
 
-    let get_dht_value_result_1_force = rc.get_dht_value(key, 1, true).await;
+    let get_dht_value_result_1_force = rc.get_dht_value(key.clone(), 1, true).await;
     assert_eq!(
         get_dht_value_result_1_force
             .expect("should be OK(result)")
@@ -231,10 +247,14 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
         test_value_1
     );
 
-    let overwrite_value_1_result_1 = rc.set_dht_value(key, 1, test_value_1.clone(), None).await;
+    let overwrite_value_1_result_1 = rc
+        .set_dht_value(key.clone(), 1, test_value_1.clone(), None)
+        .await;
     assert!(overwrite_value_1_result_1.is_ok());
 
-    let overwrite_value_1_result_2 = rc.set_dht_value(key, 1, test_data_2.clone(), None).await;
+    let overwrite_value_1_result_2 = rc
+        .set_dht_value(key.clone(), 1, test_data_2.clone(), None)
+        .await;
     assert!(overwrite_value_1_result_2.is_ok());
 
     // Now that we initialized some subkeys
@@ -242,8 +262,8 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     // Delete things locally and reopen and see if we can write
     // with the same writer key
 
-    rc.close_dht_record(key).await.unwrap();
-    rc.delete_dht_record(key).await.unwrap();
+    rc.close_dht_record(key.clone()).await.unwrap();
+    rc.delete_dht_record(key.clone()).await.unwrap();
 
     // Scenario 2
     // 1. Open DHT record with existing keys
@@ -253,41 +273,45 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     // 4. Check that subkey 1 can be overwritten
     // 5. Read data from subkey 1 with force_refresh, check data
 
-    let rec = rc.open_dht_record(key, Some(keypair)).await;
+    let rec = rc.open_dht_record(key.clone(), Some(keypair.clone())).await;
     assert!(rec.is_ok());
     let rec = rec.unwrap();
-    assert_eq!(rec.key().value, key.value);
-    assert_eq!(rec.key().kind, key.kind);
+    assert_eq!(rec.ref_key().value(), key.value());
+    assert_eq!(rec.ref_key().kind(), key.kind());
     assert_eq!(rec.owner(), owner);
     assert_eq!(rec.owner_secret().unwrap(), secret);
-    assert_eq!(rec.schema(), &DHTSchema::dflt(2).unwrap());
+    assert_eq!(rec.ref_schema(), &DHTSchema::dflt(2).unwrap());
 
     //Verify subkey 1 can be set before it is get but newer is available online
-    let set_dht_test_value_1_result = rc.set_dht_value(key, 1, test_data_3.clone(), None).await;
+    let set_dht_test_value_1_result = rc
+        .set_dht_value(key.clone(), 1, test_data_3.clone(), None)
+        .await;
     assert!(set_dht_test_value_1_result.is_ok());
     let vdtemp = set_dht_test_value_1_result.unwrap().unwrap();
     assert_eq!(vdtemp.data(), test_data_2);
-    assert_eq!(vdtemp.seq(), 1);
+    assert_eq!(vdtemp.seq(), 1.into());
     assert_eq!(vdtemp.writer(), owner);
 
     // Verify subkey 1 can be set a second time and it updates because seq is newer
-    let set_dht_test_value_1_result = rc.set_dht_value(key, 1, test_data_3.clone(), None).await;
+    let set_dht_test_value_1_result = rc
+        .set_dht_value(key.clone(), 1, test_data_3.clone(), None)
+        .await;
     assert!(set_dht_test_value_1_result.is_ok());
 
     // Verify the network got the subkey update with a refresh check
-    let get_dht_value_result_1_force = rc.get_dht_value(key, 1, true).await;
+    let get_dht_value_result_1_force = rc.get_dht_value(key.clone(), 1, true).await;
     assert!(get_dht_value_result_1_force.is_ok());
     let get_dht_value_result_1_force = get_dht_value_result_1_force
         .expect("should be OK(result)")
         .expect("should hold value");
     assert_eq!(get_dht_value_result_1_force.data(), test_data_3);
-    assert_eq!(get_dht_value_result_1_force.seq(), 2);
+    assert_eq!(get_dht_value_result_1_force.seq(), 2.into());
     assert_eq!(get_dht_value_result_1_force.writer(), owner);
 
     // Delete things locally and reopen and see if we can write
     // with a different writer key (should fail)
-    rc.close_dht_record(key).await.unwrap();
-    rc.delete_dht_record(key).await.unwrap();
+    rc.close_dht_record(key.clone()).await.unwrap();
+    rc.delete_dht_record(key.clone()).await.unwrap();
 
     // Scenario 3
     // 1. Open DHT record with new keypair
@@ -296,31 +320,37 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
     // 4. Try writing to subkey 0, expect error
 
     let crypto = api.crypto().unwrap();
-    let cs = crypto.get(key.kind).unwrap();
-    assert!(cs.validate_keypair(owner, secret));
+    let cs = crypto.get(key.kind()).unwrap();
+    assert!(cs
+        .validate_keypair(&owner, &secret)
+        .expect("should succeed"));
     let other_keypair = cs.generate_keypair();
 
-    let rec = rc.open_dht_record(key, Some(other_keypair)).await;
+    let rec = rc.open_dht_record(key.clone(), Some(other_keypair)).await;
     assert!(rec.is_ok());
     let rec = rec.unwrap();
-    assert_eq!(rec.key().value, key.value);
-    assert_eq!(rec.key().kind, key.kind);
+    assert_eq!(rec.ref_key().value(), key.value());
+    assert_eq!(rec.ref_key().kind(), key.kind());
     assert_eq!(rec.owner(), owner);
     assert_eq!(rec.owner_secret(), None);
-    assert_eq!(rec.schema(), &DHTSchema::dflt(2).unwrap());
+    assert_eq!(rec.ref_schema(), &DHTSchema::dflt(2).unwrap());
 
     // Verify subkey 1 can NOT be set because we have the wrong writer
-    let set_dht_test_value_0_result = rc.set_dht_value(key, 1, test_value_1.clone(), None).await;
+    let set_dht_test_value_0_result = rc
+        .set_dht_value(key.clone(), 1, test_value_1.clone(), None)
+        .await;
     assert_err!(set_dht_test_value_0_result);
 
     // Verify subkey 0 can NOT be set because we have the wrong writer
-    let set_dht_test_value_0_result = rc.set_dht_value(key, 0, test_value_1.clone(), None).await;
+    let set_dht_test_value_0_result = rc
+        .set_dht_value(key.clone(), 0, test_value_1.clone(), None)
+        .await;
     assert_err!(set_dht_test_value_0_result);
 
     // Verify subkey 0 can be set because we have overridden with the correct writer
     let set_dht_test_value_0_result = rc
         .set_dht_value(
-            key,
+            key.clone(),
             0,
             test_value_1.clone(),
             Some(SetDHTValueOptions {
@@ -331,7 +361,7 @@ pub async fn test_open_writer_dht_value(api: VeilidAPI) {
         .await;
     assert!(set_dht_test_value_0_result.is_ok());
 
-    rc.close_dht_record(key).await.unwrap();
+    rc.close_dht_record(key.clone()).await.unwrap();
     rc.delete_dht_record(key).await.unwrap();
 }
 
@@ -340,21 +370,23 @@ pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
 
     // Create a DHT record
     let rec = rc
-        .create_dht_record(DHTSchema::dflt(1).unwrap(), None, Some(CRYPTO_KIND_VLD0))
+        .create_dht_record(CRYPTO_KIND_VLD0, DHTSchema::dflt(1).unwrap(), None)
         .await
         .unwrap();
-    let dht_key = *rec.key();
+    let dht_key = rec.key();
 
     let test_value = String::from("Test offline value").as_bytes().to_vec();
 
     // Test 1: Default behavior (options = None) should allow offline writes
-    let set_result = rc.set_dht_value(dht_key, 0, test_value.clone(), None).await;
+    let set_result = rc
+        .set_dht_value(dht_key.clone(), 0, test_value.clone(), None)
+        .await;
     assert!(set_result.is_ok());
 
     // Test 2: Default behavior (allow_offline = None) should allow offline writes
     let set_result = rc
         .set_dht_value(
-            dht_key,
+            dht_key.clone(),
             0,
             test_value.clone(),
             Some(SetDHTValueOptions {
@@ -368,7 +400,7 @@ pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
     // Test 3: Explicitly allow offline writes
     let set_result = rc
         .set_dht_value(
-            dht_key,
+            dht_key.clone(),
             1,
             test_value.clone(),
             Some(SetDHTValueOptions {
@@ -382,7 +414,7 @@ pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
     // Test 4: Disallow offline writes
     let set_result = rc
         .set_dht_value(
-            dht_key,
+            dht_key.clone(),
             2,
             test_value.clone(),
             Some(SetDHTValueOptions {
@@ -394,22 +426,8 @@ pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
     assert!(set_result.is_err());
     assert!(set_result.unwrap_err().to_string().contains("offline"));
 
-    rc.close_dht_record(dht_key).await.unwrap();
+    rc.close_dht_record(dht_key.clone()).await.unwrap();
     rc.delete_dht_record(dht_key).await.unwrap();
-}
-
-// Network-related code to make sure veilid node is connetected to other peers
-
-async fn wait_for_public_internet_ready(api: &VeilidAPI) {
-    info!("wait_for_public_internet_ready");
-    loop {
-        let state = api.get_state().await.unwrap();
-        if state.attachment.public_internet_ready {
-            break;
-        }
-        sleep(5000).await;
-    }
-    info!("wait_for_public_internet_ready, done");
 }
 
 pub async fn test_all() {
@@ -418,8 +436,8 @@ pub async fn test_all() {
         return;
     }
 
-    let (update_callback, config_callback) = setup_veilid_core();
-    let api = api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
 

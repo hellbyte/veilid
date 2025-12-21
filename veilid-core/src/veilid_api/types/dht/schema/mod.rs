@@ -9,11 +9,6 @@ pub use smpl::*;
 /// Enum over all the supported DHT Schemas
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind")]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi)
-)]
 #[must_use]
 pub enum DHTSchema {
     DFLT(DHTSchemaDFLT),
@@ -21,6 +16,9 @@ pub enum DHTSchema {
 }
 
 impl DHTSchema {
+    pub const MAX_WRITER_COUNT: usize = 256;
+    pub const MAX_SUBKEY_COUNT: usize = 1024;
+
     pub fn dflt(o_cnt: u16) -> VeilidAPIResult<DHTSchema> {
         Ok(DHTSchema::DFLT(DHTSchemaDFLT::new(o_cnt)?))
     }
@@ -54,6 +52,15 @@ impl DHTSchema {
         }
     }
 
+    /// Get the subkey count for this schema
+    #[must_use]
+    pub fn subkey_count(&self) -> usize {
+        match self {
+            DHTSchema::DFLT(d) => d.subkey_count(),
+            DHTSchema::SMPL(s) => s.subkey_count(),
+        }
+    }
+
     /// Get the data size of this schema beyond the size of the structure itself
     #[must_use]
     pub fn data_size(&self) -> usize {
@@ -63,25 +70,12 @@ impl DHTSchema {
         }
     }
 
-    /// Check a subkey value data against the schema
-    pub fn check_subkey_value_data(
-        &self,
-        owner: &PublicKey,
-        subkey: ValueSubkey,
-        value_data: &ValueData,
-    ) -> VeilidAPIResult<()> {
-        match self {
-            DHTSchema::DFLT(d) => d.check_subkey_value_data(owner, subkey, value_data),
-            DHTSchema::SMPL(s) => s.check_subkey_value_data(owner, subkey, value_data),
-        }
-    }
-
-    /// Check if a key is a schema member
+    /// Check if a hash is a schema member
     #[must_use]
-    pub fn is_member(&self, key: &PublicKey) -> bool {
+    pub fn is_member(&self, member_id: &BareMemberId) -> bool {
         match self {
-            DHTSchema::DFLT(d) => d.is_member(key),
-            DHTSchema::SMPL(s) => s.is_member(key),
+            DHTSchema::DFLT(d) => d.is_member(member_id),
+            DHTSchema::SMPL(s) => s.is_member(member_id),
         }
     }
 
@@ -125,12 +119,17 @@ impl TryFrom<&[u8]> for DHTSchema {
             apibail_generic!("invalid size");
         }
         let fcc: [u8; 4] = b[0..4].try_into().unwrap();
-        match fcc {
-            DHTSchemaDFLT::FCC => Ok(DHTSchema::DFLT(DHTSchemaDFLT::try_from(b)?)),
-            DHTSchemaSMPL::FCC => Ok(DHTSchema::SMPL(DHTSchemaSMPL::try_from(b)?)),
+        let schema = match fcc {
+            DHTSchemaDFLT::FCC => DHTSchema::DFLT(DHTSchemaDFLT::try_from(b)?),
+            DHTSchemaSMPL::FCC => DHTSchema::SMPL(DHTSchemaSMPL::try_from(b)?),
             _ => {
                 apibail_generic!("unknown fourcc");
             }
-        }
+        };
+
+        // Just to make sure, although it should come out of the try_from already validated.
+        schema.validate()?;
+
+        Ok(schema)
     }
 }

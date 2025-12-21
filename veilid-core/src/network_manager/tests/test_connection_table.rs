@@ -1,7 +1,6 @@
-use super::*;
-
 use super::connection_table::*;
-use crate::tests::mock_registry;
+use super::*;
+use crate::routing_table::tests::fixtures::*;
 
 pub async fn test_add_get_remove() {
     let registry = mock_registry::init("").await;
@@ -40,7 +39,7 @@ pub async fn test_add_get_remove() {
     let a5 = Flow::new(
         PeerAddress::new(
             SocketAddress::new(Address::IPV6(Ipv6Addr::new(192, 0, 0, 0, 0, 0, 0, 1)), 8090),
-            ProtocolType::WSS,
+            ProtocolType::WS,
         ),
         SocketAddress::from_socket_addr(SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::new(193, 0, 0, 0, 0, 0, 0, 1),
@@ -123,8 +122,4 @@ pub async fn test_add_get_remove() {
     assert_eq!(table.connection_count(), 0);
 
     mock_registry::terminate(registry).await;
-}
-
-pub async fn test_all() {
-    test_add_get_remove().await;
 }

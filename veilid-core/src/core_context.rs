@@ -2,7 +2,7 @@ use crate::attachment_manager::{AttachmentManager, AttachmentManagerStartupConte
 use crate::crypto::Crypto;
 use crate::logging::*;
 use crate::network_manager::{NetworkManager, NetworkManagerStartupContext};
-use crate::routing_table::RoutingTable;
+use crate::routing_table::{RoutingTable, RoutingTableStartupContext};
 use crate::rpc_processor::{RPCProcessor, RPCProcessorStartupContext};
 use crate::storage_manager::StorageManager;
 use crate::veilid_api::*;
@@ -21,32 +21,24 @@ pub(crate) struct VeilidCoreContext {
     registry: VeilidComponentRegistry,
 }
 
-impl_veilid_component_registry_accessor!(VeilidCoreContext);
+impl_veilid_component_accessors!(VeilidCoreContext);
 
 impl VeilidCoreContext {
     #[instrument(level = "trace", target = "core_context", err, skip_all)]
-    async fn new_with_config_callback(
-        update_callback: UpdateCallback,
-        config_callback: ConfigCallback,
-    ) -> VeilidAPIResult<VeilidCoreContext> {
-        // Set up config from callback
-        let config = VeilidStartupOptions::new_from_callback(config_callback, update_callback)?;
-
-        Self::new_common(config).await
-    }
-
-    #[instrument(level = "trace", target = "core_context", err, skip_all)]
     async fn new_with_config(
         update_callback: UpdateCallback,
-        config_inner: VeilidConfig,
+        config: VeilidConfig,
     ) -> VeilidAPIResult<VeilidCoreContext> {
         // Set up config from json
-        let config = VeilidStartupOptions::new_from_config(config_inner, update_callback);
+        let config = VeilidStartupOptions::try_new(config, update_callback)?;
+
         Self::new_common(config).await
     }
 
     #[instrument(level = "trace", target = "core_context", err, skip_all)]
-    async fn new_common(config: VeilidStartupOptions) -> VeilidAPIResult<VeilidCoreContext> {
+    async fn new_common(
+        startup_options: VeilidStartupOptions,
+    ) -> VeilidAPIResult<VeilidCoreContext> {
         cfg_if! {
             if #[cfg(target_os = "android")] {
                 if !crate::intf::android::is_android_ready() {
@@ -56,11 +48,11 @@ impl VeilidCoreContext {
         }
 
         let (program_name, namespace, update_callback) = {
-            let cfginner = config.get();
+            let cfginner = startup_options.config();
             (
                 cfginner.program_name.clone(),
                 cfginner.namespace.clone(),
-                config.update_callback(),
+                startup_options.update_callback(),
             )
         };
 
@@ -68,11 +60,18 @@ impl VeilidCoreContext {
         ApiTracingLayer::add_callback(log_key, update_callback.clone()).await?;
 
         // Create component registry
-        let registry = VeilidComponentRegistry::new(config);
+        let registry = VeilidComponentRegistry::new(startup_options);
 
         veilid_log!(registry info "Veilid API starting up");
-        veilid_log!(registry info "Version: {}", veilid_version_string());
-        veilid_log!(registry info "Features: {:?}", veilid_features());
+        if let Some(target) = option_env!("TARGET") {
+            veilid_log!(registry info     "Build Target: {}", target);
+        }
+        veilid_log!(registry info     "Program Name: {}", program_name);
+        if !namespace.is_empty() {
+            veilid_log!(registry info "Namespace:    {}", namespace);
+        }
+        veilid_log!(registry info     "Features:     {:?}", veilid_features());
+        veilid_log!(registry info     "Version:      {}", veilid_version_string());
         #[cfg(feature = "footgun")]
         {
             veilid_log!(registry warn
@@ -85,8 +84,8 @@ impl VeilidCoreContext {
         registry.register(TableStore::new);
         #[cfg(feature = "unstable-blockstore")]
         registry.register(BlockStore::new);
+        registry.register_with_context(RoutingTable::new, RoutingTableStartupContext::default());
         registry.register(StorageManager::new);
-        registry.register(RoutingTable::new);
         registry
             .register_with_context(NetworkManager::new, NetworkManagerStartupContext::default());
         registry.register_with_context(RPCProcessor::new, RPCProcessorStartupContext::default());
@@ -118,15 +117,10 @@ impl VeilidCoreContext {
     async fn shutdown(self) {
         veilid_log!(self info "Veilid API shutting down");
 
-        let (program_name, namespace, update_callback) = {
-            let config = self.registry.config();
-            let cfginner = config.get();
-            (
-                cfginner.program_name.clone(),
-                cfginner.namespace.clone(),
-                config.update_callback(),
-            )
-        };
+        let config = self.registry.config();
+        let program_name = &config.program_name;
+        let namespace = &config.namespace;
+        let update_callback = self.registry().update_callback();
 
         // Run pre-termination
         // This should shut down background processes that may require the existence of
@@ -139,7 +133,7 @@ impl VeilidCoreContext {
 
         veilid_log!(self info "Veilid API shutdown complete");
 
-        let log_key = VeilidLayerFilter::make_veilid_log_key(&program_name, &namespace).to_string();
+        let log_key = VeilidLayerFilter::make_veilid_log_key(program_name, namespace).to_string();
         if let Err(e) = ApiTracingLayer::remove_callback(log_key).await {
             error!("Error removing callback from ApiTracingLayer: {}", e);
         }
@@ -196,57 +190,6 @@ lazy_static::lazy_static! {
     static ref STARTUP_TABLE: AsyncTagLockTable<InitKey> = AsyncTagLockTable::new();
 }
 
-/// Initialize a Veilid node.
-///
-/// Must be called only once per 'program_name + namespace' combination at the start of an application.
-/// The 'config_callback' must return a unique 'program_name + namespace' combination per simulataneous call to api_startup.
-/// You can use the same program_name multiple times to create separate storage locations.
-/// Multiple namespaces for the same program_name will use the same databases and on-disk locations, but will partition keys internally
-/// to keep the namespaces distict.
-///
-/// * `update_callback` - called when internal state of the Veilid node changes, for example, when app-level messages are received, when private routes die and need to be reallocated, or when routing table states change.
-/// * `config_callback` - called at startup to supply a configuration object directly to Veilid.
-///
-/// Returns a [VeilidAPI] object that can be used to operate the node.
-#[instrument(level = "trace", target = "core_context", err, skip_all)]
-pub async fn api_startup(
-    update_callback: UpdateCallback,
-    config_callback: ConfigCallback,
-) -> VeilidAPIResult<VeilidAPI> {
-    // Get the program_name and namespace we're starting up in
-    let program_name = *config_callback("program_name".to_owned())?
-        .downcast::<String>()
-        .map_err(|_| {
-            VeilidAPIError::invalid_argument("api_startup", "config_callback", "program_name")
-        })?;
-    let namespace = *config_callback("namespace".to_owned())?
-        .downcast::<String>()
-        .map_err(|_| {
-            VeilidAPIError::invalid_argument("api_startup", "config_callback", "namespace")
-        })?;
-    let init_key = (program_name, namespace);
-
-    // Only allow one startup/shutdown per program_name+namespace combination simultaneously
-    let _tag_guard = STARTUP_TABLE.lock_tag(init_key.clone()).await;
-
-    // See if we have an API started up already
-    if INITIALIZED.lock().contains(&init_key) {
-        apibail_already_initialized!();
-    }
-
-    // Create core context
-    let context =
-        VeilidCoreContext::new_with_config_callback(update_callback, config_callback).await?;
-
-    // Return an API object around our context
-    let veilid_api = VeilidAPI::new(context);
-
-    // Add to the initialized set
-    INITIALIZED.lock().insert(init_key);
-
-    Ok(veilid_api)
-}
-
 /// Initialize a Veilid node, with the configuration in JSON format.
 ///
 /// Must be called only once per 'program_name + namespace' combination at the start of an application.
@@ -268,7 +211,7 @@ pub async fn api_startup_json(
     let config: VeilidConfig =
         serde_json::from_str(&config_json).map_err(VeilidAPIError::generic)?;
 
-    api_startup_config(update_callback, config).await
+    api_startup(update_callback, config).await
 }
 
 /// Initialize a Veilid node, with the configuration object.
@@ -280,7 +223,7 @@ pub async fn api_startup_json(
 ///
 /// Returns a [VeilidAPI] object that can be used to operate the node.
 #[instrument(level = "trace", target = "core_context", err, skip_all)]
-pub async fn api_startup_config(
+pub async fn api_startup(
     update_callback: UpdateCallback,
     config: VeilidConfig,
 ) -> VeilidAPIResult<VeilidAPI> {
@@ -313,8 +256,7 @@ pub(crate) async fn api_shutdown(context: VeilidCoreContext) {
     let init_key = {
         let registry = context.registry();
         let config = registry.config();
-        let cfginner = config.get();
-        (cfginner.program_name.clone(), cfginner.namespace.clone())
+        (config.program_name.clone(), config.namespace.clone())
     };
 
     // Only allow one startup/shutdown per program_name+namespace combination simultaneously

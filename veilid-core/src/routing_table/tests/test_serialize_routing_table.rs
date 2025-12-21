@@ -1,71 +1,45 @@
-use super::*;
-use crate::{routing_table::*, RegisteredComponents, VALID_CRYPTO_KINDS};
+use super::fixtures::*;
+use crate::routing_table::*;
+use crate::*;
 
-fn make_mock_typed_node_id(kind: CryptoKind, idx: u8) -> TypedNodeId {
-    TypedNodeId::new(
-        kind,
-        NodeId::new([
-            idx, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0,
-        ]),
+fn add_mock_data(routing_table: &RoutingTable) {
+    let pi = fix_peer_info(
+        routing_table,
+        fix_crypto_info_list(true),
+        fix_crypto_info_list_secrets(),
     )
-}
-
-fn make_mock_typed_node_id_group(valid_kinds: bool, unknown: bool) -> TypedNodeIdGroup {
-    let mut tks = TypedNodeIdGroup::new();
-    if valid_kinds {
-        VALID_CRYPTO_KINDS.iter().for_each(|k| {
-            tks.add(make_mock_typed_node_id(*k, 0));
-        });
-    }
-    if unknown {
-        tks.add(make_mock_typed_node_id(CryptoKind([1, 2, 3, 4]), 0));
-    }
-    tks
-}
-
-fn make_mock_peer_info(node_ids: TypedNodeIdGroup) -> EyreResult<PeerInfo> {
-    PeerInfo::new(
-        RoutingDomain::PublicInternet,
-        node_ids,
-        SignedNodeInfo::Direct(SignedDirectNodeInfo::new(
-            NodeInfo::new(
-                NetworkClass::OutboundOnly,
-                ProtocolTypeSet::new(),
-                AddressTypeSet::new(),
-                vec![0],
-                vec![CRYPTO_KIND_VLD0],
-                PUBLIC_INTERNET_CAPABILITIES.to_vec(),
-                vec![],
-            ),
-            Timestamp::new(0),
-            Vec::new(),
-        )),
-    )
-}
-
-fn add_mock_data(routing_table: &VeilidComponentGuard<'_, RoutingTable>) {
-    let pi =
-        make_mock_peer_info(make_mock_typed_node_id_group(true, false)).expect("should be valid");
+    .expect("should be valid");
     routing_table
-        .register_node_with_peer_info(Arc::new(pi), true)
-        .expect("should register");
-    let pi2 =
-        make_mock_peer_info(make_mock_typed_node_id_group(true, true)).expect("should be valid");
-    routing_table
-        .register_node_with_peer_info(Arc::new(pi2), true)
+        .register_node_with_peer_info(Arc::new(pi), false)
         .expect("should register");
 
-    let _ = make_mock_peer_info(make_mock_typed_node_id_group(false, false))
-        .expect_err("should fail with no node ids");
+    let _ = fix_peer_info(
+        routing_table,
+        fix_crypto_info_list(false),
+        fix_crypto_info_list_secrets(),
+    )
+    .expect_err("should be invalid");
+
+    let _ = fix_peer_info(
+        routing_table,
+        fix_crypto_info_list(true),
+        SecretKeyGroup::new(),
+    )
+    .expect_err("should be missing a secret key");
 
     let pi3 =
-        make_mock_peer_info(make_mock_typed_node_id_group(false, true)).expect("should be valid");
+        fix_unsigned_peer_info(routing_table, fix_crypto_info_list(true)).expect("should be valid");
+    assert!(pi3.signatures().is_empty(), "should have no signatures");
+
+    let _ = routing_table
+        .register_node_with_peer_info(Arc::new(pi3.clone()), false)
+        .expect_err("should fail with only no signatures");
 
     let _ = routing_table
         .register_node_with_peer_info(Arc::new(pi3), true)
-        .expect_err("should fail with only unsupported node ids");
+        .expect("should succeed with allow_invalid");
 }
+
 pub async fn test_routingtable_buckets_round_trip() {
     let original_registry = mock_registry::init("a").await;
     let copy_registry = mock_registry::init("b").await;
@@ -122,9 +96,16 @@ pub async fn test_routingtable_buckets_round_trip() {
     mock_registry::terminate(copy_registry).await;
 }
 
-pub fn test_round_trip_peerinfo() {
-    let pi =
-        make_mock_peer_info(make_mock_typed_node_id_group(true, true)).expect("should be valid");
+pub async fn test_round_trip_peerinfo() {
+    let registry = mock_registry::init("a").await;
+    let routing_table = registry.routing_table();
+
+    let pi = fix_peer_info(
+        &routing_table,
+        fix_crypto_info_list(true),
+        fix_crypto_info_list_secrets(),
+    )
+    .expect("should be valid");
 
     let s = serialize_json(&pi);
     let pi2 = deserialize_json(&s).expect("Should deserialize");
@@ -132,9 +113,4 @@ pub fn test_round_trip_peerinfo() {
 
     assert_eq!(pi, pi2);
     assert_eq!(s, s2);
-}
-
-pub async fn test_all() {
-    test_routingtable_buckets_round_trip().await;
-    test_round_trip_peerinfo();
 }

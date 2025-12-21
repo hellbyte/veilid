@@ -5,7 +5,7 @@ const MAX_VALUE_CHANGED_SUBKEY_RANGES_LEN: usize = 512;
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationValueChanged {
-    key: TypedRecordKey,
+    key: OpaqueRecordKey,
     subkeys: ValueSubkeyRangeSet,
     count: u32,
     watch_id: u64,
@@ -14,23 +14,23 @@ pub(in crate::rpc_processor) struct RPCOperationValueChanged {
 
 impl RPCOperationValueChanged {
     pub fn new(
-        key: TypedRecordKey,
+        key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         count: u32,
         watch_id: u64,
         value: Option<SignedValueData>,
     ) -> Result<Self, RPCError> {
         if subkeys.ranges_len() > MAX_VALUE_CHANGED_SUBKEY_RANGES_LEN {
-            return Err(RPCError::protocol(
+            return Err(RPCError::internal(
                 "ValueChanged subkey ranges length too long",
             ));
         }
 
         if watch_id == 0 {
-            return Err(RPCError::protocol("ValueChanged needs a nonzero watch id"));
+            return Err(RPCError::internal("ValueChanged needs a nonzero watch id"));
         }
         if subkeys.is_empty() && value.is_some() {
-            return Err(RPCError::protocol(
+            return Err(RPCError::internal(
                 "ValueChanged with a value must have subkeys",
             ));
         }
@@ -44,7 +44,7 @@ impl RPCOperationValueChanged {
         })
     }
 
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         if self.watch_id == 0 {
             return Err(RPCError::protocol("ValueChanged does not have a valid id"));
         }
@@ -58,7 +58,7 @@ impl RPCOperationValueChanged {
     }
 
     #[expect(dead_code)]
-    pub fn key(&self) -> &TypedRecordKey {
+    pub fn key(&self) -> &OpaqueRecordKey {
         &self.key
     }
 
@@ -85,7 +85,7 @@ impl RPCOperationValueChanged {
     pub fn destructure(
         self,
     ) -> (
-        TypedRecordKey,
+        OpaqueRecordKey,
         ValueSubkeyRangeSet,
         u32,
         u64,
@@ -104,15 +104,13 @@ impl RPCOperationValueChanged {
         _decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_value_changed::Reader,
     ) -> Result<Self, RPCError> {
-        let k_reader = reader.get_key().map_err(RPCError::protocol)?;
-        let key = decode_typed_record_key(&k_reader)?;
+        rpc_ignore_missing_property!(reader, key);
+        let k_reader = reader.get_key()?;
+        let key = decode_opaque_record_key(&k_reader)?;
 
-        let sk_reader = reader.get_subkeys().map_err(RPCError::protocol)?;
-        if sk_reader.len() as usize > MAX_VALUE_CHANGED_SUBKEY_RANGES_LEN {
-            return Err(RPCError::protocol(
-                "ValueChanged subkey ranges length too long",
-            ));
-        }
+        rpc_ignore_missing_property!(reader, subkeys);
+        let sk_reader = reader.get_subkeys()?;
+        rpc_ignore_max_len!(sk_reader, MAX_VALUE_CHANGED_SUBKEY_RANGES_LEN);
 
         let mut subkeys = ValueSubkeyRangeSet::new();
         for skr in sk_reader.iter() {
@@ -132,26 +130,20 @@ impl RPCOperationValueChanged {
         let count = reader.get_count();
         let watch_id = reader.get_watch_id();
         let value = if reader.has_value() {
-            let v_reader = reader.get_value().map_err(RPCError::protocol)?;
+            let v_reader = reader.get_value()?;
             Some(decode_signed_value_data(&v_reader)?)
         } else {
             None
         };
 
-        Ok(Self {
-            key,
-            subkeys,
-            count,
-            watch_id,
-            value,
-        })
+        Self::new(key, subkeys, count, watch_id, value)
     }
     pub fn encode(
         &self,
         builder: &mut veilid_capnp::operation_value_changed::Builder,
     ) -> Result<(), RPCError> {
         let mut k_builder = builder.reborrow().init_key();
-        encode_typed_record_key(&self.key, &mut k_builder);
+        encode_opaque_record_key(&self.key, &mut k_builder);
 
         let mut sk_builder = builder.reborrow().init_subkeys(
             self.subkeys

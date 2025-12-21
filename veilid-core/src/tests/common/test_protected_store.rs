@@ -1,10 +1,10 @@
-use super::test_veilid_config::*;
+use crate::tests::fixtures::*;
 use crate::*;
 
 async fn startup() -> VeilidAPI {
     trace!("test_table_store: starting");
-    let (update_callback, config_callback) = setup_veilid_core();
-    api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    api_startup(update_callback, config)
         .await
         .expect("startup failed")
 }

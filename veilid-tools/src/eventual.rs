@@ -29,7 +29,7 @@ impl Clone for Eventual {
 
 impl EventualBase for Eventual {
     type ResolvedType = ();
-    fn base_inner(&self) -> MutexGuard<EventualBaseInner<Self::ResolvedType>> {
+    fn base_inner(&self) -> MutexGuard<'_, EventualBaseInner<Self::ResolvedType>> {
         self.inner.lock()
     }
 }

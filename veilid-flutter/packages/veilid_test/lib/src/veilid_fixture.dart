@@ -2,6 +2,7 @@
 // ignore_for_file: do_not_use_environment, avoid_redundant_argument_values
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:async_tools/async_tools.dart';
 import 'package:veilid/veilid.dart';
@@ -17,14 +18,17 @@ abstract class VeilidFixture {
 }
 
 class DefaultVeilidFixture implements VeilidFixture {
-  DefaultVeilidFixture({required this.programName});
-
   StreamSubscription<VeilidUpdate>? _veilidUpdateSubscription;
+
   Stream<VeilidUpdate>? _veilidUpdateStream;
+
   late final StreamController<VeilidUpdate> _updateStreamController;
 
   static final _fixtureMutex = Mutex();
+
   final String programName;
+
+  DefaultVeilidFixture({required this.programName});
 
   @override
   Future<void> setUp() async {
@@ -52,7 +56,7 @@ class DefaultVeilidFixture implements VeilidFixture {
                 enabled: true,
                 level: logLevel,
                 logsInTimings: true,
-                logsInConsole: true,
+                logsInConsole: VeilidWASMConfigLoggingLogsInConsole.noColor,
                 ignoreLogTargets: ignoreLogTargets,
               ),
               api: VeilidWASMConfigLoggingApi(
@@ -90,12 +94,11 @@ class DefaultVeilidFixture implements VeilidFixture {
     var config = await getDefaultVeilidConfig(
       isWeb: kIsWeb,
       programName: programName,
+      namespace: const String.fromEnvironment('NAMESPACE'),
       bootstrap: const String.fromEnvironment('BOOTSTRAP'),
       bootstrapKeys: const bool.hasEnvironment('BOOTSTRAP_KEYS')
           ? const String.fromEnvironment('BOOTSTRAP_KEYS')
-          : const bool.hasEnvironment('BOOTSTRAP')
-              ? ''
-              : null,
+          : null,
       networkKeyPassword: const String.fromEnvironment('NETWORK_KEY'),
     );
 
@@ -105,6 +108,16 @@ class DefaultVeilidFixture implements VeilidFixture {
         protectedStore: config.protectedStore.copyWith(delete: true));
     config =
         config.copyWith(blockStore: config.blockStore.copyWith(delete: true));
+    config = config.copyWith(
+      capabilities:
+          // XXX: Remove after https://gitlab.com/veilid/veilid/-/issues/492
+          const VeilidConfigCapabilities(disable: ['DHTV']),
+      protectedStore:
+          // Linux often does not have a secret storage mechanism installed
+          config.protectedStore.copyWith(
+        allowInsecureFallback: !kIsWeb && Platform.isLinux,
+      ),
+    );
 
     final us =
         _veilidUpdateStream = await Veilid.instance.startupVeilidCore(config);

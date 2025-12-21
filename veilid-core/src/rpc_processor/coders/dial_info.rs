@@ -2,36 +2,39 @@ use super::*;
 use core::convert::TryInto;
 
 pub fn decode_dial_info(reader: &veilid_capnp::dial_info::Reader) -> Result<DialInfo, RPCError> {
-    match reader
-        .reborrow()
-        .which()
-        .map_err(RPCError::map_protocol("Missing dial info type"))?
-    {
-        veilid_capnp::dial_info::Which::Udp(udp) => {
-            let socket_address_reader = udp
-                .map_err(RPCError::protocol)?
-                .get_socket_address()
-                .map_err(RPCError::map_protocol("missing UDP socketAddress"))?;
+    let pt = reader.get_protocol_type();
+
+    match pt {
+        FOURCC_PROTOCOL_TYPE_UDP => {
+            let udp = reader
+                .get_detail()
+                .get_as::<veilid_capnp::dial_info_u_d_p::Reader>()?;
+
+            rpc_ignore_missing_property!(udp, socket_address);
+            let socket_address_reader = udp.get_socket_address()?;
             let socket_address = decode_socket_address(&socket_address_reader)?;
             Ok(DialInfo::udp(socket_address))
         }
-        veilid_capnp::dial_info::Which::Tcp(tcp) => {
-            let socket_address_reader = tcp
-                .map_err(RPCError::protocol)?
-                .get_socket_address()
-                .map_err(RPCError::map_protocol("missing TCP socketAddress"))?;
+        FOURCC_PROTOCOL_TYPE_TCP => {
+            let tcp = reader
+                .get_detail()
+                .get_as::<veilid_capnp::dial_info_t_c_p::Reader>()?;
+
+            rpc_ignore_missing_property!(tcp, socket_address);
+            let socket_address_reader = tcp.get_socket_address()?;
             let socket_address = decode_socket_address(&socket_address_reader)?;
             Ok(DialInfo::tcp(socket_address))
         }
-        veilid_capnp::dial_info::Which::Ws(ws) => {
-            let ws = ws.map_err(RPCError::protocol)?;
-            let socket_address_reader = ws
-                .get_socket_address()
-                .map_err(RPCError::map_protocol("missing WS socketAddress"))?;
+        FOURCC_PROTOCOL_TYPE_WS => {
+            let ws = reader
+                .get_detail()
+                .get_as::<veilid_capnp::dial_info_w_s::Reader>()?;
+
+            rpc_ignore_missing_property!(ws, socket_address);
+            let socket_address_reader = ws.get_socket_address()?;
             let socket_address = decode_socket_address(&socket_address_reader)?;
-            let request = ws
-                .get_request()
-                .map_err(RPCError::map_protocol("missing WS request"))?;
+            rpc_ignore_missing_property!(ws, request);
+            let request = ws.get_request()?;
             DialInfo::try_ws(
                 socket_address,
                 request
@@ -40,15 +43,19 @@ pub fn decode_dial_info(reader: &veilid_capnp::dial_info::Reader) -> Result<Dial
             )
             .map_err(RPCError::map_protocol("invalid WS dial info"))
         }
-        veilid_capnp::dial_info::Which::Wss(wss) => {
-            let wss = wss.map_err(RPCError::protocol)?;
+        #[cfg(feature = "enable-protocol-wss")]
+        FOURCC_PROTOCOL_TYPE_WSS => {
+            let wss = reader
+                .get_detail()
+                .get_as::<veilid_capnp::dial_info_w_s_s::Reader>()?;
+
+            rpc_ignore_missing_property!(wss, socket_address);
             let socket_address_reader = wss
                 .get_socket_address()
                 .map_err(RPCError::map_protocol("missing WSS socketAddress"))?;
             let socket_address = decode_socket_address(&socket_address_reader)?;
-            let request = wss
-                .get_request()
-                .map_err(RPCError::map_protocol("missing WSS request"))?;
+            rpc_ignore_missing_property!(wss, request);
+            let request = wss.get_request()?;
             DialInfo::try_wss(
                 socket_address,
                 request
@@ -57,6 +64,7 @@ pub fn decode_dial_info(reader: &veilid_capnp::dial_info::Reader) -> Result<Dial
             )
             .map_err(RPCError::map_protocol("invalid WSS dial info"))
         }
+        _ => Err(RPCError::ignore("unknown protocol type")),
     }
 }
 
@@ -66,21 +74,36 @@ pub fn encode_dial_info(
 ) -> Result<(), RPCError> {
     match dial_info {
         DialInfo::UDP(udp) => {
-            let mut di_udp_builder = builder.reborrow().init_udp();
+            builder.set_protocol_type(FOURCC_PROTOCOL_TYPE_UDP);
+            let mut di_udp_builder = builder
+                .reborrow()
+                .init_detail()
+                .init_as::<veilid_capnp::dial_info_u_d_p::Builder>();
+
             encode_socket_address(
                 &udp.socket_address,
                 &mut di_udp_builder.reborrow().init_socket_address(),
             )?;
         }
         DialInfo::TCP(tcp) => {
-            let mut di_tcp_builder = builder.reborrow().init_tcp();
+            builder.set_protocol_type(FOURCC_PROTOCOL_TYPE_TCP);
+            let mut di_tcp_builder = builder
+                .reborrow()
+                .init_detail()
+                .init_as::<veilid_capnp::dial_info_t_c_p::Builder>();
+
             encode_socket_address(
                 &tcp.socket_address,
                 &mut di_tcp_builder.reborrow().init_socket_address(),
             )?;
         }
         DialInfo::WS(ws) => {
-            let mut di_ws_builder = builder.reborrow().init_ws();
+            builder.set_protocol_type(FOURCC_PROTOCOL_TYPE_WS);
+            let mut di_ws_builder = builder
+                .reborrow()
+                .init_detail()
+                .init_as::<veilid_capnp::dial_info_w_s::Builder>();
+
             encode_socket_address(
                 &ws.socket_address,
                 &mut di_ws_builder.reborrow().init_socket_address(),
@@ -97,8 +120,14 @@ pub fn encode_dial_info(
             );
             requestb.push_str(request.as_str());
         }
+        #[cfg(feature = "enable-protocol-wss")]
         DialInfo::WSS(wss) => {
-            let mut di_wss_builder = builder.reborrow().init_wss();
+            builder.set_protocol_type(FOURCC_PROTOCOL_TYPE_WSS);
+            let mut di_wss_builder = builder
+                .reborrow()
+                .init_detail()
+                .init_as::<veilid_capnp::dial_info_w_s_s::Builder>();
+
             encode_socket_address(
                 &wss.socket_address,
                 &mut di_wss_builder.reborrow().init_socket_address(),

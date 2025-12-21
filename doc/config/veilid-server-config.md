@@ -191,8 +191,8 @@ network:
     hole_punch_receipt_time_ms: 5000
     network_key_password: null
     disable_capabilites: []
-    node_id: null
-    node_id_secret: null
+    public_keys: null
+    secret_keys: null
     upnp: true
     detect_address_changes: true
     enable_local_peer_scope: false
@@ -212,8 +212,8 @@ network:
 
 ```yaml
 routing_table:
-    node_id: null
-    node_id_secret: null
+    public_keys: null
+    secret_keys: null
     bootstrap: ['bootstrap-v1.veilid.net']
     bootstrap_keys: ['VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k','VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo','VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA']
     limit_over_attached: 64
@@ -250,6 +250,7 @@ dht:
     set_value_timeout_ms: 10000
     set_value_count: 5
     set_value_fanout: 4
+    consensus_width: 10
     min_peer_count: 20
     min_peer_refresh_time_ms: 60000
     validate_dial_info_receipt_time_ms: 2000

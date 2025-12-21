@@ -1,6 +1,8 @@
 use futures_util::StreamExt as _;
 use stop_token::future::FutureExt as _;
 
+impl_veilid_log_facility!("net");
+
 use super::*;
 
 #[derive(Debug)]
@@ -8,6 +10,7 @@ pub(super) enum RelayWorkerRequestKind {
     Relay {
         relay_nr: FilteredNodeRef,
         data: Vec<u8>,
+        relay_kind: RelayKind,
     },
 }
 
@@ -70,23 +73,45 @@ impl NetworkManager {
             relay_request_span.follows_from(request.span);
 
             // Measure dequeue time
-            let dequeue_ts = Timestamp::now();
-            let dequeue_latency = dequeue_ts.saturating_sub(request.enqueued_ts);
+            let dequeue_ts = Timestamp::now_non_decreasing();
+            let dequeue_latency = dequeue_ts.duration_since(request.enqueued_ts);
 
             // Process request kind
             match request.kind {
-                RelayWorkerRequestKind::Relay { relay_nr, data } => {
-                    // Relay the packet to the desired destination
-                    veilid_log!(self trace "relaying {} bytes to {}", data.len(), relay_nr);
-                    if let Err(e) = pin_future!(self.send_data(relay_nr, data.to_vec())).await {
-                        veilid_log!(self debug "failed to relay envelope: {}" ,e);
+                RelayWorkerRequestKind::Relay {
+                    relay_nr,
+                    data,
+                    relay_kind,
+                } => {
+                    match relay_kind {
+                        RelayKind::Inbound => {
+                            // Inbound relay the packet to the desired destination
+                            veilid_log!(self trace "inbound relaying {} bytes to {}", data.len(), relay_nr);
+                            if let Err(e) =
+                                pin_future!(self.send_inbound_relay_data(relay_nr, data.to_vec()))
+                                    .await
+                            {
+                                veilid_log!(self debug "failed to inbound relay envelope: {}" ,e);
+                            }
+                        }
+                        RelayKind::Outbound => {
+                            // Outbound relay the packet to the desired destination
+                            // Because the source was in the client allowlist, this node has opted in
+                            // to making new flows and connections for the purposes of relaying
+                            veilid_log!(self trace "outbound relaying {} bytes to {}", data.len(), relay_nr);
+                            if let Err(e) =
+                                pin_future!(self.send_data(relay_nr, data.to_vec())).await
+                            {
+                                veilid_log!(self debug "failed to outbound relay envelope: {}" ,e);
+                            }
+                        }
                     }
                 }
             }
 
             // Measure process time
-            let process_ts = Timestamp::now();
-            let process_latency = process_ts.saturating_sub(dequeue_ts);
+            let process_ts = Timestamp::now_non_decreasing();
+            let process_latency = process_ts.duration_since(dequeue_ts);
 
             // Accounting
             self.stats_relay_processed(dequeue_latency, process_latency)
@@ -94,7 +119,12 @@ impl NetworkManager {
     }
 
     #[instrument(level = "trace", target = "rpc", skip_all)]
-    pub(super) fn enqueue_relay(&self, relay_nr: FilteredNodeRef, data: Vec<u8>) -> EyreResult<()> {
+    pub(super) fn enqueue_relay(
+        &self,
+        relay_nr: FilteredNodeRef,
+        data: Vec<u8>,
+        relay_kind: RelayKind,
+    ) -> EyreResult<()> {
         let _guard = self
             .startup_context
             .startup_lock
@@ -110,9 +140,13 @@ impl NetworkManager {
         };
         send_channel
             .try_send(RelayWorkerRequest {
-                enqueued_ts: Timestamp::now(),
+                enqueued_ts: Timestamp::now_non_decreasing(),
                 span: Span::current(),
-                kind: RelayWorkerRequestKind::Relay { relay_nr, data },
+                kind: RelayWorkerRequestKind::Relay {
+                    relay_nr,
+                    data,
+                    relay_kind,
+                },
             })
             .map_err(|e| eyre!("failed to enqueue relay: {}", e))?;
         Ok(())

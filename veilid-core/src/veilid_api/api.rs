@@ -43,10 +43,10 @@ pub struct VeilidAPI {
 }
 
 impl VeilidAPI {
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = context.log_key()), skip_all)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = context.log_key()), skip_all)]
     pub(crate) fn new(context: VeilidCoreContext) -> Self {
         veilid_log!(context debug "VeilidAPI::new()");
-        Self {
+        record_duration(|| Self {
             inner: Arc::new(Mutex::new(VeilidAPIInner {
                 context: Some(context),
                 debug_cache: DebugCache {
@@ -56,17 +56,20 @@ impl VeilidAPI {
                     ),
                 },
             })),
-        }
+        })
     }
 
     /// Shut down Veilid and terminate the API.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip_all)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip_all)]
     pub async fn shutdown(self) {
-        veilid_log!(self debug "VeilidAPI::shutdown()");
-        let context = { self.inner.lock().context.take() };
-        if let Some(context) = context {
-            api_shutdown(context).await;
-        }
+        record_duration_fut(async {
+            veilid_log!(self debug "VeilidAPI::shutdown()");
+            let context = { self.inner.lock().context.take() };
+            if let Some(context) = context {
+                api_shutdown(context).await;
+            }
+        })
+        .await
     }
 
     /// Check to see if Veilid is already shut down.
@@ -79,7 +82,7 @@ impl VeilidAPI {
     // Public Accessors
 
     /// Access the configuration that Veilid was initialized with.
-    pub fn config(&self) -> VeilidAPIResult<VeilidStartupOptions> {
+    pub fn config(&self) -> VeilidAPIResult<Arc<VeilidConfig>> {
         let inner = self.inner.lock();
         let Some(context) = &inner.context else {
             return Err(VeilidAPIError::NotInitialized);
@@ -173,84 +176,129 @@ impl VeilidAPI {
 
         let attachment = attachment_manager.get_veilid_state();
         let network = network_manager.get_veilid_state();
-        let config = config.get_veilid_state();
 
         Ok(VeilidState {
             attachment,
             network,
-            config,
+            config: Box::new(VeilidStateConfig {
+                config: config.as_ref().clone(),
+            }),
         })
     }
 
     /// Connect to the network.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip_all, ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip_all, ret)]
     pub async fn attach(&self) -> VeilidAPIResult<()> {
-        veilid_log!(self debug
-            "VeilidAPI::attach()");
-
-        let attachment_manager = self.core_context()?.attachment_manager();
-        if !Box::pin(attachment_manager.attach()).await {
-            apibail_generic!("Already attached");
-        }
-        Ok(())
+        record_duration_fut(async {
+            veilid_log!(self debug
+                "VeilidAPI::attach()");
+            let attachment_manager = self.core_context()?.attachment_manager();
+            if !Box::pin(attachment_manager.attach()).await {
+                apibail_generic!("Already attached");
+            }
+            Ok(())
+        })
+        .await
+        .inspect_err(log_veilid_api_error!(self))
     }
 
     /// Disconnect from the network.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip_all, ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip_all, ret)]
     pub async fn detach(&self) -> VeilidAPIResult<()> {
-        veilid_log!(self debug
+        record_duration_fut(async {
+            veilid_log!(self debug
             "VeilidAPI::detach()");
 
-        let attachment_manager = self.core_context()?.attachment_manager();
-        if !Box::pin(attachment_manager.detach()).await {
-            apibail_generic!("Already detached");
-        }
-        Ok(())
+            let attachment_manager = self.core_context()?.attachment_manager();
+            if !Box::pin(attachment_manager.detach()).await {
+                apibail_generic!("Already detached");
+            }
+            Ok(())
+        })
+        .await
+        .inspect_err(log_veilid_api_error!(self))
     }
 
     ////////////////////////////////////////////////////////////////
     // Routing Context
 
     /// Get a new `RoutingContext` object to use to send messages over the Veilid network with default safety, sequencing, and stability parameters.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip_all, err, ret)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip_all, ret)]
     pub fn routing_context(&self) -> VeilidAPIResult<RoutingContext> {
-        veilid_log!(self debug
-            "VeilidAPI::routing_context()");
+        record_duration(|| {
+            veilid_log!(self debug
+                "VeilidAPI::routing_context()");
 
-        RoutingContext::try_new(self.clone())
+            RoutingContext::try_new(self.clone())
+        })
+        .inspect_err(log_veilid_api_error!(self))
     }
 
-    /// Parse a string into a target object that can be used in a [RoutingContext].
-    ///
-    /// Strings are in base64url format and can either be a remote route id or a node id.
-    /// Strings may have a [CryptoKind] prefix separated by a colon, such as:
-    /// `VLD0:XmnGyJrjMJBRC5ayJZRPXWTBspdX36-pbLb98H3UMeE` but if the prefix is left off
-    /// `XmnGyJrjMJBRC5ayJZRPXWTBspdX36-pbLb98H3UMeE` will be parsed with the 'best' cryptosystem
-    /// available (at the time of this writing this is `VLD0`).
-    #[instrument(target = "veilid_api", level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key(), s=s.to_string()), ret, err)]
-    pub fn parse_as_target<S: ToString>(&self, s: S) -> VeilidAPIResult<Target> {
-        let s = s.to_string();
+    ////////////////////////////////////////////////////////////////
+    // Non-RoutingContext DHT Operations
 
-        veilid_log!(self debug
-            "VeilidAPI::parse_as_target(s: {:?})", s);
+    /// Deterministicly builds the record key for a given schema and owner public key.
+    /// The crypto kind of the record key will be that of the `owner` public key
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    pub fn get_dht_record_key(
+        &self,
+        schema: DHTSchema,
+        owner_key: PublicKey,
+        encryption_key: Option<SharedSecret>,
+    ) -> VeilidAPIResult<RecordKey> {
+        record_duration(|| {
+            veilid_log!(self debug
+            "RoutingContext::get_dht_record_key(self: {:?} schema: {:?}, owner_key: {:?}, encryption_key: {:?}", self, schema, owner_key, encryption_key);
+            schema.validate()?;
 
-        // Is this a route id?
-        if let Ok(rrid) = RouteId::from_str(&s) {
-            let routing_table = self.core_context()?.routing_table();
-            let rss = routing_table.route_spec_store();
-
-            // Is this a valid remote route id? (can't target allocated routes)
-            if rss.is_route_id_remote(&rrid) {
-                return Ok(Target::PrivateRoute(rrid));
+            self.crypto()?.check_public_key(&owner_key)?;
+            if let Some(encryption_key) = encryption_key.as_ref() {
+                self.crypto()?.check_shared_secret(encryption_key)?;
             }
-        }
 
-        // Is this a node id?
-        if let Ok(nid) = TypedNodeId::from_str(&s) {
-            return Ok(Target::NodeId(nid));
-        }
+            let storage_manager = self.core_context()?.storage_manager();
+            storage_manager.get_record_key(schema, &owner_key, encryption_key)
+        }).inspect_err(log_veilid_api_error!(self))
+    }
 
-        Err(VeilidAPIError::parse_error("Unable to parse as target", s))
+    /// Create a new MemberId for use with in creating `DHTSchema`s.
+    #[instrument(target = "veilid_api", level = "debug", skip(self), fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    pub fn generate_member_id(&self, writer_key: &PublicKey) -> VeilidAPIResult<MemberId> {
+        record_duration(|| {
+            veilid_log!(self debug "VeilidAPI::generate_member_id(writer_key: {:?}", writer_key);
+
+            self.crypto()?.check_public_key(writer_key)?;
+
+            let storage_manager = self.core_context()?.storage_manager();
+            storage_manager.generate_member_id(writer_key)
+        })
+        .inspect_err(log_veilid_api_error!(self))
+    }
+
+    /// Start a transaction on a set of DHT records
+    /// Record keys must have been opened via a routing context already when passed to this function
+    /// The maximum number of records per transaction is currently 32.
+    /// Options can be specified that supply a default signing keypair for records that are not opened for writing
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    pub async fn transact_dht_records(
+        &self,
+        record_keys: Vec<RecordKey>,
+        options: Option<TransactDHTRecordsOptions>,
+    ) -> VeilidAPIResult<DHTTransaction> {
+        record_duration_fut(async {
+            veilid_log!(self debug
+                "VeilidAPI::transact_dht_records(self: {:?}, record_keys: {:?}, options: {:?})", self, record_keys, options);
+
+            let storage_manager = self.core_context()?.storage_manager();
+
+            for record_key in &record_keys {
+                storage_manager.check_record_key(record_key)?;
+            }
+
+            let handle = Box::pin(storage_manager.begin_transaction(record_keys, options)).await?;
+
+            DHTTransaction::new(self.clone(), handle.clone())
+        }).await.inspect_err(log_veilid_api_error!(self))
     }
 
     ////////////////////////////////////////////////////////////////
@@ -263,13 +311,15 @@ impl VeilidAPI {
     ///
     /// Returns a route id and 'blob' that can be published over some means (DHT or otherwise) to be
     /// imported by another Veilid node.
-    //#[instrument(target = "veilid_api", level = "debug", skip(self), ret, err)]
-    pub async fn new_private_route(&self) -> VeilidAPIResult<(RouteId, Vec<u8>)> {
-        Box::pin(self.new_custom_private_route(
-            &VALID_CRYPTO_KINDS,
-            Stability::Reliable,
-            Sequencing::PreferOrdered,
-        ))
+    pub async fn new_private_route(&self) -> VeilidAPIResult<RouteBlob> {
+        record_duration_fut(async {
+            Box::pin(self.new_custom_private_route(
+                &VALID_CRYPTO_KINDS,
+                Stability::Reliable,
+                Sequencing::PreferOrdered,
+            ))
+            .await
+        })
         .await
     }
 
@@ -281,93 +331,101 @@ impl VeilidAPI {
     ///
     /// Returns a route id and 'blob' that can be published over some means (DHT or otherwise) to be
     /// imported by another Veilid node.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub async fn new_custom_private_route(
         &self,
         crypto_kinds: &[CryptoKind],
         stability: Stability,
         sequencing: Sequencing,
-    ) -> VeilidAPIResult<(RouteId, Vec<u8>)> {
-        veilid_log!(self debug
-            "VeilidAPI::new_custom_private_route(crypto_kinds: {:?}, stability: {:?}, sequencing: {:?})",
-            crypto_kinds,
-            stability,
-            sequencing);
+    ) -> VeilidAPIResult<RouteBlob> {
+        record_duration_fut(async {
+            veilid_log!(self debug
+                "VeilidAPI::new_custom_private_route(crypto_kinds: {:?}, stability: {:?}, sequencing: {:?})",
+                crypto_kinds,
+                stability,
+                sequencing);
 
-        for kind in crypto_kinds {
-            Crypto::validate_crypto_kind(*kind)?;
-        }
-
-        let default_route_hop_count: usize = {
-            let config = self.config()?;
-            let c = config.get();
-            c.network.rpc.default_route_hop_count.into()
-        };
-
-        let safety_spec = SafetySpec {
-            preferred_route: None,
-            hop_count: default_route_hop_count,
-            stability,
-            sequencing,
-        };
-
-        let routing_table = self.core_context()?.routing_table();
-        let rss = routing_table.route_spec_store();
-        let route_id =
-            rss.allocate_route(crypto_kinds, &safety_spec, DirectionSet::all(), &[], false)?;
-        match Box::pin(rss.test_route(route_id)).await? {
-            Some(true) => {
-                // route tested okay
+            for kind in crypto_kinds {
+                Crypto::validate_crypto_kind(*kind)?;
             }
-            Some(false) => {
-                rss.release_route(route_id);
-                apibail_generic!("allocated route failed to test");
-            }
-            None => {
-                rss.release_route(route_id);
-                apibail_generic!("allocated route could not be tested");
-            }
-        }
-        let private_routes = rss.assemble_private_routes(&route_id, Some(true))?;
-        let blob = match RouteSpecStore::private_routes_to_blob(&private_routes) {
-            Ok(v) => v,
-            Err(e) => {
-                rss.release_route(route_id);
-                return Err(e);
-            }
-        };
 
-        rss.mark_route_published(&route_id, true)?;
+            let default_route_hop_count: usize =
+                self.config()?.network.rpc.default_route_hop_count.into();
 
-        Ok((route_id, blob))
+            let safety_spec = SafetySpec {
+                preferred_route: None,
+                hop_count: default_route_hop_count,
+                stability,
+                sequencing,
+            };
+
+            let routing_table = self.core_context()?.routing_table();
+            let rss = routing_table.route_spec_store();
+            let route_id =
+                rss.allocate_route(crypto_kinds, &safety_spec, DirectionSet::all(), &[], false)?;
+            match Box::pin(rss.test_route(route_id.clone())).await? {
+                Some(true) => {
+                    // route tested okay
+                }
+                Some(false) => {
+                    rss.release_route(route_id.clone());
+                    apibail_generic!("allocated route failed to test");
+                }
+                None => {
+                    rss.release_route(route_id.clone());
+                    apibail_generic!("allocated route could not be tested");
+                }
+            }
+            let private_routes = rss.assemble_private_route_set(&route_id, Some(true))?;
+            let blob = match RouteSpecStore::private_routes_to_blob(&private_routes) {
+                Ok(v) => v,
+                Err(e) => {
+                    rss.release_route(route_id);
+                    return Err(e);
+                }
+            };
+
+            rss.mark_route_published(&route_id, true)?;
+
+            Ok(RouteBlob { route_id, blob })
+        }).await.inspect_err(log_veilid_api_error!(self))
     }
 
     /// Import a private route blob as a remote private route.
     ///
     /// Returns a route id that can be used to send private messages to the node creating this route.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub fn import_remote_private_route(&self, blob: Vec<u8>) -> VeilidAPIResult<RouteId> {
-        veilid_log!(self debug
-            "VeilidAPI::import_remote_private_route(blob: {:?})", blob);
-        let routing_table = self.core_context()?.routing_table();
-        let rss = routing_table.route_spec_store();
-        rss.import_remote_private_route_blob(blob)
+        record_duration(|| {
+            veilid_log!(self debug
+                "VeilidAPI::import_remote_private_route(blob: {:?})", blob);
+            let routing_table = self.core_context()?.routing_table();
+            let rss = routing_table.route_spec_store();
+            rss.import_remote_route_blob(blob)
+        })
+        .inspect_err(log_veilid_api_error!(self))
     }
 
     /// Release either a locally allocated or remotely imported private route.
     ///
     /// This will deactivate the route and free its resources and it can no longer be sent to
     /// or received from.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub fn release_private_route(&self, route_id: RouteId) -> VeilidAPIResult<()> {
-        veilid_log!(self debug
-            "VeilidAPI::release_private_route(route_id: {:?})", route_id);
-        let routing_table = self.core_context()?.routing_table();
-        let rss = routing_table.route_spec_store();
-        if !rss.release_route(route_id) {
-            apibail_invalid_argument!("release_private_route", "key", route_id);
-        }
-        Ok(())
+        record_duration(|| {
+            veilid_log!(self debug
+                "VeilidAPI::release_private_route(route_id: {:?})", route_id);
+
+            let routing_table = self.core_context()?.routing_table();
+            routing_table.check_route_id(&route_id)?;
+
+            let rss = routing_table.route_spec_store();
+            if !rss.release_route(route_id.clone()) {
+                apibail_invalid_argument!("release_private_route", "key", route_id);
+            }
+            Ok(())
+        })
+        .inspect_err(log_veilid_api_error!(self))
     }
 
     ////////////////////////////////////////////////////////////////
@@ -377,26 +435,29 @@ impl VeilidAPI {
     ///
     /// * `call_id` - specifies which call to reply to, and it comes from a [VeilidUpdate::AppCall], specifically the [VeilidAppCall::id()] value.
     /// * `message` - is an answer blob to be returned by the remote node's [RoutingContext::app_call()] function, and may be up to 32768 bytes.
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub async fn app_call_reply(
         &self,
         call_id: OperationId,
         message: Vec<u8>,
     ) -> VeilidAPIResult<()> {
-        veilid_log!(self debug
-            "VeilidAPI::app_call_reply(call_id: {:?}, message: {:?})", call_id, message);
+        record_duration_fut(async {
+            veilid_log!(self debug
+                "VeilidAPI::app_call_reply(call_id: {:?}, message_len: {})", call_id, message.len());
+            veilid_log!(self trace "message: {:?}", message);
 
-        let rpc_processor = self.core_context()?.rpc_processor();
-        rpc_processor
-            .app_call_reply(call_id, message)
-            .map_err(|e| e.into())
+            let rpc_processor = self.core_context()?.rpc_processor();
+            rpc_processor
+                .app_call_reply(call_id, message)
+                .map_err(|e| e.into())
+        }).await.inspect_err(log_veilid_api_error!(self))
     }
 
     ////////////////////////////////////////////////////////////////
     // Tunnel Building
 
     #[cfg(feature = "unstable-tunnels")]
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub async fn start_tunnel(
         &self,
         _endpoint_mode: TunnelMode,
@@ -406,7 +467,7 @@ impl VeilidAPI {
     }
 
     #[cfg(feature = "unstable-tunnels")]
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub async fn complete_tunnel(
         &self,
         _endpoint_mode: TunnelMode,
@@ -417,7 +478,7 @@ impl VeilidAPI {
     }
 
     #[cfg(feature = "unstable-tunnels")]
-    #[instrument(target = "veilid_api", level = "debug", fields(__VEILID_LOG_KEY = self.log_key()), skip(self), ret, err)]
+    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
     pub async fn cancel_tunnel(&self, _tunnel_id: TunnelId) -> VeilidAPIResult<bool> {
         panic!("unimplemented");
     }

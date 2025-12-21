@@ -17,7 +17,7 @@ impl RPCOperationStartTunnelQ {
         }
     }
 
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -39,17 +39,13 @@ impl RPCOperationStartTunnelQ {
         reader: &veilid_capnp::operation_start_tunnel_q::Reader,
     ) -> Result<Self, RPCError> {
         let id = TunnelId::new(reader.get_id());
-        let local_mode = match reader.get_local_mode().map_err(RPCError::protocol)? {
+        let local_mode = match reader.get_local_mode()? {
             veilid_capnp::TunnelEndpointMode::Raw => TunnelMode::Raw,
             veilid_capnp::TunnelEndpointMode::Turn => TunnelMode::Turn,
         };
         let depth = reader.get_depth();
 
-        Ok(Self {
-            id,
-            local_mode,
-            depth,
-        })
+        Ok(Self::new(id, local_mode, depth))
     }
     pub fn encode(
         &self,
@@ -82,7 +78,7 @@ impl RPCOperationStartTunnelA {
     pub fn new_error(tunnel_error: TunnelError) -> Self {
         Self::Error(tunnel_error)
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -94,11 +90,11 @@ impl RPCOperationStartTunnelA {
             veilid_capnp::operation_start_tunnel_a::Which::Partial(r) => {
                 let pt_reader = r.map_err(RPCError::protocol)?;
                 let partial_tunnel = decode_partial_tunnel(&pt_reader)?;
-                Ok(Self::Partial(partial_tunnel))
+                Ok(Self::new_partial(partial_tunnel))
             }
             veilid_capnp::operation_start_tunnel_a::Which::Error(r) => {
                 let tunnel_error = decode_tunnel_error(r.map_err(RPCError::protocol)?);
-                Ok(Self::Error(tunnel_error))
+                Ok(Self::new_error(tunnel_error))
             }
         }
     }

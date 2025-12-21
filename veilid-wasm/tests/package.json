@@ -6,12 +6,19 @@
     "node": ">=18"
   },
   "devDependencies": {
-    "@wdio/browser-runner": "^8.16.4",
-    "@wdio/cli": "^8.16.4",
-    "@wdio/mocha-framework": "^8.16.3",
+    "@eslint/eslintrc": "^3.3.3",
+    "@eslint/js": "^9.39.1",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
+    "@wdio/browser-runner": "^9.21.0",
+    "@wdio/cli": "^9.21.1",
+    "@wdio/mocha-framework": "^9.21.0",
     "@wdio/spec-reporter": "^8.16.3",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2",
+    "typescript-eslint": "^8.48.1",
     "veilid-wasm": "file:../pkg",
     "vite-plugin-wasm": "^3.2.2"
   },

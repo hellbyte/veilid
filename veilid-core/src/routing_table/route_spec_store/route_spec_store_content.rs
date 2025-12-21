@@ -24,20 +24,18 @@ impl RouteSpecStoreContent {
         for (rsid, rssd) in content.details.iter_mut() {
             // Get best route since they all should resolve
             let Some(pk) = rssd.get_best_route_set_key() else {
-                dead_ids.push(*rsid);
+                dead_ids.push(rsid.clone());
                 continue;
             };
             let Some(rsd) = rssd.get_route_by_key(&pk) else {
-                dead_ids.push(*rsid);
+                dead_ids.push(rsid.clone());
                 continue;
             };
             // Go through best route and resolve noderefs
             let mut hop_node_refs = Vec::with_capacity(rsd.hops.len());
             for h in &rsd.hops {
-                let Ok(Some(nr)) =
-                    routing_table.lookup_node_ref(TypedNodeId::new(rsd.crypto_kind, *h))
-                else {
-                    dead_ids.push(*rsid);
+                let Ok(Some(nr)) = routing_table.lookup_node_ref(h.clone()) else {
+                    dead_ids.push(rsid.clone());
                     break;
                 };
                 hop_node_refs.push(nr);
@@ -46,8 +44,9 @@ impl RouteSpecStoreContent {
             // Apply noderefs
             rssd.set_hop_node_refs(hop_node_refs);
         }
+
         for id in dead_ids {
-            veilid_log!(table_store trace "no entry, killing off private route: {}", id);
+            veilid_log!(table_store trace "no entry, killing route set: {}", id);
             content.remove_detail(&id);
         }
 
@@ -68,7 +67,7 @@ impl RouteSpecStoreContent {
 
         // also store in id by key table
         for (pk, _) in detail.iter_route_set() {
-            self.id_by_key.insert(*pk, id);
+            self.id_by_key.insert(pk.clone(), id.clone());
         }
         self.details.insert(id, detail);
     }
@@ -94,7 +93,9 @@ impl RouteSpecStoreContent {
     // pub fn iter_ids(&self) -> std::collections::hash_map::Keys<RouteId, RouteSetSpecDetail> {
     //     self.details.keys()
     // }
-    pub fn iter_details(&self) -> std::collections::hash_map::Iter<RouteId, RouteSetSpecDetail> {
+    pub fn iter_details(
+        &self,
+    ) -> std::collections::hash_map::Iter<'_, RouteId, RouteSetSpecDetail> {
         self.details.iter()
     }
 

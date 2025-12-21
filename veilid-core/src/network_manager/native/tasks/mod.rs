@@ -1,5 +1,5 @@
 mod network_interfaces_task;
-mod update_network_class_task;
+mod update_dial_info;
 mod upnp_task;
 
 use super::*;
@@ -8,10 +8,10 @@ impl Network {
     pub fn setup_tasks(&self) {
         // Set update network class tick task
         let this = self.clone();
-        self.update_network_class_task.set_routine(move |s, l, t| {
+        self.update_dial_info_task.set_routine(move |s, l, t| {
             let this = this.clone();
             Box::pin(async move {
-                this.update_network_class_task_routine(s, Timestamp::new(l), Timestamp::new(t))
+                this.update_dial_info_task_routine(s, Timestamp::new(l), Timestamp::new(t))
                     .await
             })
         });
@@ -40,16 +40,28 @@ impl Network {
     }
 
     // Determine if we need to check for public dialinfo
-    fn wants_update_network_class_tick(&self) -> bool {
+    fn wants_update_dial_info_tick(&self) -> bool {
         let routing_table = self.routing_table();
 
-        let public_internet_network_class =
-            routing_table.get_network_class(RoutingDomain::PublicInternet);
+        let routing_domain_state =
+            routing_table.routing_domain_state(RoutingDomain::PublicInternet);
+        let state_wants_dial_info = matches!(
+            routing_domain_state,
+            RoutingDomainState::NeedsDialInfoConfirmation
+        );
 
-        let needs_update_network_class = self.needs_update_network_class();
-        if needs_update_network_class
-            || public_internet_network_class == NetworkClass::Invalid
-            || (public_internet_network_class == NetworkClass::OutboundOnly
+        let state_is_publishable = matches!(
+            routing_domain_state,
+            RoutingDomainState::ReadyToPublish { relay_status: _ }
+        );
+
+        let current_peer_info = routing_table.get_current_peer_info(RoutingDomain::PublicInternet);
+
+        let needs_update_dial_info = self.needs_update_dial_info();
+        if needs_update_dial_info
+            || state_wants_dial_info
+            || (state_is_publishable
+                && !current_peer_info.node_info().has_dial_info()
                 && self.inner.lock().next_outbound_only_dial_info_check <= Timestamp::now())
         {
             let live_entry_counts = routing_table.cached_live_entry_counts();
@@ -88,9 +100,11 @@ impl Network {
         }
 
         let (upnp, require_inbound_relay) = {
-            let config = self.network_manager().config();
-            let c = config.get();
-            (c.network.upnp, c.network.privacy.require_inbound_relay)
+            let config = self.config();
+            (
+                config.network.upnp,
+                config.network.privacy.require_inbound_relay,
+            )
         };
 
         if require_inbound_relay {
@@ -104,8 +118,8 @@ impl Network {
             // Check our network interfaces to see if they have changed
             self.network_interfaces_task.tick().await?;
 
-            if self.wants_update_network_class_tick() {
-                self.update_network_class_task.tick().await?;
+            if self.wants_update_dial_info_tick() {
+                self.update_dial_info_task.tick().await?;
             }
         }
 
@@ -127,8 +141,8 @@ impl Network {
             veilid_log!(self warn "network_interfaces_task not stopped: {}", e);
         }
         veilid_log!(self debug "stopping update network class task");
-        if let Err(e) = self.update_network_class_task.stop().await {
-            veilid_log!(self warn "update_network_class_task not stopped: {}", e);
+        if let Err(e) = self.update_dial_info_task.stop().await {
+            veilid_log!(self warn "update_dial_info_task not stopped: {}", e);
         }
     }
 }

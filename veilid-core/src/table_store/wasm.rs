@@ -7,7 +7,7 @@ pub(in crate::table_store) struct TableStoreDriver {
     registry: VeilidComponentRegistry,
 }
 
-impl_veilid_component_registry_accessor!(TableStoreDriver);
+impl_veilid_component_accessors!(TableStoreDriver);
 
 impl TableStoreDriver {
     pub fn new(registry: VeilidComponentRegistry) -> Self {
@@ -16,8 +16,7 @@ impl TableStoreDriver {
 
     fn get_namespaced_table_name(&self, table: &str) -> String {
         let config = self.registry().config();
-        let c = config.get();
-        let namespace = c.namespace.clone();
+        let namespace = config.namespace.clone();
         if namespace.is_empty() {
             table.to_owned()
         } else {
@@ -25,11 +24,17 @@ impl TableStoreDriver {
         }
     }
 
-    pub async fn open(&self, table_name: &str, column_count: u32) -> VeilidAPIResult<Database> {
+    pub async fn open(
+        &self,
+        table_name: &str,
+        column_count: u32,
+        _concurrency: usize,
+    ) -> VeilidAPIResult<Database> {
         let namespaced_table_name = self.get_namespaced_table_name(table_name);
         let db = Database::open(&namespaced_table_name, column_count, false)
             .await
             .map_err(VeilidAPIError::generic)?;
+
         veilid_log!(self trace
             "opened table store '{}' with {} columns",
             namespaced_table_name,

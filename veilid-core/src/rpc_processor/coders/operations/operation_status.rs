@@ -9,7 +9,7 @@ impl RPCOperationStatusQ {
     pub fn new(node_status: Option<NodeStatus>) -> Self {
         Self { node_status }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -25,13 +25,13 @@ impl RPCOperationStatusQ {
         reader: &veilid_capnp::operation_status_q::Reader,
     ) -> Result<Self, RPCError> {
         let node_status = if reader.has_node_status() {
-            let ns_reader = reader.get_node_status().map_err(RPCError::protocol)?;
+            let ns_reader = reader.get_node_status()?;
             let node_status = decode_node_status(&ns_reader)?;
             Some(node_status)
         } else {
             None
         };
-        Ok(Self { node_status })
+        Ok(Self::new(node_status))
     }
     pub fn encode(
         &self,
@@ -61,16 +61,10 @@ impl RPCOperationStatusA {
         }
     }
 
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
-    // pub fn node_status(&self) -> Option<&NodeStatus> {
-    //     self.node_status.as_ref()
-    // }
-    // pub fn sender_info(&self) -> Option<&SenderInfo> {
-    //     self.sender_info.as_ref()
-    // }
     pub fn destructure(self) -> (Option<NodeStatus>, Option<SenderInfo>) {
         (self.node_status, self.sender_info)
     }
@@ -80,7 +74,7 @@ impl RPCOperationStatusA {
         reader: &veilid_capnp::operation_status_a::Reader,
     ) -> Result<Self, RPCError> {
         let node_status = if reader.has_node_status() {
-            let ns_reader = reader.get_node_status().map_err(RPCError::protocol)?;
+            let ns_reader = reader.get_node_status()?;
             let node_status = decode_node_status(&ns_reader)?;
             Some(node_status)
         } else {
@@ -88,17 +82,14 @@ impl RPCOperationStatusA {
         };
 
         let sender_info = if reader.has_sender_info() {
-            let si_reader = reader.get_sender_info().map_err(RPCError::protocol)?;
+            let si_reader = reader.get_sender_info()?;
             let sender_info = decode_sender_info(&si_reader)?;
             Some(sender_info)
         } else {
             None
         };
 
-        Ok(Self {
-            node_status,
-            sender_info,
-        })
+        Ok(Self::new(node_status, sender_info))
     }
     pub fn encode(
         &self,

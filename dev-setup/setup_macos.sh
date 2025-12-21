@@ -31,10 +31,10 @@ while true; do
         fi
 
         # ensure Android SDK packages are installed
-        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager build-tools\;34.0.0 ndk\;27.0.12077973 cmake\;3.22.1 platform-tools platforms\;android-34
+        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager build-tools\;35.0.0 ndk\;28.2.13676358 cmake\;4.0.2 platform-tools platforms\;android-36
 
         # ensure ndk is installed
-        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
         if [ -f "$ANDROID_NDK_HOME/ndk-build" ]; then
             echo '[X] Android NDK is installed at the location $ANDROID_NDK_HOME'
         else
@@ -146,7 +146,7 @@ $BREW_COMMAND install capnp cmake llvm jq
 rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-darwin x86_64-apple-ios wasm32-unknown-unknown aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 
 # install cargo packages
-cargo install wasm-bindgen-cli wasm-pack wasm-opt cargo-edit@0.13.0
+cargo install wasm-bindgen-cli wasm-pack cargo-edit@0.13.0
 
 # attempt to install pip packages - this may result in an error, which we will try to catch
 pip3 install --upgrade bumpversion || ( \

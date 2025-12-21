@@ -24,7 +24,7 @@ pub(crate) struct NodeRef {
     track_id: usize,
 }
 
-impl_veilid_component_registry_accessor!(NodeRef);
+impl_veilid_component_accessors!(NodeRef);
 
 impl NodeRef {
     pub fn new(registry: VeilidComponentRegistry, entry: Arc<BucketEntry>) -> Self {
@@ -47,7 +47,7 @@ impl NodeRef {
         )
     }
 
-    pub fn sequencing_filtered(&self, sequencing: Sequencing) -> FilteredNodeRef {
+    pub fn default_filtered_with_sequencing(&self, sequencing: Sequencing) -> FilteredNodeRef {
         FilteredNodeRef::new(
             self.registry.clone(),
             self.entry.clone(),
@@ -138,24 +138,6 @@ impl NodeRefOperateTrait for NodeRef {
         let routing_table = self.routing_table();
         let inner = &mut *routing_table.inner.write();
         self.entry.with_mut(inner, f)
-    }
-
-    fn with_inner<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&RoutingTableInner) -> T,
-    {
-        let routing_table = self.routing_table();
-        let inner = &*routing_table.inner.read();
-        f(inner)
-    }
-
-    fn with_inner_mut<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut RoutingTableInner) -> T,
-    {
-        let routing_table = self.routing_table();
-        let inner = &mut *routing_table.inner.write();
-        f(inner)
     }
 }
 

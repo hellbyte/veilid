@@ -12,22 +12,22 @@ const PRIORITY_FLOW_PERCENTAGE: usize = 25;
 #[derive(ThisError, Debug)]
 pub enum ConnectionTableAddError {
     #[error("Connection already added to table")]
-    AlreadyExists(NetworkConnection),
+    AlreadyExists(Box<NetworkConnection>),
     #[error("Connection address was filtered")]
-    AddressFilter(NetworkConnection, AddressFilterError),
+    AddressFilter(Box<NetworkConnection>, AddConnectionError),
     #[error("Connection table is full")]
-    TableFull(NetworkConnection),
+    TableFull(Box<NetworkConnection>),
 }
 
 impl ConnectionTableAddError {
     pub fn already_exists(conn: NetworkConnection) -> Self {
-        ConnectionTableAddError::AlreadyExists(conn)
+        ConnectionTableAddError::AlreadyExists(Box::new(conn))
     }
-    pub fn address_filter(conn: NetworkConnection, err: AddressFilterError) -> Self {
-        ConnectionTableAddError::AddressFilter(conn, err)
+    pub fn address_filter(conn: NetworkConnection, err: AddConnectionError) -> Self {
+        ConnectionTableAddError::AddressFilter(Box::new(conn), err)
     }
     pub fn table_full(conn: NetworkConnection) -> Self {
-        ConnectionTableAddError::TableFull(conn)
+        ConnectionTableAddError::TableFull(Box::new(conn))
     }
 }
 
@@ -41,12 +41,12 @@ pub enum ConnectionRefKind {
 
 #[derive(Debug)]
 struct ConnectionTableInner {
-    max_connections: Vec<usize>,
-    conn_by_id: Vec<LruCache<NetworkConnectionId, NetworkConnection>>,
-    protocol_index_by_id: BTreeMap<NetworkConnectionId, usize>,
+    max_connections: BTreeMap<ProtocolType, usize>,
+    conn_by_id: BTreeMap<ProtocolType, LruCache<NetworkConnectionId, NetworkConnection>>,
+    protocol_type_by_id: BTreeMap<NetworkConnectionId, ProtocolType>,
     id_by_flow: BTreeMap<Flow, NetworkConnectionId>,
     ids_by_remote: BTreeMap<PeerAddress, Vec<NetworkConnectionId>>,
-    priority_flows: Vec<LruCache<Flow, ()>>,
+    priority_flows: BTreeMap<ProtocolType, LruCache<Flow, ()>>,
 }
 
 #[derive(Debug)]
@@ -55,53 +55,46 @@ pub struct ConnectionTable {
     inner: Mutex<ConnectionTableInner>,
 }
 
-impl_veilid_component_registry_accessor!(ConnectionTable);
+impl_veilid_component_accessors!(ConnectionTable);
 
 impl ConnectionTable {
     pub fn new(registry: VeilidComponentRegistry) -> Self {
         let config = registry.config();
         let max_connections = {
-            let c = config.get();
-            vec![
-                c.network.protocol.tcp.max_connections as usize,
-                c.network.protocol.ws.max_connections as usize,
-                c.network.protocol.wss.max_connections as usize,
-            ]
+            let mut max_connections = BTreeMap::<ProtocolType, usize>::new();
+
+            max_connections.insert(
+                ProtocolType::TCP,
+                config.network.protocol.tcp.max_connections as usize,
+            );
+            max_connections.insert(
+                ProtocolType::WS,
+                config.network.protocol.ws.max_connections as usize,
+            );
+            #[cfg(feature = "enable-protocol-wss")]
+            max_connections.insert(
+                ProtocolType::WSS,
+                config.network.protocol.wss.max_connections as usize,
+            );
+
+            max_connections
         };
         Self {
             registry,
             inner: Mutex::new(ConnectionTableInner {
                 conn_by_id: max_connections
-                    .iter()
-                    .map(|_| LruCache::new_unbounded())
+                    .keys()
+                    .map(|pt| (*pt, LruCache::new_unbounded()))
                     .collect(),
-                protocol_index_by_id: BTreeMap::new(),
+                protocol_type_by_id: BTreeMap::new(),
                 id_by_flow: BTreeMap::new(),
                 ids_by_remote: BTreeMap::new(),
                 priority_flows: max_connections
                     .iter()
-                    .map(|x| LruCache::new(x * PRIORITY_FLOW_PERCENTAGE / 100))
+                    .map(|(pt, x)| (*pt, LruCache::new(*x * PRIORITY_FLOW_PERCENTAGE / 100)))
                     .collect(),
                 max_connections,
             }),
-        }
-    }
-
-    fn protocol_to_index(protocol: ProtocolType) -> usize {
-        match protocol {
-            ProtocolType::TCP => 0,
-            ProtocolType::WS => 1,
-            ProtocolType::WSS => 2,
-            ProtocolType::UDP => panic!("not a connection-oriented protocol"),
-        }
-    }
-
-    fn index_to_protocol(idx: usize) -> ProtocolType {
-        match idx {
-            0 => ProtocolType::TCP,
-            1 => ProtocolType::WS,
-            2 => ProtocolType::WSS,
-            _ => panic!("not a connection-oriented protocol"),
         }
     }
 
@@ -110,14 +103,14 @@ impl ConnectionTable {
         let mut unord = {
             let mut inner = self.inner.lock();
             let unord = FuturesUnordered::new();
-            for table in &mut inner.conn_by_id {
+            for (pt, table) in &mut inner.conn_by_id {
                 for (_, mut v) in table.drain() {
-                    veilid_log!(self trace "connection table join: {:?}", v);
+                    veilid_log!(self trace "connection table {} join: {:?}", pt, v);
                     v.close();
                     unord.push(v);
                 }
             }
-            inner.protocol_index_by_id.clear();
+            inner.protocol_type_by_id.clear();
             inner.id_by_flow.clear();
             inner.ids_by_remote.clear();
             unord
@@ -165,8 +158,12 @@ impl ConnectionTable {
     /// If connections 'must' stay alive, use 'NetworkConnection::protect'.
     pub fn add_priority_flow(&self, flow: Flow) {
         let mut inner = self.inner.lock();
-        let protocol_index = Self::protocol_to_index(flow.protocol_type());
-        inner.priority_flows[protocol_index].insert(flow, ());
+        let protocol_type = flow.protocol_type();
+        if let Some(pf) = inner.priority_flows.get_mut(&protocol_type) {
+            pf.insert(flow, ());
+        } else {
+            veilid_log!(self error "Missing priority flow table for protocol type: {}", protocol_type);
+        }
     }
 
     /// The mechanism for selecting which connections get evicted from the connection table
@@ -175,22 +172,22 @@ impl ConnectionTable {
     fn lru_out_connection_inner(
         &self,
         inner: &mut ConnectionTableInner,
-        protocol_index: usize,
+        protocol_type: ProtocolType,
     ) -> Result<Option<NetworkConnection>, ()> {
         // If nothing needs to be LRUd out right now, then just return
-        if inner.conn_by_id[protocol_index].len() < inner.max_connections[protocol_index] {
+        if inner.conn_by_id[&protocol_type].len() < inner.max_connections[&protocol_type] {
             return Ok(None);
         }
 
         // Find a free connection to terminate to make room
         let dead_k = {
-            let Some(lruk) = inner.conn_by_id[protocol_index].iter().find_map(|(k, v)| {
+            let Some(lruk) = inner.conn_by_id[&protocol_type].iter().find_map(|(k, v)| {
                 // Ensure anything being LRU evicted isn't protected somehow
                 // 1. connections that are 'in-use' are kept
                 // 2. connections with flows in the priority list are kept
                 // 3. connections that are protected are kept
                 if !v.is_in_use()
-                    && !inner.priority_flows[protocol_index].contains_key(&v.flow())
+                    && !inner.priority_flows[&protocol_type].contains_key(&v.flow())
                     && v.protected_node_ref().is_none()
                 {
                     Some(*k)
@@ -216,7 +213,7 @@ impl ConnectionTable {
         // Get indices for network connection table
         let id = network_connection.connection_id();
         let flow = network_connection.flow();
-        let protocol_index = Self::protocol_to_index(flow.protocol_type());
+        let protocol_type = flow.protocol_type();
         let remote = flow.remote();
 
         let mut inner = self.inner.lock();
@@ -226,11 +223,11 @@ impl ConnectionTable {
             return Err(ConnectionTableAddError::already_exists(network_connection));
         }
 
-        // Sanity checking this implementation (hard fails that would invalidate the representation)
-        if inner.conn_by_id[protocol_index].contains_key(&id) {
+        // Validate this implementation (hard fails that would invalidate the representation)
+        if inner.conn_by_id[&protocol_type].contains_key(&id) {
             panic!("duplicate connection id: {:#?}", network_connection);
         }
-        if inner.protocol_index_by_id.contains_key(&id) {
+        if inner.protocol_type_by_id.contains_key(&id) {
             panic!("duplicate id to protocol index: {:#?}", network_connection);
         }
         if let Some(ids) = inner.ids_by_remote.get(&flow.remote()) {
@@ -255,7 +252,7 @@ impl ConnectionTable {
 
         // if we have reached the maximum number of connections per protocol type
         // then drop the least recently used connection that is not protected or referenced
-        let out_conn = match self.lru_out_connection_inner(&mut inner, protocol_index) {
+        let out_conn = match self.lru_out_connection_inner(&mut inner, protocol_type) {
             Ok(v) => v,
             Err(()) => {
                 return Err(ConnectionTableAddError::table_full(network_connection));
@@ -263,11 +260,12 @@ impl ConnectionTable {
         };
 
         // Add the connection to the table
-        let res = inner.conn_by_id[protocol_index].insert(id, network_connection);
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let res = conn_by_id_table.insert(id, network_connection);
         assert!(res.is_none());
 
         // add connection records
-        inner.protocol_index_by_id.insert(id, protocol_index);
+        inner.protocol_type_by_id.insert(id, protocol_type);
         inner.id_by_flow.insert(flow, id);
         inner.ids_by_remote.entry(remote).or_default().push(id);
 
@@ -283,18 +281,19 @@ impl ConnectionTable {
         let inner = self.inner.lock();
 
         let id = *inner.id_by_flow.get(&flow)?;
-        let protocol_index = Self::protocol_to_index(flow.protocol_type());
-        let out = inner.conn_by_id[protocol_index].peek(&id).unwrap();
+        let protocol_type = flow.protocol_type();
+        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap();
         Some(out.get_handle())
     }
 
     //#[instrument(level = "trace", skip(self), ret)]
     pub fn touch_connection_by_id(&self, id: NetworkConnectionId) {
         let mut inner = self.inner.lock();
-        let Some(protocol_index) = inner.protocol_index_by_id.get(&id).copied() else {
+        let Some(protocol_type) = inner.protocol_type_by_id.get(&id).copied() else {
             return;
         };
-        let _ = inner.conn_by_id[protocol_index].get(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let _ = conn_by_id_table.get(&id);
     }
 
     #[expect(dead_code)]
@@ -310,8 +309,8 @@ impl ConnectionTable {
         let inner = self.inner.lock();
 
         let id = *inner.id_by_flow.get(&flow)?;
-        let protocol_index = Self::protocol_to_index(flow.protocol_type());
-        let out = inner.conn_by_id[protocol_index].peek(&id).unwrap();
+        let protocol_type = flow.protocol_type();
+        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap();
         Some(closure(out))
     }
 
@@ -328,8 +327,9 @@ impl ConnectionTable {
         let mut inner = self.inner.lock();
 
         let id = *inner.id_by_flow.get(&flow)?;
-        let protocol_index = Self::protocol_to_index(flow.protocol_type());
-        let out = inner.conn_by_id[protocol_index].peek_mut(&id).unwrap();
+        let protocol_type = flow.protocol_type();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let out = conn_by_id_table.peek_mut(&id).unwrap();
         Some(closure(out))
     }
 
@@ -339,8 +339,9 @@ impl ConnectionTable {
     ) -> Option<R> {
         let mut inner_lock = self.inner.lock();
         let inner = &mut *inner_lock;
-        for (id, idx) in inner.protocol_index_by_id.iter() {
-            if let Some(conn) = inner.conn_by_id[*idx].peek_mut(id) {
+        for (id, pt) in inner.protocol_type_by_id.iter() {
+            let conn_by_id_table = inner.conn_by_id.get_mut(pt).unwrap();
+            if let Some(conn) = conn_by_id_table.peek_mut(id) {
                 if let Some(out) = closure(conn) {
                     return Some(out);
                 }
@@ -356,11 +357,12 @@ impl ConnectionTable {
         ref_type: ConnectionRefKind,
     ) -> bool {
         let mut inner = self.inner.lock();
-        let Some(protocol_index) = inner.protocol_index_by_id.get(&id).copied() else {
+        let Some(protocol_type) = inner.protocol_type_by_id.get(&id).copied() else {
             // Sometimes network connections die before we can ref/unref them
             return false;
         };
-        let out = inner.conn_by_id[protocol_index].get_mut(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let out = conn_by_id_table.get_mut(&id).unwrap();
         match ref_type {
             ConnectionRefKind::AddRef => out.add_ref(),
             ConnectionRefKind::RemoveRef => out.remove_ref(),
@@ -377,7 +379,9 @@ impl ConnectionTable {
         let inner = &mut *self.inner.lock();
 
         let all_ids_by_remote = inner.ids_by_remote.get(&remote)?;
-        let protocol_index = Self::protocol_to_index(remote.protocol_type());
+        let protocol_type = remote.protocol_type();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+
         if all_ids_by_remote.is_empty() {
             // no connections
             return None;
@@ -385,16 +389,16 @@ impl ConnectionTable {
         if all_ids_by_remote.len() == 1 {
             // only one connection
             let id = all_ids_by_remote[0];
-            let nc = inner.conn_by_id[protocol_index].get(&id).unwrap();
+            let nc = conn_by_id_table.get(&id).unwrap();
             return Some(nc.get_handle());
         }
         // multiple connections, find the one that matches the best port, or the most recent
         if let Some(best_port) = best_port {
             for id in all_ids_by_remote {
-                let nc = inner.conn_by_id[protocol_index].peek(id).unwrap();
+                let nc = conn_by_id_table.peek(id).unwrap();
                 if let Some(local_addr) = nc.flow().local() {
                     if local_addr.port() == best_port {
-                        let nc = inner.conn_by_id[protocol_index].get(id).unwrap();
+                        let nc = conn_by_id_table.get(id).unwrap();
                         return Some(nc.get_handle());
                     }
                 }
@@ -402,7 +406,7 @@ impl ConnectionTable {
         }
         // just return most recent network connection if a best port match can not be found
         let best_id = *all_ids_by_remote.last().unwrap();
-        let nc = inner.conn_by_id[protocol_index].get(&best_id).unwrap();
+        let nc = conn_by_id_table.get(&best_id).unwrap();
         Some(nc.get_handle())
     }
 
@@ -440,7 +444,10 @@ impl ConnectionTable {
 
     pub fn connection_count(&self) -> usize {
         let inner = self.inner.lock();
-        inner.conn_by_id.iter().fold(0, |acc, c| acc + c.len())
+        inner
+            .conn_by_id
+            .iter()
+            .fold(0, |acc, (_pt, c)| acc + c.len())
     }
 
     #[instrument(level = "trace", skip(inner), ret)]
@@ -449,10 +456,11 @@ impl ConnectionTable {
         inner: &mut ConnectionTableInner,
         id: NetworkConnectionId,
     ) -> NetworkConnection {
-        // protocol_index_by_id
-        let protocol_index = inner.protocol_index_by_id.remove(&id).unwrap();
+        // protocol_type_by_id
+        let protocol_type = inner.protocol_type_by_id.remove(&id).unwrap();
         // conn_by_id
-        let conn = inner.conn_by_id[protocol_index].remove(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let conn = conn_by_id_table.remove(&id).unwrap();
         // id_by_flow
         let flow = conn.flow();
         let _ = inner
@@ -484,8 +492,8 @@ impl ConnectionTable {
     pub fn remove_connection_by_id(&self, id: NetworkConnectionId) -> Option<NetworkConnection> {
         let mut inner = self.inner.lock();
 
-        let protocol_index = *inner.protocol_index_by_id.get(&id)?;
-        if !inner.conn_by_id[protocol_index].contains_key(&id) {
+        let protocol_type = *inner.protocol_type_by_id.get(&id)?;
+        if !inner.conn_by_id[&protocol_type].contains_key(&id) {
             return None;
         }
         let conn = self.remove_connection_records_inner(&mut inner, id);
@@ -496,34 +504,34 @@ impl ConnectionTable {
         let mut out = String::new();
         let inner = self.inner.lock();
         let cur_ts = Timestamp::now();
-        for t in 0..inner.conn_by_id.len() {
+        for pt in inner.conn_by_id.keys() {
             out += &format!(
                 "  {} Connections: ({}/{})\n",
-                Self::index_to_protocol(t),
-                inner.conn_by_id[t].len(),
-                inner.max_connections[t]
+                pt,
+                inner.conn_by_id[pt].len(),
+                inner.max_connections[pt]
             );
 
-            for (_, conn) in &inner.conn_by_id[t] {
-                let is_priority_flow = inner.priority_flows[t].contains_key(&conn.flow());
+            for (_, conn) in &inner.conn_by_id[pt] {
+                let is_priority_flow = inner.priority_flows[pt].contains_key(&conn.flow());
 
                 out += &format!(
                     "    {}{}\n",
                     conn.debug_print(cur_ts),
-                    if is_priority_flow { "PRIORITY" } else { "" }
+                    if is_priority_flow { " PRIORITY" } else { "" }
                 );
             }
         }
 
-        for t in 0..inner.priority_flows.len() {
+        for pt in inner.priority_flows.keys() {
             out += &format!(
                 "  {} Priority Flows: ({}/{})\n",
-                Self::index_to_protocol(t),
-                inner.priority_flows[t].len(),
-                inner.priority_flows[t].capacity(),
+                pt,
+                inner.priority_flows[pt].len(),
+                inner.priority_flows[pt].capacity(),
             );
 
-            for (flow, _) in &inner.priority_flows[t] {
+            for (flow, _) in &inner.priority_flows[pt] {
                 out += &format!("    {}\n", flow);
             }
         }

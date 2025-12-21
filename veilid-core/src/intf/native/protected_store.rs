@@ -37,8 +37,8 @@ impl ProtectedStore {
         }
     }
 
-    #[instrument(level = "trace", skip(self), err)]
-    pub fn delete_all(&self) -> EyreResult<()> {
+    #[instrument(level = "trace", skip(self))]
+    pub fn delete_all(&self) {
         for kpsk in &KNOWN_PROTECTED_STORE_KEYS {
             if let Err(e) = self.remove_user_secret(kpsk) {
                 veilid_log!(self error "failed to delete '{}': {}", kpsk, e);
@@ -46,22 +46,20 @@ impl ProtectedStore {
                 veilid_log!(self debug "deleted protected store key '{}'", kpsk);
             }
         }
-        Ok(())
     }
 
     #[instrument(level = "debug", skip(self), err)]
     async fn init_async(&self) -> EyreResult<()> {
         let delete = {
             let config = self.config();
-            let c = config.get();
             let mut inner = self.inner.lock();
-            if !c.protected_store.always_use_insecure_storage {
+            if !config.protected_store.always_use_insecure_storage {
                 // Attempt to open the secure keyring
                 cfg_if! {
                     if #[cfg(target_os = "android")] {
-                        let maybe_km = KeyringManager::new_secure(&c.program_name, crate::intf::android::get_android_globals());
+                        let maybe_km = KeyringManager::new_secure(&config.program_name, crate::intf::android::get_android_globals());
                     } else {
-                        let maybe_km = KeyringManager::new_secure(&c.program_name);
+                        let maybe_km = KeyringManager::new_secure(&config.program_name);
                     }
                 }
 
@@ -73,17 +71,17 @@ impl ProtectedStore {
                     }
                 };
             }
-            if (c.protected_store.always_use_insecure_storage
-                || c.protected_store.allow_insecure_fallback)
+            if (config.protected_store.always_use_insecure_storage
+                || config.protected_store.allow_insecure_fallback)
                 && inner.keyring_manager.is_none()
             {
-                let directory = Path::new(&c.protected_store.directory);
+                let directory = Path::new(&config.protected_store.directory);
                 let insecure_keyring_file = directory.to_owned().join(format!(
                     "insecure_keyring{}",
-                    if c.namespace.is_empty() {
+                    if config.namespace.is_empty() {
                         "".to_owned()
                     } else {
-                        format!("_{}", c.namespace)
+                        format!("_{}", config.namespace)
                     }
                 ));
 
@@ -92,18 +90,18 @@ impl ProtectedStore {
 
                 // Open the insecure keyring
                 inner.keyring_manager = Some(
-                    KeyringManager::new_insecure(&c.program_name, &insecure_keyring_file)
+                    KeyringManager::new_insecure(&config.program_name, &insecure_keyring_file)
                         .wrap_err("failed to create insecure keyring")?,
                 );
             }
             if inner.keyring_manager.is_none() {
                 bail!("Could not initialize the protected store.");
             }
-            c.protected_store.delete
+            config.protected_store.delete
         };
 
         if delete {
-            self.delete_all()?;
+            self.delete_all();
         }
 
         Ok(())
@@ -124,11 +122,10 @@ impl ProtectedStore {
 
     fn service_name(&self) -> String {
         let config = self.config();
-        let c = config.get();
-        if c.namespace.is_empty() {
+        if config.namespace.is_empty() {
             "veilid_protected_store".to_owned()
         } else {
-            format!("veilid_protected_store_{}", c.namespace)
+            format!("veilid_protected_store_{}", config.namespace)
         }
     }
 
@@ -137,50 +134,53 @@ impl ProtectedStore {
         &self,
         key: K,
         value: V,
-    ) -> EyreResult<bool> {
+    ) -> VeilidAPIResult<bool> {
         let inner = self.inner.lock();
         inner
             .keyring_manager
             .as_ref()
-            .ok_or_else(|| eyre!("Protected store not initialized"))?
+            .ok_or_else(VeilidAPIError::not_initialized)?
             .with_keyring(&self.service_name(), key.as_ref(), |kr| {
                 let existed = kr.get_value().is_ok();
                 kr.set_value(value.as_ref())?;
                 Ok(existed)
             })
-            .wrap_err("failed to save user secret")
+            .map_err(VeilidAPIError::generic)
     }
 
     #[instrument(level = "trace", skip(self), err)]
     pub fn load_user_secret_string<K: AsRef<str> + fmt::Debug>(
         &self,
         key: K,
-    ) -> EyreResult<Option<String>> {
+    ) -> VeilidAPIResult<Option<String>> {
         let inner = self.inner.lock();
         match inner
             .keyring_manager
             .as_ref()
-            .ok_or_else(|| eyre!("Protected store not initialized"))?
+            .ok_or_else(VeilidAPIError::not_initialized)?
             .with_keyring(&self.service_name(), key.as_ref(), |kr| kr.get_value())
         {
             Ok(v) => Ok(Some(v)),
             Err(KeyringError::NoPasswordFound) => Ok(None),
-            Err(e) => Err(eyre!("Failed to load user secret: {}", e)),
+            Err(e) => Err(VeilidAPIError::generic(format!(
+                "Failed to load user secret: {}",
+                e
+            ))),
         }
     }
 
     #[instrument(level = "trace", skip(self, value))]
-    pub fn save_user_secret_json<K, T>(&self, key: K, value: &T) -> EyreResult<bool>
+    pub fn save_user_secret_json<K, T>(&self, key: K, value: &T) -> VeilidAPIResult<bool>
     where
         K: AsRef<str> + fmt::Debug,
         T: serde::Serialize,
     {
-        let v = serde_json::to_vec(value)?;
+        let v = serde_json::to_vec(value).map_err(VeilidAPIError::generic)?;
         self.save_user_secret(&key, &v)
     }
 
     #[instrument(level = "trace", skip(self))]
-    pub fn load_user_secret_json<K, T>(&self, key: K) -> EyreResult<Option<T>>
+    pub fn load_user_secret_json<K, T>(&self, key: K) -> VeilidAPIResult<Option<T>>
     where
         K: AsRef<str> + fmt::Debug,
         T: for<'de> serde::de::Deserialize<'de>,
@@ -193,7 +193,7 @@ impl ProtectedStore {
             }
         };
 
-        let obj = serde_json::from_slice(&b)?;
+        let obj = serde_json::from_slice(&b).map_err(VeilidAPIError::generic)?;
         Ok(Some(obj))
     }
 
@@ -202,7 +202,7 @@ impl ProtectedStore {
         &self,
         key: K,
         value: &[u8],
-    ) -> EyreResult<bool> {
+    ) -> VeilidAPIResult<bool> {
         let mut s = BASE64URL_NOPAD.encode(value);
         s.push('!');
 
@@ -213,7 +213,7 @@ impl ProtectedStore {
     pub fn load_user_secret<K: AsRef<str> + fmt::Debug>(
         &self,
         key: K,
-    ) -> EyreResult<Option<Vec<u8>>> {
+    ) -> VeilidAPIResult<Option<Vec<u8>>> {
         let mut s = match self.load_user_secret_string(key)? {
             Some(s) => s,
             None => {
@@ -222,7 +222,7 @@ impl ProtectedStore {
         };
 
         if s.pop() != Some('!') {
-            bail!("User secret is not a buffer");
+            apibail_generic!("User secret is not a buffer");
         }
 
         let mut bytes = Vec::<u8>::new();
@@ -232,29 +232,32 @@ impl ProtectedStore {
                 bytes.resize(l, 0u8);
             }
             Err(_) => {
-                bail!("Failed to decode");
+                apibail_generic!("Failed to decode");
             }
         }
 
         let res = BASE64URL_NOPAD.decode_mut(s.as_bytes(), &mut bytes);
         match res {
             Ok(_) => Ok(Some(bytes)),
-            Err(_) => bail!("Failed to decode"),
+            Err(_) => apibail_generic!("Failed to decode"),
         }
     }
 
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub fn remove_user_secret<K: AsRef<str> + fmt::Debug>(&self, key: K) -> EyreResult<bool> {
+    pub fn remove_user_secret<K: AsRef<str> + fmt::Debug>(&self, key: K) -> VeilidAPIResult<bool> {
         let inner = self.inner.lock();
         match inner
             .keyring_manager
             .as_ref()
-            .ok_or_else(|| eyre!("Protected store not initialized"))?
+            .ok_or_else(VeilidAPIError::not_initialized)?
             .with_keyring(&self.service_name(), key.as_ref(), |kr| kr.delete_value())
         {
             Ok(_) => Ok(true),
             Err(KeyringError::NoPasswordFound) => Ok(false),
-            Err(e) => Err(eyre!("Failed to remove user secret: {}", e)),
+            Err(e) => Err(VeilidAPIError::generic(format!(
+                "Failed to remove user secret: {}",
+                e
+            ))),
         }
     }
 }

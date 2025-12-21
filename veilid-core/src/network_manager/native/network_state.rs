@@ -18,122 +18,103 @@ pub(super) struct NetworkState {
     pub enable_ipv4: bool,
     /// does our network have ipv6 on any interface?
     pub enable_ipv6: bool,
-    /// The list of stable interface addresses we have last seen
-    pub stable_interface_addresses: Vec<IpAddr>,
-    /// The local networks (network+mask) most recently seen
-    pub local_networks: Vec<(IpAddr, IpAddr)>,
+    /// The interface addresses (network+mask) most recently seen
+    pub interface_addresses: Arc<Vec<IfAddr>>,
 }
 
 impl Network {
-    fn make_stable_interface_addresses(&self) -> Vec<IpAddr> {
-        let addrs = self.interfaces.stable_addresses();
-        let mut addrs: Vec<IpAddr> = addrs
-            .into_iter()
-            .filter(|addr| {
-                let address = Address::from_ip_addr(*addr);
-                address.is_local() || address.is_global()
-            })
-            .collect();
-        addrs.sort();
-        addrs.dedup();
-        addrs
-    }
-
-    pub(super) fn last_network_state(&self) -> Option<NetworkState> {
+    pub(super) fn last_network_state(&self) -> Option<Arc<NetworkState>> {
         self.inner.lock().network_state.clone()
     }
 
-    pub(super) fn is_stable_interface_address(&self, addr: IpAddr) -> bool {
+    pub(super) fn is_interface_address(&self, addr: IpAddr) -> bool {
         self.inner
             .lock()
             .network_state
             .as_ref()
             .unwrap()
-            .stable_interface_addresses
-            .contains(&addr)
+            .interface_addresses
+            .iter()
+            .any(|x| x.ip() == addr)
     }
 
-    pub(super) async fn make_network_state(&self) -> EyreResult<NetworkState> {
-        // refresh network interfaces
-        let old_stable_addresses = self.interfaces.stable_addresses();
-        if self
+    pub(super) async fn refresh_network_state(&self) -> EyreResult<Option<Arc<NetworkState>>> {
+        // Get last network state
+        let last_network_state = self.inner.lock().network_state.clone();
+
+        // Refresh network interfaces
+        if !self
             .interfaces
             .refresh()
             .await
             .wrap_err("failed to refresh network interfaces")?
         {
-            let new_stable_addresses = self.interfaces.stable_addresses();
+            // Nothing changed
+            return Ok(None);
+        }
 
+        let interface_addresses = self.interfaces.interface_addresses();
+
+        if let Some(old_interface_addresses) =
+            last_network_state.map(|x| x.interface_addresses.clone())
+        {
             veilid_log!(self debug
                 "Network interface addresses changed: \nFrom: {:?}\n  To: {:?}\n",
-                old_stable_addresses, new_stable_addresses
+                old_interface_addresses, interface_addresses
+            );
+        } else {
+            veilid_log!(self debug
+                "Network interface addresses: \n  {:?}\n",
+                interface_addresses
             );
         }
 
-        // build the set of networks we should consider for the 'LocalNetwork' routing domain
-        let mut local_networks: HashSet<(IpAddr, IpAddr)> = HashSet::new();
-
-        self.interfaces.with_interfaces(|interfaces| {
-            for intf in interfaces.values() {
-                // Skip networks that we should never encounter
-                if intf.is_loopback() || !intf.is_running() {
-                    continue;
-                }
-                // Add network to local networks table
-                for addr in &intf.addrs {
-                    let netmask = addr.if_addr().netmask();
-                    let network_ip = ipaddr_apply_netmask(addr.if_addr().ip(), netmask);
-                    local_networks.insert((network_ip, netmask));
-                }
-            }
-        });
-        let mut local_networks: Vec<(IpAddr, IpAddr)> = local_networks.into_iter().collect();
-        local_networks.sort();
-
-        // determine if we have ipv4/ipv6 addresses
+        // Determine if we have ipv4/ipv6 addresses
         let mut enable_ipv4 = false;
         let mut enable_ipv6 = false;
 
-        let stable_interface_addresses = self.make_stable_interface_addresses();
-
-        for addr in stable_interface_addresses.iter() {
-            if addr.is_ipv4() {
-                enable_ipv4 = true;
-            } else if addr.is_ipv6() {
-                enable_ipv6 = true;
+        for addr in interface_addresses.iter() {
+            match addr {
+                IfAddr::V4(_) => {
+                    enable_ipv4 = true;
+                }
+                IfAddr::V6(_) => {
+                    enable_ipv6 = true;
+                }
             }
         }
 
         // Get protocol config
         let protocol_config = {
             let config = self.config();
-            let c = config.get();
             let mut inbound = ProtocolTypeSet::new();
 
-            if c.network.protocol.udp.enabled {
+            if config.network.protocol.udp.enabled {
                 inbound.insert(ProtocolType::UDP);
             }
-            if c.network.protocol.tcp.listen {
+            if config.network.protocol.tcp.listen {
                 inbound.insert(ProtocolType::TCP);
             }
-            if c.network.protocol.ws.listen {
+            if config.network.protocol.ws.listen {
                 inbound.insert(ProtocolType::WS);
             }
-            if c.network.protocol.wss.listen {
+            #[cfg(feature = "enable-protocol-wss")]
+            if config.network.protocol.wss.listen {
                 inbound.insert(ProtocolType::WSS);
             }
 
             let mut outbound = ProtocolTypeSet::new();
-            if c.network.protocol.udp.enabled {
+            if config.network.protocol.udp.enabled {
                 outbound.insert(ProtocolType::UDP);
             }
-            if c.network.protocol.tcp.connect {
+            if config.network.protocol.tcp.connect {
                 outbound.insert(ProtocolType::TCP);
             }
-            if c.network.protocol.ws.connect {
+            if config.network.protocol.ws.connect {
                 outbound.insert(ProtocolType::WS);
             }
-            if c.network.protocol.wss.connect {
+            #[cfg(feature = "enable-protocol-wss")]
+            if config.network.protocol.wss.connect {
                 outbound.insert(ProtocolType::WSS);
             }
 
@@ -154,14 +135,14 @@ impl Network {
                 PUBLIC_INTERNET_CAPABILITIES
                     .iter()
                     .copied()
-                    .filter(|cap| !c.capabilities.disable.contains(cap))
+                    .filter(|cap| !config.capabilities.disable.contains(cap))
                     .collect::<Vec<VeilidCapability>>()
             };
             let local_network_capabilities = {
                 LOCAL_NETWORK_CAPABILITIES
                     .iter()
                     .copied()
-                    .filter(|cap| !c.capabilities.disable.contains(cap))
+                    .filter(|cap| !config.capabilities.disable.contains(cap))
                     .collect::<Vec<VeilidCapability>>()
             };
 
@@ -175,12 +156,15 @@ impl Network {
             }
         };
 
-        Ok(NetworkState {
+        let new_network_state = Some(Arc::new(NetworkState {
             protocol_config,
             enable_ipv4,
             enable_ipv6,
-            stable_interface_addresses,
-            local_networks,
-        })
+            interface_addresses,
+        }));
+
+        self.inner.lock().network_state = new_network_state.clone();
+
+        Ok(new_network_state)
     }
 }

@@ -9,7 +9,7 @@ impl RPCProcessor {
     pub async fn rpc_call_value_changed(
         &self,
         dest: Destination,
-        key: TypedRecordKey,
+        record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         count: u32,
         watch_id: u64,
@@ -27,12 +27,13 @@ impl RPCProcessor {
                 "Never send value changes over safety routes",
             ));
         }
-        let value_changed = RPCOperationValueChanged::new(key, subkeys, count, watch_id, value)?;
+        let value_changed =
+            RPCOperationValueChanged::new(record_key, subkeys, count, watch_id, value)?;
         let statement =
             RPCStatement::new(RPCStatementDetail::ValueChanged(Box::new(value_changed)));
 
         // Send the value changed request
-        self.statement(dest, statement).await
+        self.statement(dest, statement, None, None).await
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -56,29 +57,23 @@ impl RPCProcessor {
         // Try it as the node if, and the storage manager will reject the
         // value change if it doesn't match the active watch's node id
         let inbound_node_id = match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(d) => d.envelope.get_sender_typed_id(),
+            RPCMessageHeaderDetail::Direct(d) => d.envelope.get_sender_id(),
             RPCMessageHeaderDetail::SafetyRouted(_) => {
                 return Ok(NetworkResult::invalid_message(
-                    "not processing value change over safety route",
+                    "not processing value change over only a safety route",
                 ));
             }
-            RPCMessageHeaderDetail::PrivateRouted(p) => TypedNodeId::new(
-                p.direct.envelope.get_crypto_kind(),
-                p.remote_safety_route.into(),
-            ),
+            RPCMessageHeaderDetail::PrivateRouted(p) => self
+                .routing_table()
+                .generate_node_id(&p.remote_safety_route)
+                .map_err(RPCError::internal)?,
         };
 
         if debug_target_enabled!("dht") {
-            let debug_string_value = if let Some(value) = &value {
-                format!(
-                    " len={} seq={} writer={}",
-                    value.value_data().data().len(),
-                    value.value_data().seq(),
-                    value.value_data().writer(),
-                )
-            } else {
-                "(no value)".to_owned()
-            };
+            let debug_string_value = value
+                .as_ref()
+                .map(|v| format!(" {}", v))
+                .unwrap_or_default();
 
             let debug_string_stmt = format!(
                 "IN <== ValueChanged(id={} {} #{:?}+{}{}) from {} <= {}",

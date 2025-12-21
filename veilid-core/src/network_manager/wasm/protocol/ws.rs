@@ -24,7 +24,7 @@ impl fmt::Debug for WebsocketNetworkConnection {
     }
 }
 
-impl_veilid_component_registry_accessor!(WebsocketNetworkConnection);
+impl_veilid_component_accessors!(WebsocketNetworkConnection);
 
 impl WebsocketNetworkConnection {
     pub fn new(
@@ -52,10 +52,7 @@ impl WebsocketNetworkConnection {
         instrument(level = "trace", err, skip(self))
     )]
     pub async fn close(&self) -> io::Result<NetworkResult<()>> {
-        let timeout_ms = self
-            .registry
-            .config()
-            .with(|c| c.network.connection_initial_timeout_ms);
+        let timeout_ms = self.config().network.connection_initial_timeout_ms;
 
         #[allow(unused_variables)]
         let x = match timeout(timeout_ms, self.inner.ws_meta.close()).await {
@@ -127,6 +124,7 @@ impl WebsocketProtocolHandler {
         // Split dial info up
         let (_tls, scheme) = match dial_info {
             DialInfo::WS(_) => (false, "ws"),
+            #[cfg(feature = "enable-protocol-wss")]
             DialInfo::WSS(_) => (true, "wss"),
             _ => panic!("invalid dialinfo for WS/WSS protocol"),
         };

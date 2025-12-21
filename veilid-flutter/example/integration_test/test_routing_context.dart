@@ -73,7 +73,7 @@ Future<void> testAppMessageLoopback(Stream<VeilidUpdate> updateStream) async {
         try {
           // send an app message to our own private route
           final message = utf8.encode('abcd1234');
-          await rc.appMessage(prr, message);
+          await rc.appMessage(TargetRouteId(routeId: prr), message);
 
           // we should get the same message back
           final update = await appMessageQueue.stream.first;
@@ -115,7 +115,8 @@ Future<void> testAppCallLoopback(Stream<VeilidUpdate> updateStream) async {
         try {
           // send an app call to our own private route
           final message = utf8.encode('abcd1234');
-          final appCallFuture = rc.appCall(prr, message);
+          final appCallFuture =
+              rc.appCall(TargetRouteId(routeId: prr), message);
 
           // we should get the same call back
           final update = await appCallQueue.stream.first;
@@ -157,7 +158,8 @@ Future<void> testAppMessageLoopbackBigPackets(
 
   final sentMessages = <String>{};
   final random = Random.secure();
-  final cs = await Veilid.instance.bestCryptoSystem();
+  final cs = await Veilid.instance
+      .getCryptoSystem(Veilid.instance.validCryptoKinds().first);
 
   try {
     await Veilid.instance.debug('purge routes');
@@ -176,7 +178,7 @@ Future<void> testAppMessageLoopbackBigPackets(
           for (var i = 0; i < 5; i++) {
             // send an app message to our own private route
             final message = await cs.randomBytes(random.nextInt(32768));
-            await rc.appMessage(prr, message);
+            await rc.appMessage(TargetRouteId(routeId: prr), message);
             sentMessages.add(base64Url.encode(message));
           }
 
@@ -222,7 +224,8 @@ Future<void> testAppCallLoopbackBigPackets(
 
   final sentMessages = <String>{};
   final random = Random.secure();
-  final cs = await Veilid.instance.bestCryptoSystem();
+  final cs = await Veilid.instance
+      .getCryptoSystem(Veilid.instance.validCryptoKinds().first);
 
   try {
     await Veilid.instance.debug('purge routes');
@@ -241,7 +244,8 @@ Future<void> testAppCallLoopbackBigPackets(
           for (var i = 0; i < 5; i++) {
             // send an app message to our own private route
             final message = await cs.randomBytes(random.nextInt(32768));
-            final outmessage = await rc.appCall(prr, message);
+            final outmessage =
+                await rc.appCall(TargetRouteId(routeId: prr), message);
             expect(message, equals(outmessage));
           }
 

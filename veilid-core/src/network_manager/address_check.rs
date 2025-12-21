@@ -65,20 +65,17 @@ impl fmt::Debug for AddressCheck {
     }
 }
 
-impl_veilid_component_registry_accessor!(AddressCheck);
+impl_veilid_component_accessors!(AddressCheck);
 
 impl AddressCheck {
     pub fn new(net: Network) -> Self {
         let registry = net.registry();
 
-        let (detect_address_changes, ip6_prefix_size, require_inbound_relay) =
-            registry.config().with(|c| {
-                (
-                    net.resolved_detect_address_changes(),
-                    c.network.max_connections_per_ip6_prefix_size as usize,
-                    c.network.privacy.require_inbound_relay,
-                )
-            });
+        let config = registry.config();
+        let detect_address_changes = net.resolved_detect_address_changes();
+        let ip6_prefix_size = config.network.max_connections_per_ip6_prefix_size as usize;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
+
         let config = AddressCheckConfig {
             detect_address_changes,
             ip6_prefix_size,
@@ -119,11 +116,7 @@ impl AddressCheck {
             self.published_peer_info
                 .insert(routing_domain, peer_info.clone());
 
-            for did in peer_info
-                .signed_node_info()
-                .node_info()
-                .dial_info_detail_list()
-            {
+            for did in peer_info.node_info().dial_info_detail_list() {
                 // Strip port from direct and mapped addresses
                 // as the incoming dialinfo may not match the outbound
                 // connections' NAT mapping. In this case we only check for IP address changes.
@@ -194,7 +187,7 @@ impl AddressCheck {
         let Some(reporting_node_info) = reporting_peer.node_info(routing_domain) else {
             return;
         };
-        if reporting_node_info.network_class() != NetworkClass::InboundCapable {
+        if !reporting_node_info.has_dial_info() {
             return;
         }
 
@@ -213,24 +206,16 @@ impl AddressCheck {
 
         // Process the state of the address checker and see if we need to
         // perform a full address check for this routing domain
-        let needs_address_detection = match peer_info.signed_node_info().node_info().network_class()
-        {
-            NetworkClass::InboundCapable => self.detect_for_inbound_capable(
+        let needs_address_detection = if peer_info.node_info().has_dial_info() {
+            self.detect_for_inbound_capable(
                 routing_domain,
                 socket_address,
                 old_socket_address,
                 flow,
                 reporting_peer,
-            ),
-            NetworkClass::OutboundOnly => self.detect_for_outbound_only(
-                routing_domain,
-                socket_address,
-                flow,
-                reporting_ipblock,
-            ),
-            NetworkClass::WebApp | NetworkClass::Invalid => {
-                return;
-            }
+            )
+        } else {
+            self.detect_for_outbound_only(routing_domain, socket_address, flow, reporting_ipblock)
         };
 
         if needs_address_detection {
@@ -242,7 +227,7 @@ impl AddressCheck {
                 );
 
                 // Re-detect the public dialinfo
-                self.net.trigger_update_network_class(routing_domain);
+                self.net.trigger_update_dial_info(routing_domain);
             } else {
                 veilid_log!(self warn
                     "{:?} address may have changed. Restarting the server may be required.",

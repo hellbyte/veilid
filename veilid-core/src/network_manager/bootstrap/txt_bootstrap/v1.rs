@@ -13,9 +13,7 @@ impl NetworkManager {
     ) -> EyreResult<Vec<BootstrapRecord>> {
         veilid_log!(self debug "Parsing v1 bootstraps: {:?}", record_strings);
 
-        let signing_keys = self
-            .config()
-            .with(|c| c.network.routing_table.bootstrap_keys.clone());
+        let signing_keys = self.config().network.routing_table.bootstrap_keys.clone();
         if signing_keys.is_empty() {
             veilid_log!(self warn "No signing keys in config. Proceeding with UNVERIFIED bootstrap.");
         }
@@ -44,7 +42,10 @@ impl NetworkManager {
             let mut mbi = 0;
             while mbi < merged_bootstrap_records.len() {
                 let mbr = &mut merged_bootstrap_records[mbi];
-                if mbr.node_ids().contains_any(bsrec.node_ids()) {
+                if mbr
+                    .public_keys()
+                    .contains_any_from_slice(bsrec.public_keys())
+                {
                     // Merge record, pop this one out
                     let mbr = merged_bootstrap_records.remove(mbi);
                     bsrec.merge(mbr);

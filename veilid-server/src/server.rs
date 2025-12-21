@@ -12,11 +12,11 @@ use std::time::{Duration, Instant};
 use tracing::*;
 use veilid_core::tools::*;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMode {
     Normal,
     ShutdownImmediate,
-    DumpTXTRecord(veilid_core::TypedKeyPair),
+    DumpTXTRecord(veilid_core::KeyPairGroup),
 }
 
 lazy_static! {
@@ -89,10 +89,12 @@ pub async fn run_veilid_server_subnode(
             eprintln!("error sending veilid update callback: {:?}", change);
         }
     });
-    let config_callback = settings.get_core_config_callback(subnode, subnode_offset);
+    let core_config = settings
+        .get_core_config(subnode, subnode_offset)
+        .wrap_err("Mapping to VeilidCore config failed")?;
 
     // Start Veilid Core and get API
-    let veilid_api = veilid_core::api_startup(update_callback, config_callback)
+    let veilid_api = veilid_core::api_startup(update_callback, core_config)
         .await
         .wrap_err("VeilidCore startup failed")?;
 
@@ -163,7 +165,7 @@ pub async fn run_veilid_server_subnode(
     }
 
     // Process dump-txt-record
-    if let ServerMode::DumpTXTRecord(keypair) = server_mode {
+    if let ServerMode::DumpTXTRecord(kpg) = &server_mode {
         let start_time = Instant::now();
         while Instant::now().duration_since(start_time) < Duration::from_secs(10) {
             match veilid_api.get_state().await {
@@ -179,14 +181,15 @@ pub async fn run_veilid_server_subnode(
             }
             sleep(100).await;
         }
-        match veilid_api.debug(format!("txtrecord {}", keypair)).await {
+        match veilid_api.debug(format!("txtrecord {}", kpg)).await {
             Ok(v) => {
                 print!("{}", v);
             }
             Err(e) => {
                 out = Err(eyre!("Getting TXT record failed: {:?}", e));
             }
-        };
+        }
+
         shutdown();
     }
 
@@ -246,7 +249,12 @@ pub async fn run_veilid_server(
         debug!("Spawning subnode {}", subnode);
         let jh = spawn(
             &format!("subnode{}", subnode),
-            run_veilid_server_subnode(subnode, settings.clone(), server_mode, veilid_logs.clone()),
+            run_veilid_server_subnode(
+                subnode,
+                settings.clone(),
+                server_mode.clone(),
+                veilid_logs.clone(),
+            ),
         );
         all_subnodes_jh.push(jh);
     }

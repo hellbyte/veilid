@@ -1,7 +1,7 @@
 [package]
 # --- Bumpversion match - do not reorder
 name = "veilid-flutter"
-version = "0.4.8"
+version = "0.5.0"
 # ---
 description = "Flutter/Dart bindings for Veilid"
 resolver = "2"
@@ -33,10 +33,11 @@ rt-tokio = [
     "opentelemetry/rt-tokio",
 ]
 debug-load = ["dep:ctor", "dep:libc-print", "dep:android_log-sys", "dep:oslog"]
+enable-protocol-wss = ["veilid-core/enable-protocol-wss"]
 footgun = ["veilid-core/footgun"]
 
 [dependencies]
-veilid-core = { path = "../../veilid-core", default-features = false }
+veilid-core = { path = "../../veilid-core", default-features = false, features = ["json-camel-case"] }
 tracing = { version = "0.1.41", features = ["log", "attributes"] }
 tracing-subscriber = "0.3.19"
 parking_lot = "0.12.3"

@@ -12,7 +12,7 @@ pub struct RawUdpProtocolHandler {
     current_ttl: Arc<AsyncMutex<u32>>,
 }
 
-impl_veilid_component_registry_accessor!(RawUdpProtocolHandler);
+impl_veilid_component_accessors!(RawUdpProtocolHandler);
 
 impl RawUdpProtocolHandler {
     pub fn new(registry: VeilidComponentRegistry, socket: Arc<UdpSocket>, is_ipv6: bool) -> Self {
@@ -34,7 +34,7 @@ impl RawUdpProtocolHandler {
         }
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip(self, data), fields(data.len = data.len(), ret.len, ret.flow))]
+    #[instrument(level = "trace", target = "protocol", err, skip(self, data), fields(self.socket = ?self.socket, data.len = data.len(), ret.len, ret.flow))]
     pub async fn recv_message(&self, data: &mut [u8]) -> io::Result<(usize, Flow)> {
         let (message_len, flow) = loop {
             // Get a packet
@@ -99,7 +99,7 @@ impl RawUdpProtocolHandler {
         Ok((message_len, flow))
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip(self, data), fields(data.len = data.len(), ret.flow))]
+    #[instrument(level = "trace", target = "protocol", err, skip(self, data), fields(self.socket = ?self.socket, data.len = data.len(), ret.flow))]
     pub async fn send_message(
         &self,
         data: Vec<u8>,
@@ -167,7 +167,7 @@ impl RawUdpProtocolHandler {
         Ok(NetworkResult::value(flow))
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip(self), fields(ret.flow))]
+    #[instrument(level = "trace", target = "protocol", err, skip(self), fields(self.socket = ?self.socket, ret.flow))]
     pub async fn send_hole_punch(
         &self,
         remote_addr: SocketAddr,
@@ -246,7 +246,7 @@ impl RawUdpProtocolHandler {
         Ok(NetworkResult::value(flow))
     }
 
-    #[instrument(level = "trace", target = "protocol", err)]
+    #[instrument(level = "trace", target = "protocol", skip(registry), err)]
     pub async fn new_unspecified_bound_handler(
         registry: VeilidComponentRegistry,
         socket_addr: &SocketAddr,

@@ -12,13 +12,17 @@ impl NetworkManager {
     /// If no bootstrap keys are specified, uses the v0 mechanism, otherwise uses the v1 mechanism
     #[instrument(level = "trace", target = "net", err, skip(self))]
     pub async fn direct_bootstrap(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
-        let direct_boot_version = self.config().with(|c| {
-            if c.network.routing_table.bootstrap_keys.is_empty() {
-                0
-            } else {
-                1
-            }
-        });
+        let direct_boot_version = if self
+            .config()
+            .network
+            .routing_table
+            .bootstrap_keys
+            .is_empty()
+        {
+            0
+        } else {
+            1
+        };
 
         if direct_boot_version == 0 {
             self.direct_bootstrap_v0(dial_info).await
@@ -30,7 +34,7 @@ impl NetworkManager {
     /// Uses the bootstrap v0 (BOOT) mechanism
     #[instrument(level = "trace", target = "net", err, skip(self))]
     async fn direct_bootstrap_v0(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
-        let timeout_ms = self.config().with(|c| c.network.rpc.timeout_ms);
+        let timeout_ms = self.config().network.rpc.timeout_ms;
         // Send boot magic to requested peer address
         let data = BOOT_MAGIC.to_vec();
 
@@ -59,7 +63,7 @@ impl NetworkManager {
     /// Uses the bootstrap v1 (B01T) mechanism
     #[instrument(level = "trace", target = "net", err, skip(self))]
     async fn direct_bootstrap_v1(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
-        let timeout_ms = self.config().with(|c| c.network.rpc.timeout_ms);
+        let timeout_ms = self.config().network.rpc.timeout_ms;
 
         // Send boot magic to requested peer address
         let data = B01T_MAGIC.to_vec();
@@ -102,7 +106,7 @@ impl NetworkManager {
         let peers: Vec<Arc<PeerInfo>> = bsrecs
             .into_iter()
             .filter_map(|bsrec| {
-                if routing_table.matches_own_node_id(bsrec.node_ids()) {
+                if routing_table.matches_own_public_key(bsrec.public_keys()) {
                     veilid_log!(self debug "Ignoring own node in bootstrap list");
                     None
                 } else {
@@ -112,7 +116,7 @@ impl NetworkManager {
                     // and as such, a routing domain can not be determined for it
                     // by the code that receives the FindNodeA result
                     for pi in bootv1response.peers.iter().cloned() {
-                        if pi.node_ids().contains_any(bsrec.node_ids()) {
+                        if pi.node_info().public_keys().contains_any_from_slice(bsrec.public_keys()) {
                             return Some(pi);
                         }
                     }
@@ -121,24 +125,37 @@ impl NetworkManager {
                     // The bootstrap will be rejected if a FindNodeQ could not resolve the peer info
 
                     // Get crypto support from list of node ids
-                    let crypto_support = bsrec.node_ids().kinds();
+                    let crypto_info_list: Vec<CryptoInfo> = bsrec.public_keys().iter().filter_map(|pk| {
+                        match pk.kind() {
+                            CRYPTO_KIND_VLD0 =>
+                                Some(CryptoInfo::VLD0 { public_key: pk.value() }),
 
-                    // Make unsigned SignedNodeInfo
-                    let sni = SignedNodeInfo::Direct(SignedDirectNodeInfo::with_no_signature(
-                        NodeInfo::new(
-                            NetworkClass::InboundCapable, // Bootstraps are always inbound capable
-                            ProtocolTypeSet::all(), // Bootstraps are always capable of all protocols
-                            AddressTypeSet::all(),  // Bootstraps are always IPV4 and IPV6 capable
-                            bsrec.envelope_support().to_vec(), // Envelope support is as specified in the bootstrap list
-                            crypto_support, // Crypto support is derived from list of node ids
-                            vec![],         // Bootstrap needs no capabilities
-                            bsrec.dial_info_details().to_vec(), // Dial info is as specified in the bootstrap list
-                        ),
-                    ));
-                    let bspi = match PeerInfo::new(
+                            ck => {
+                                veilid_log!(self warn "Ignoring unsupported bootstrap crypto kind: {}", ck);
+                                None
+                            }
+                        }
+                    }).collect();
+
+                    // Make unsigned node info
+                    let timestamp = bsrec
+                        .timestamp_secs()
+                        .map(|tss| Timestamp::new(tss * 1_000_000u64))
+                        .unwrap_or_else(Timestamp::now);
+                    let ni = NodeInfo::new(
+                        timestamp,
+                        bsrec.envelope_support().to_vec(), // Envelope support is as specified in the bootstrap list
+                        crypto_info_list, // Crypto support is derived from list of node ids
+                        vec![],           // Bootstrap needs no capabilities
+                        ProtocolTypeSet::all(), // Bootstraps are always capable of all protocols
+                        AddressTypeSet::all(), // Bootstraps are always IPV4 and IPV6 capable
+                        bsrec.dial_info_details().to_vec(), // Dial info is as specified in the bootstrap list
+                        vec![],                             // No relays for bootstrap nodes
+                    );
+                    let bspi = match PeerInfo::new_from_unsigned(
+                        &routing_table,
                         RoutingDomain::PublicInternet,
-                        bsrec.node_ids().clone(),
-                        sni,
+                        ni,
                     ) {
                         Ok(v) => v,
                         Err(e) => {

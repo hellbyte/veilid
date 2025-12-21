@@ -110,15 +110,15 @@ class _MyAppState extends State<MyApp> with UiLoggy {
   Future<void> toggleStartup(bool startup) async {
     if (startup && !_startedUp) {
       var config = await getDefaultVeilidConfig(
-          isWeb: kIsWeb,
-          programName: 'Veilid Plugin Example',
-          bootstrap: const String.fromEnvironment('BOOTSTRAP'),
-          bootstrapKeys: const bool.hasEnvironment('BOOTSTRAP_KEYS')
-              ? const String.fromEnvironment('BOOTSTRAP_KEYS')
-              : const bool.hasEnvironment('BOOTSTRAP')
-                  ? ''
-                  : null,
-          networkKeyPassword: const String.fromEnvironment('NETWORK_KEY'));
+        isWeb: kIsWeb,
+        programName: 'Veilid Plugin Example',
+        namespace: const String.fromEnvironment('NAMESPACE'),
+        bootstrap: const String.fromEnvironment('BOOTSTRAP'),
+        bootstrapKeys: const bool.hasEnvironment('BOOTSTRAP_KEYS')
+            ? const String.fromEnvironment('BOOTSTRAP_KEYS')
+            : null,
+        networkKeyPassword: const String.fromEnvironment('NETWORK_KEY'),
+      );
       if (const String.fromEnvironment('DELETE_TABLE_STORE') == '1') {
         config = config.copyWith(
             tableStore: config.tableStore.copyWith(delete: true));
@@ -156,88 +156,89 @@ class _MyAppState extends State<MyApp> with UiLoggy {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(
-        title: Text('Veilid Plugin Version $_veilidVersion'),
-      ),
-      body: Column(children: [
-        const Expanded(child: LogTerminal()),
-        Container(
-          decoration: BoxDecoration(
-              color: materialBackgroundColor.shade100,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withAlpha(38),
-                  spreadRadius: 4,
-                  blurRadius: 4,
-                )
-              ]),
-          padding: const EdgeInsets.all(5),
-          child: Row(children: [
-            Expanded(
-                child: pad(
-              TextField(
-                  controller: _historyController.controller,
-                  focusNode: _historyController.focusNode,
-                  decoration: newInputDecoration(
-                      'Debug Command', _errorText, _startedUp),
-                  textInputAction: TextInputAction.unspecified,
-                  enabled: _startedUp,
-                  onChanged: (v) {
-                    setState(() {
-                      _errorText = null;
-                    });
-                  },
-                  onSubmitted: (v) async {
-                    try {
-                      if (v.isEmpty) {
-                        return;
-                      }
-                      final res = await Veilid.instance.debug(v);
-                      loggy.info(res);
-                      _historyController.submit(v);
-                    } on VeilidAPIException catch (e) {
-                      setState(() {
-                        _errorText = e.toDisplayError();
-                      });
-                    }
-                  }),
-            )),
-            pad(
-              Column(children: [
-                const Text('Startup'),
-                Switch(
-                    value: _startedUp,
-                    onChanged: (value) async {
-                      await toggleStartup(value);
-                    }),
+  Widget build(BuildContext context) => SafeArea(
+      child: Scaffold(
+          appBar: AppBar(
+            title: Text('Veilid Plugin Version $_veilidVersion'),
+          ),
+          body: Column(children: [
+            const Expanded(child: LogTerminal()),
+            Container(
+              decoration: BoxDecoration(
+                  color: materialBackgroundColor.shade100,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(38),
+                      spreadRadius: 4,
+                      blurRadius: 4,
+                    )
+                  ]),
+              padding: const EdgeInsets.all(5),
+              child: Row(children: [
+                Expanded(
+                    child: pad(
+                  TextField(
+                      controller: _historyController.controller,
+                      focusNode: _historyController.focusNode,
+                      decoration: newInputDecoration(
+                          'Debug Command', _errorText, _startedUp),
+                      textInputAction: TextInputAction.unspecified,
+                      enabled: _startedUp,
+                      onChanged: (v) {
+                        setState(() {
+                          _errorText = null;
+                        });
+                      },
+                      onSubmitted: (v) async {
+                        try {
+                          if (v.isEmpty) {
+                            return;
+                          }
+                          final res = await Veilid.instance.debug(v);
+                          loggy.info(res);
+                          _historyController.submit(v);
+                        } on VeilidAPIException catch (e) {
+                          setState(() {
+                            _errorText = e.toDisplayError();
+                          });
+                        }
+                      }),
+                )),
+                pad(
+                  Column(children: [
+                    const Text('Startup'),
+                    Switch(
+                        value: _startedUp,
+                        onChanged: (value) async {
+                          await toggleStartup(value);
+                        }),
+                  ]),
+                ),
+                pad(Column(children: [
+                  const Text('Log Level'),
+                  DropdownButton<LogLevel>(
+                      value: loggy.level.logLevel,
+                      onChanged: (newLevel) {
+                        setState(() {
+                          setRootLogLevel(newLevel);
+                        });
+                      },
+                      items: const [
+                        DropdownMenuItem<LogLevel>(
+                            value: LogLevel.error, child: Text('Error')),
+                        DropdownMenuItem<LogLevel>(
+                            value: LogLevel.warning, child: Text('Warning')),
+                        DropdownMenuItem<LogLevel>(
+                            value: LogLevel.info, child: Text('Info')),
+                        DropdownMenuItem<LogLevel>(
+                            value: LogLevel.debug, child: Text('Debug')),
+                        DropdownMenuItem<LogLevel>(
+                            value: traceLevel, child: Text('Trace')),
+                        DropdownMenuItem<LogLevel>(
+                            value: LogLevel.all, child: Text('All')),
+                      ]),
+                ])),
               ]),
             ),
-            pad(Column(children: [
-              const Text('Log Level'),
-              DropdownButton<LogLevel>(
-                  value: loggy.level.logLevel,
-                  onChanged: (newLevel) {
-                    setState(() {
-                      setRootLogLevel(newLevel);
-                    });
-                  },
-                  items: const [
-                    DropdownMenuItem<LogLevel>(
-                        value: LogLevel.error, child: Text('Error')),
-                    DropdownMenuItem<LogLevel>(
-                        value: LogLevel.warning, child: Text('Warning')),
-                    DropdownMenuItem<LogLevel>(
-                        value: LogLevel.info, child: Text('Info')),
-                    DropdownMenuItem<LogLevel>(
-                        value: LogLevel.debug, child: Text('Debug')),
-                    DropdownMenuItem<LogLevel>(
-                        value: traceLevel, child: Text('Trace')),
-                    DropdownMenuItem<LogLevel>(
-                        value: LogLevel.all, child: Text('All')),
-                  ]),
-            ])),
-          ]),
-        ),
-      ]));
+          ])));
 }

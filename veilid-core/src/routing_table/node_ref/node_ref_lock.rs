@@ -39,7 +39,6 @@ impl<'a, N: NodeRefAccessorsTrait + NodeRefOperateTrait + fmt::Debug + fmt::Disp
         }
     }
 
-    #[expect(dead_code)]
     pub fn unlocked(&self) -> N {
         self.nr.clone()
     }
@@ -87,21 +86,6 @@ impl<N: NodeRefAccessorsTrait + NodeRefOperateTrait + fmt::Debug + fmt::Display 
     fn operate_mut<T, F>(&self, _f: F) -> T
     where
         F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner) -> T,
-    {
-        panic!("need to locked_mut() for this operation")
-    }
-
-    fn with_inner<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&RoutingTableInner) -> T,
-    {
-        let inner = &*self.inner.lock();
-        f(inner)
-    }
-
-    fn with_inner_mut<T, F>(&self, _f: F) -> T
-    where
-        F: FnOnce(&mut RoutingTableInner) -> T,
     {
         panic!("need to locked_mut() for this operation")
     }

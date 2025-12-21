@@ -91,7 +91,7 @@ where
         let (result_sender, result_receiver) = flume::bounded(1);
         let waiting_op = OperationWaitingOp {
             context,
-            timestamp: Timestamp::now(),
+            timestamp: Timestamp::now_non_decreasing(),
             result_sender,
         };
         if inner.waiting_op_table.insert(op_id, waiting_op).is_some() {
@@ -192,7 +192,7 @@ where
                 //xxx: causes crash (Missing otel data span extensions)
                 // Span::current().follows_from(span_id);
 
-                Ok(TimeoutOr::Value((ret, end_ts.saturating_sub(start_ts))))
+                Ok(TimeoutOr::Value((ret, end_ts.duration_since(start_ts))))
             }
             TimeoutOr::Value(Err(e)) => {
                 //

@@ -44,7 +44,7 @@ impl TransferStatsAccounting {
         cur_ts: Timestamp,
         transfer_stats: &mut TransferStatsDownUp,
     ) {
-        let dur_ms = cur_ts.saturating_sub(last_ts) / 1000u64;
+        let dur_ms = cur_ts.duration_since(last_ts).as_u64() / 1000u64;
         while self.rolling_transfers.len() >= ROLLING_TRANSFERS_SIZE {
             self.rolling_transfers.pop_front();
         }
@@ -98,9 +98,9 @@ impl LatencyStatsAccounting {
         } else {
             let mut tm = TimestampDuration::new(0);
             for l in &sorted_latencies[..tmcount] {
-                tm += *l;
+                tm = tm.saturating_add(*l);
             }
-            tm /= tmcount as u64;
+            tm = tm.div(u64::try_from(tmcount).ok()?);
             Some(tm)
         }
     }
@@ -125,11 +125,11 @@ impl LatencyStatsAccounting {
         for rl in &self.rolling_latencies {
             fastest.min_assign(*rl);
             slowest.max_assign(*rl);
-            average += *rl;
+            average.saturating_add_assign(*rl);
         }
-        let len = self.rolling_latencies.len() as u64;
+        let len = u64::try_from(self.rolling_latencies.len()).unwrap_or_default();
         if len > 0 {
-            average /= len;
+            average.div_assign(len);
         }
 
         let mut sorted_latencies: Vec<_> = self.rolling_latencies.iter().copied().collect();

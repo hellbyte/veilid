@@ -240,7 +240,6 @@ impl EventBus {
                         entry
                             .get()
                             .iter()
-                            .cloned()
                             .map(|(_id, handler)| handler(qe.evt.clone()))
                             .collect(),
                     ),

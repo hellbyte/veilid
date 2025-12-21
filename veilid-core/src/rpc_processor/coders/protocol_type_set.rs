@@ -1,32 +1,54 @@
 use super::*;
 
-pub fn encode_protocol_type_set(
-    protocol_type_set: &ProtocolTypeSet,
-    builder: &mut veilid_capnp::protocol_type_set::Builder,
-) -> Result<(), RPCError> {
-    builder.set_udp(protocol_type_set.contains(ProtocolType::UDP));
-    builder.set_tcp(protocol_type_set.contains(ProtocolType::TCP));
-    builder.set_ws(protocol_type_set.contains(ProtocolType::WS));
-    builder.set_wss(protocol_type_set.contains(ProtocolType::WSS));
-
-    Ok(())
-}
+pub const FOURCC_PROTOCOL_TYPE_UDP: u32 = u32::from_be_bytes(*b"pUDP");
+pub const FOURCC_PROTOCOL_TYPE_TCP: u32 = u32::from_be_bytes(*b"pTCP");
+pub const FOURCC_PROTOCOL_TYPE_WS: u32 = u32::from_be_bytes(*b"p_WS");
+#[cfg(feature = "enable-protocol-wss")]
+pub const FOURCC_PROTOCOL_TYPE_WSS: u32 = u32::from_be_bytes(*b"pWSS");
 
 pub fn decode_protocol_type_set(
-    reader: &veilid_capnp::protocol_type_set::Reader,
-) -> Result<ProtocolTypeSet, RPCError> {
+    reader: &::capnp::primitive_list::Reader<'_, u32>,
+) -> ProtocolTypeSet {
     let mut out = ProtocolTypeSet::new();
-    if reader.reborrow().get_udp() {
-        out.insert(ProtocolType::UDP);
+
+    for pt in reader.iter() {
+        match pt {
+            FOURCC_PROTOCOL_TYPE_UDP => {
+                out.insert(ProtocolType::UDP);
+            }
+            FOURCC_PROTOCOL_TYPE_TCP => {
+                out.insert(ProtocolType::TCP);
+            }
+            FOURCC_PROTOCOL_TYPE_WS => {
+                out.insert(ProtocolType::WS);
+            }
+            #[cfg(feature = "enable-protocol-wss")]
+            FOURCC_PROTOCOL_TYPE_WSS => {
+                out.insert(ProtocolType::WSS);
+            }
+            _ => {
+                // skip unknown protocol types
+                continue;
+            }
+        }
     }
-    if reader.reborrow().get_tcp() {
-        out.insert(ProtocolType::TCP);
+    out
+}
+
+pub fn encode_protocol_type_set(
+    protocol_type_set: &ProtocolTypeSet,
+    builder: &mut ::capnp::primitive_list::Builder<'_, u32>,
+) {
+    for (n, x) in protocol_type_set.iter().enumerate() {
+        builder.set(
+            n as u32,
+            match x {
+                ProtocolType::UDP => FOURCC_PROTOCOL_TYPE_UDP,
+                ProtocolType::TCP => FOURCC_PROTOCOL_TYPE_TCP,
+                ProtocolType::WS => FOURCC_PROTOCOL_TYPE_WS,
+                #[cfg(feature = "enable-protocol-wss")]
+                ProtocolType::WSS => FOURCC_PROTOCOL_TYPE_WSS,
+            },
+        );
     }
-    if reader.reborrow().get_ws() {
-        out.insert(ProtocolType::WS);
-    }
-    if reader.reborrow().get_wss() {
-        out.insert(ProtocolType::WSS);
-    }
-    Ok(out)
 }

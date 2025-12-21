@@ -1,13 +1,13 @@
 use super::*;
-use crate::storage_manager::{MAX_RECORD_DATA_SIZE, MAX_SUBKEY_SIZE};
 
 /// Default DHT Schema (DFLT)
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     derive(Tsify),
-    tsify(from_wasm_abi)
+    tsify(from_wasm_abi, into_wasm_abi)
 )]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct DHTSchemaDFLT {
     /// Owner subkey count
@@ -30,6 +30,10 @@ impl DHTSchemaDFLT {
         if self.o_cnt == 0 {
             apibail_invalid_argument!("must have at least one subkey", "o_cnt", self.o_cnt);
         }
+        if self.o_cnt > (DHTSchema::MAX_SUBKEY_COUNT as u16) {
+            apibail_invalid_argument!("too many subkeys", "o_cnt", self.o_cnt);
+        }
+
         Ok(())
     }
 
@@ -55,56 +59,22 @@ impl DHTSchemaDFLT {
     pub fn max_subkey(&self) -> ValueSubkey {
         self.o_cnt as ValueSubkey - 1
     }
+
+    /// Get the subkey count for this schema
+    #[must_use]
+    pub fn subkey_count(&self) -> usize {
+        self.max_subkey() as usize + 1
+    }
+
     /// Get the data size of this schema beyond the size of the structure itself
     #[must_use]
     pub fn data_size(&self) -> usize {
         0
     }
 
-    /// Check a subkey value data against the schema
-    pub fn check_subkey_value_data(
-        &self,
-        owner: &PublicKey,
-        subkey: ValueSubkey,
-        value_data: &ValueData,
-    ) -> VeilidAPIResult<()> {
-        let subkey = subkey as usize;
-
-        // Check if subkey is in owner range
-        if subkey < (self.o_cnt as usize) {
-            // Check value data has valid writer
-            if value_data.writer() == owner {
-                let max_value_len =
-                    usize::min(MAX_SUBKEY_SIZE, MAX_RECORD_DATA_SIZE / self.o_cnt as usize);
-
-                // Ensure value size is within additional limit
-                if value_data.data_size() <= max_value_len {
-                    return Ok(());
-                }
-
-                // Value too big
-                apibail_invalid_argument!(
-                    "value too big",
-                    "data",
-                    format!("{:?}", value_data.data())
-                );
-            }
-
-            // Wrong writer
-            apibail_invalid_argument!(
-                "wrong writer",
-                "writer",
-                format!("{:?}", value_data.writer())
-            );
-        }
-
-        // Subkey out of range
-        apibail_invalid_argument!("subkey out of range", "subkey", subkey);
-    }
-
-    /// Check if a key is a schema member
+    /// Check if a hash is a schema member
     #[must_use]
-    pub fn is_member(&self, _key: &PublicKey) -> bool {
+    pub fn is_member(&self, _member_id: &BareMemberId) -> bool {
         false
     }
 }

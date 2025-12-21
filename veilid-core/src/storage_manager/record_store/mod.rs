@@ -1,57 +1,38 @@
-/// RecordStore
-/// Keeps an LRU cache of dht keys and their associated subkey valuedata.
-/// Instances of this store are used for 'local' (persistent) and 'remote' (ephemeral) dht key storage.
-/// This store does not perform any validation on the schema, and all ValueRecordData passed in must have been previously validated.
-/// Uses an in-memory store for the records, backed by the TableStore. Subkey data is LRU cached and rotated out by a limits policy,
-/// and backed to the TableStore for persistence.
+//! RecordStore
+//! Keeps an LRU cache of dht keys and their associated subkey valuedata.
+//! Instances of this store are used for 'local' (persistent) and 'remote' (ephemeral) dht key storage.
+//! This store does not perform any validation on the schema, and all ValueRecordData passed in must have been previously validated.
+//! Uses an in-memory store for the records, backed by the TableStore. Subkey data is LRU cached and rotated out by a limits policy,
+//! and backed to the TableStore for persistence.
+
+mod debug;
 mod inbound_watch;
-mod inspect_cache;
-mod keys;
-mod limited_size;
-mod local_record_detail;
 mod opened_record;
 mod record;
-mod record_data;
+mod record_snapshot;
+mod record_store_inner;
 mod record_store_limits;
-mod remote_record_detail;
-
-pub(super) use inbound_watch::*;
-pub use inbound_watch::{InboundWatchParameters, InboundWatchResult};
-pub(super) use inspect_cache::*;
-pub(super) use keys::*;
-pub(super) use limited_size::*;
-pub(super) use local_record_detail::*;
-pub(super) use opened_record::*;
-pub(super) use record::*;
-pub(super) use record_store_limits::*;
-pub(super) use remote_record_detail::*;
+mod record_store_locks;
+mod results;
 
 use super::*;
-use record_data::*;
+
+pub(super) use inbound_watch::*;
+pub(super) use opened_record::*;
+pub(super) use record::*;
+pub(super) use record_snapshot::*;
+pub(super) use record_store_inner::{InboundTransactionId, InboundWatchId};
+pub(super) use record_store_limits::*;
+pub(super) use results::*;
+
+use record_store_inner::*;
+use record_store_locks::*;
 
 use hashlink::LruCache;
 
 impl_veilid_log_facility!("stor");
 
-#[derive(Debug, Clone)]
-/// A dead record that is yet to be purged from disk and statistics
-struct DeadRecord<D>
-where
-    D: fmt::Debug + Clone + Serialize + for<'d> Deserialize<'d>,
-{
-    /// The key used in the record_index
-    key: RecordTableKey,
-    /// The actual record
-    record: Record<D>,
-    /// True if this record is accounted for in the total storage
-    /// and needs to have the statistics updated or not when purged
-    in_total_storage: bool,
-}
-
-pub(super) struct RecordStore<D>
-where
-    D: fmt::Debug + Clone + Serialize + for<'d> Deserialize<'d>,
-{
+pub(super) struct RecordStoreUnlockedInner {
     registry: VeilidComponentRegistry,
     name: String,
     limits: RecordStoreLimits,
@@ -60,1343 +41,760 @@ where
     record_table: TableDB,
     /// The tabledb used for subkey data
     subkey_table: TableDB,
-    /// The in-memory index that keeps track of what records are in the tabledb
-    record_index: LruCache<RecordTableKey, Record<D>>,
-    /// The in-memory cache of commonly accessed subkey data so we don't have to keep hitting the db
-    subkey_cache: LruCache<SubkeyTableKey, RecordData>,
-    /// The in-memory cache of commonly accessed sequence number data so we don't have to keep hitting the db
-    inspect_cache: InspectCache,
-    /// Total storage space or subkey data inclusive of structures in memory
-    subkey_cache_total_size: LimitedSize<usize>,
-    /// Total storage space of records in the tabledb inclusive of subkey data and structures
-    total_storage_space: LimitedSize<u64>,
-    /// Records to be removed from the tabledb upon next purge
-    dead_records: Vec<DeadRecord<D>>,
-    /// The list of records that have changed since last flush to disk (optimization for batched writes)
-    changed_records: HashSet<RecordTableKey>,
-    /// The list of records being watched for changes
-    watched_records: HashMap<RecordTableKey, InboundWatchList>,
-    /// The list of watched records that have changed values since last notification
-    changed_watched_values: HashSet<RecordTableKey>,
-    /// A mutex to ensure we handle this concurrently
-    purge_dead_records_mutex: Arc<AsyncMutex<()>>,
+}
+
+/// Record detail trait
+pub(super) trait RecordDetail:
+    fmt::Debug + Clone + PartialEq + Eq + Serialize + for<'d> Deserialize<'d> + GetSize
+{
+    fn is_new(&self) -> bool;
+}
+
+/// Reclaimed space return value
+#[derive(Debug, Clone)]
+pub(super) struct ReclaimedSpace {
+    pub reclaimed: u64,
+    pub total: u64,
+    pub dead_records: Vec<OpaqueRecordKey>,
+}
+
+/// Record store interface
+#[derive(Clone)]
+pub(super) struct RecordStore<D>
+where
+    D: RecordDetail,
+{
+    // Immutable record store data
+    unlocked_inner: Arc<RecordStoreUnlockedInner>,
+
+    // Mutable record store data
+    inner: Arc<Mutex<RecordStoreInner<D>>>,
+
+    // Async record locks
+    record_store_lock_table: RecordStoreRecordLockTable,
 }
 
 impl<D> VeilidComponentRegistryAccessor for RecordStore<D>
 where
-    D: fmt::Debug + Clone + Serialize + for<'d> Deserialize<'d>,
+    D: RecordDetail,
 {
     fn registry(&self) -> VeilidComponentRegistry {
-        self.registry.clone()
+        self.unlocked_inner.registry.clone()
     }
 }
 
 impl<D> fmt::Debug for RecordStore<D>
 where
-    D: fmt::Debug + Clone + Serialize + for<'d> Deserialize<'d>,
+    D: RecordDetail,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RecordStore")
-            .field("name", &self.name)
-            .field("limits", &self.limits)
-            .field("record_table", &self.record_table)
-            .field("subkey_table", &self.subkey_table)
-            .field("record_index", &self.record_index)
-            .field("subkey_cache", &self.subkey_cache)
-            .field("inspect_cache", &self.inspect_cache)
-            .field("subkey_cache_total_size", &self.subkey_cache_total_size)
-            .field("total_storage_space", &self.total_storage_space)
-            .field("dead_records", &self.dead_records)
-            .field("changed_records", &self.changed_records)
-            .field("watched_records", &self.watched_records)
-            .field("changed_watched_values", &self.changed_watched_values)
-            .field("purge_dead_records_mutex", &self.purge_dead_records_mutex)
+            .field("name", &self.unlocked_inner.name)
+            .field("limits", &self.unlocked_inner.limits)
+            .field("inner", &self.inner)
+            .field("record_lock_table", &self.record_store_lock_table)
             .finish()
     }
 }
 
-/// The result of the do_get_value_operation
-#[derive(Default, Clone, Debug)]
-pub struct GetResult {
-    /// The subkey value if we got one
-    pub opt_value: Option<Arc<SignedValueData>>,
-    /// The descriptor if we got a fresh one or empty if no descriptor was needed
-    pub opt_descriptor: Option<Arc<SignedValueDescriptor>>,
-}
-
-/// The result of the do_inspect_value_operation
-#[derive(Default, Clone, Debug)]
-pub struct InspectResult {
-    /// The actual in-schema subkey range being reported on
-    subkeys: ValueSubkeyRangeSet,
-    /// The sequence map
-    seqs: Vec<Option<ValueSeqNum>>,
-    /// The descriptor if we got a fresh one or empty if no descriptor was needed
-    opt_descriptor: Option<Arc<SignedValueDescriptor>>,
-}
-
-impl InspectResult {
-    pub fn new(
-        registry_accessor: &impl VeilidComponentRegistryAccessor,
-        requested_subkeys: ValueSubkeyRangeSet,
-        log_context: &str,
-        subkeys: ValueSubkeyRangeSet,
-        seqs: Vec<Option<ValueSeqNum>>,
-        opt_descriptor: Option<Arc<SignedValueDescriptor>>,
-    ) -> VeilidAPIResult<Self> {
-        #[allow(clippy::unnecessary_cast)]
-        {
-            if subkeys.len() as u64 != seqs.len() as u64 {
-                veilid_log!(registry_accessor error "{}: mismatch between subkeys returned and sequence number list returned: {}!={}", log_context, subkeys.len(), seqs.len());
-                apibail_internal!("list length mismatch");
-            }
-        }
-        if !subkeys.is_subset(&requested_subkeys) {
-            veilid_log!(registry_accessor error "{}: more subkeys returned than requested: {} not a subset of {}", log_context, subkeys, requested_subkeys);
-            apibail_internal!("invalid subkeys returned");
-        }
-        Ok(InspectResult {
-            subkeys,
-            seqs,
-            opt_descriptor,
-        })
-    }
-
-    pub fn strip_none_seqs(&self) -> Self {
-        // Trim inspected subkey range to subkeys we have data for locally
-        let mut trimmed_subkeys = ValueSubkeyRangeSet::new();
-        let mut trimmed_seqs = vec![];
-        for (skn, sk) in self.subkeys.iter().enumerate() {
-            if let Some(seq) = self.seqs[skn] {
-                trimmed_seqs.push(Some(seq));
-                trimmed_subkeys.insert(sk);
-            }
-        }
-
-        Self {
-            subkeys: trimmed_subkeys,
-            seqs: trimmed_seqs,
-            opt_descriptor: self.opt_descriptor.clone(),
-        }
-    }
-
-    pub fn subkeys(&self) -> &ValueSubkeyRangeSet {
-        &self.subkeys
-    }
-    pub fn seqs(&self) -> &[Option<ValueSeqNum>] {
-        &self.seqs
-    }
-    pub fn seqs_mut(&mut self) -> &mut [Option<ValueSeqNum>] {
-        &mut self.seqs
-    }
-    pub fn opt_descriptor(&self) -> Option<Arc<SignedValueDescriptor>> {
-        self.opt_descriptor.clone()
-    }
-    pub fn drop_descriptor(&mut self) {
-        self.opt_descriptor = None;
-    }
-}
+pub(super) type SubkeyValueList = Vec<(ValueSubkey, Arc<SignedValueData>)>;
+pub(super) type RecordSubkeyValueList = Vec<(OpaqueRecordKey, SubkeyValueList)>;
 
 impl<D> RecordStore<D>
 where
-    D: fmt::Debug + Clone + Serialize + for<'d> Deserialize<'d>,
+    D: RecordDetail,
 {
-    pub async fn try_create(
+    pub async fn try_new(
         table_store: &TableStore,
         name: &str,
         limits: RecordStoreLimits,
     ) -> EyreResult<Self> {
-        let subkey_cache_size = limits.subkey_cache_size;
-        let limit_subkey_cache_total_size = limits
-            .max_subkey_cache_memory_mb
-            .map(|mb| mb * 1_048_576usize);
-        let limit_max_storage_space = limits
-            .max_storage_space_mb
-            .map(|mb| mb as u64 * 1_048_576u64);
-
         let record_table = table_store.open(&format!("{}_records", name), 1).await?;
-        let subkey_table = table_store.open(&format!("{}_subkeys", name), 1).await?;
+        let subkey_table = table_store
+            .open_pooled(&format!("{}_subkeys", name), 1, limits.pool_concurrency)
+            .await?;
 
-        let mut out = Self {
-            registry: table_store.registry(),
+        let registry = table_store.registry();
+
+        let unlocked_inner = Arc::new(RecordStoreUnlockedInner {
+            registry,
             name: name.to_owned(),
             limits,
             record_table,
             subkey_table,
-            record_index: LruCache::new(limits.max_records.unwrap_or(usize::MAX)),
-            subkey_cache: LruCache::new(subkey_cache_size),
-            inspect_cache: InspectCache::new(subkey_cache_size),
-            subkey_cache_total_size: LimitedSize::new(
-                table_store.registry(),
-                "subkey_cache_total_size",
-                0,
-                limit_subkey_cache_total_size,
-            ),
-            total_storage_space: LimitedSize::new(
-                table_store.registry(),
-                "total_storage_space",
-                0,
-                limit_max_storage_space,
-            ),
-            dead_records: Vec::new(),
-            changed_records: HashSet::new(),
-            watched_records: HashMap::new(),
-            purge_dead_records_mutex: Arc::new(AsyncMutex::new(())),
-            changed_watched_values: HashSet::new(),
-        };
-
-        out.setup().await?;
-
-        Ok(out)
-    }
-
-    async fn setup(&mut self) -> EyreResult<()> {
-        // Pull record index from table into a vector to ensure we sort them
-        let record_table_keys = self.record_table.get_keys(0).await?;
-        let mut record_index_saved: Vec<(RecordTableKey, Record<D>)> =
-            Vec::with_capacity(record_table_keys.len());
-        for rtk in record_table_keys {
-            if let Some(vr) = self.record_table.load_json::<Record<D>>(0, &rtk).await? {
-                let rik = RecordTableKey::try_from(rtk.as_ref())?;
-                record_index_saved.push((rik, vr));
-            }
-        }
-
-        // Sort the record index by last touched time and insert in sorted order
-        record_index_saved.sort_by(|a, b| a.1.last_touched().cmp(&b.1.last_touched()));
-        let mut dead_records = Vec::<DeadRecord<D>>::new();
-        for ri in record_index_saved {
-            // total the storage space
-            self.total_storage_space
-                .add((mem::size_of::<RecordTableKey>() + ri.1.total_size()) as u64)
-                .unwrap();
-            if self.total_storage_space.commit().is_err() {
-                // Revert the total storage space because the commit failed
-                self.total_storage_space.rollback();
-
-                // If we overflow the limit, kill off the record, noting that it has not yet been added to the total storage space
-                dead_records.push(DeadRecord {
-                    key: ri.0,
-                    record: ri.1,
-                    in_total_storage: false,
-                });
-                continue;
-            }
-
-            // add to index and ensure we deduplicate in the case of an error
-            if let Some(v) = self.record_index.insert_with_callback(ri.0, ri.1, |k, v| {
-                // If the configuration change, we only want to keep the 'limits.max_records' records
-                dead_records.push(DeadRecord {
-                    key: k,
-                    record: v,
-                    in_total_storage: true,
-                });
-            }) {
-                // This shouldn't happen, but deduplicate anyway
-                veilid_log!(self warn "duplicate record in table: {:?}", ri.0);
-                dead_records.push(DeadRecord {
-                    key: ri.0,
-                    record: v,
-                    in_total_storage: true,
-                });
-            }
-        }
-        for dr in dead_records {
-            self.dead_records.push(dr);
-        }
-
-        Ok(())
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    fn add_dead_record(&mut self, key: RecordTableKey, record: Record<D>) {
-        self.dead_records.push(DeadRecord {
-            key,
-            record,
-            in_total_storage: true,
         });
+
+        let inner = RecordStoreInner::<D>::try_new(unlocked_inner.clone()).await?;
+
+        Ok(Self {
+            unlocked_inner,
+            inner: Arc::new(Mutex::new(inner)),
+            record_store_lock_table: RecordStoreRecordLockTable::new(),
+        })
     }
 
     #[instrument(level = "trace", target = "stor", skip_all)]
-    fn add_to_subkey_cache(&mut self, key: SubkeyTableKey, record_data: RecordData) {
-        let record_data_total_size = record_data.total_size();
-        // Write to subkey cache
-        let mut dead_size = 0usize;
-        if let Some(old_record_data) =
-            self.subkey_cache
-                .insert_with_callback(key, record_data, |_, v| {
-                    // LRU out
-                    dead_size += v.total_size();
-                })
-        {
-            // Old data
-            dead_size += old_record_data.total_size();
-        }
-        self.subkey_cache_total_size.sub(dead_size).unwrap();
-        self.subkey_cache_total_size
-            .add(record_data_total_size)
-            .unwrap();
-
-        // Purge over size limit
-        while self.subkey_cache_total_size.commit().is_err() {
-            if let Some((_, v)) = self.subkey_cache.remove_lru() {
-                self.subkey_cache_total_size.saturating_sub(v.total_size());
-            } else {
-                self.subkey_cache_total_size.rollback();
-
-                veilid_log!(self error "subkey cache should not be empty, has {} bytes unaccounted for",self.subkey_cache_total_size.get());
-
-                self.subkey_cache_total_size.set(0);
-                self.subkey_cache_total_size.commit().unwrap();
-                break;
-            }
-        }
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    fn remove_from_subkey_cache(&mut self, key: SubkeyTableKey) {
-        if let Some(dead_record_data) = self.subkey_cache.remove(&key) {
-            self.subkey_cache_total_size
-                .saturating_sub(dead_record_data.total_size());
-            self.subkey_cache_total_size.commit().unwrap();
-        }
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    async fn purge_dead_records(&mut self, lazy: bool) {
-        let purge_dead_records_mutex = self.purge_dead_records_mutex.clone();
-        let _lock = if lazy {
-            match asyncmutex_try_lock!(purge_dead_records_mutex) {
-                Some(v) => v,
-                None => {
-                    // If not ready now, just skip it if we're lazy
-                    return;
-                }
-            }
-        } else {
-            // Not lazy, must wait
-            purge_dead_records_mutex.lock().await
+    pub async fn flush(&self) {
+        let opt_commit_action = self.inner.lock().flush();
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
         };
-
-        // Delete dead keys
-        if self.dead_records.is_empty() {
-            return;
-        }
-
-        let rt_xact = self.record_table.transact();
-        let st_xact = self.subkey_table.transact();
-        let dead_records = mem::take(&mut self.dead_records);
-        for dr in dead_records {
-            // Record should already be gone from index
-            if self.record_index.contains_key(&dr.key) {
-                veilid_log!(self error "dead record found in index: {:?}", dr.key);
-            }
-
-            // Record should have no watches now
-            if self.watched_records.contains_key(&dr.key) {
-                veilid_log!(self error "dead record found in watches: {:?}", dr.key);
-            }
-
-            // Record should have no watch changes now
-            if self.changed_watched_values.contains(&dr.key) {
-                veilid_log!(self error "dead record found in watch changes: {:?}", dr.key);
-            }
-
-            // Delete record
-            if let Err(e) = rt_xact.delete(0, &dr.key.bytes()) {
-                veilid_log!(self error "record could not be deleted: {}", e);
-            }
-
-            // Delete subkeys
-            let stored_subkeys = dr.record.stored_subkeys();
-            for sk in stored_subkeys.iter() {
-                // From table
-                let stk = SubkeyTableKey {
-                    key: dr.key.key,
-                    subkey: sk,
-                };
-                let stkb = stk.bytes();
-                if let Err(e) = st_xact.delete(0, &stkb) {
-                    veilid_log!(self error "subkey could not be deleted: {}", e);
-                }
-
-                // From cache
-                self.remove_from_subkey_cache(stk);
-            }
-
-            // Remove from total size
-            if dr.in_total_storage {
-                self.total_storage_space.saturating_sub(
-                    (mem::size_of::<RecordTableKey>() + dr.record.total_size()) as u64,
-                );
-                self.total_storage_space.commit().unwrap();
-            }
-        }
-        if let Err(e) = rt_xact.commit().await {
-            veilid_log!(self error "failed to commit record table transaction: {}", e);
-        }
-        if let Err(e) = st_xact.commit().await {
-            veilid_log!(self error "failed to commit subkey table transaction: {}", e);
-        }
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    async fn flush_changed_records(&mut self) {
-        if self.changed_records.is_empty() {
-            return;
-        }
-
-        let rt_xact = self.record_table.transact();
-        let changed_records = mem::take(&mut self.changed_records);
-        for rtk in changed_records {
-            // Get the changed record and save it to the table
-            if let Some(r) = self.record_index.peek(&rtk) {
-                if let Err(e) = rt_xact.store_json(0, &rtk.bytes(), r) {
-                    veilid_log!(self error "failed to save record: {}", e);
-                }
-            }
-        }
-        if let Err(e) = rt_xact.commit().await {
-            veilid_log!(self error "failed to commit record table transaction: {}", e);
-        }
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn flush(&mut self) -> EyreResult<()> {
-        self.flush_changed_records().await;
-        self.purge_dead_records(true).await;
-        Ok(())
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
     pub async fn new_record(
-        &mut self,
-        key: TypedRecordKey,
+        &self,
+        opaque_record_key: OpaqueRecordKey,
         record: Record<D>,
     ) -> VeilidAPIResult<()> {
-        let rtk = RecordTableKey { key };
-        if self.record_index.contains_key(&rtk) {
-            apibail_internal!("record already exists");
-        }
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(opaque_record_key.clone(), RecordStoreRecordLockPurpose::New)
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::new_record lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
 
-        // If over size limit, dont create record
-        self.total_storage_space
-            .add((mem::size_of::<RecordTableKey>() + record.total_size()) as u64)
-            .unwrap();
-        if !self.total_storage_space.check_limit() {
-            self.total_storage_space.rollback();
-            apibail_try_again!("out of storage space");
-        }
-
-        // Save to record table
-        self.record_table
-            .store_json(0, &rtk.bytes(), &record)
-            .await
-            .map_err(VeilidAPIError::internal)?;
-
-        // Update storage space (won't fail due to check_limit above)
-        self.total_storage_space.commit().unwrap();
-
-        // Save to record index
-        let mut dead_records = Vec::new();
-        if let Some(v) = self.record_index.insert_with_callback(rtk, record, |k, v| {
-            dead_records.push((k, v));
-        }) {
-            // Shouldn't happen but log it
-            veilid_log!(self warn "new duplicate record in table: {:?}", rtk);
-            self.add_dead_record(rtk, v);
-        }
-        for dr in dead_records {
-            self.add_dead_record(dr.0, dr.1);
-        }
+        let opt_commit_action = self.inner.lock().new_record(opaque_record_key, record)?;
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
+        };
 
         Ok(())
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn delete_record(&mut self, key: TypedRecordKey) -> VeilidAPIResult<()> {
-        // Get the record table key
-        let rtk = RecordTableKey { key };
+    pub async fn delete_record(&self, opaque_record_key: &OpaqueRecordKey) -> VeilidAPIResult<()> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::Delete,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::delete_record lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
 
-        // Remove record from the index
-        let Some(record) = self.record_index.remove(&rtk) else {
-            apibail_key_not_found!(key);
+        let opt_commit_action = self.inner.lock().delete_record(opaque_record_key)?;
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
         };
 
-        // Remove watches
-        self.watched_records.remove(&rtk);
-
-        // Remove watch changes
-        self.changed_watched_values.remove(&rtk);
-
-        // Invalidate inspect cache for this key
-        self.inspect_cache.invalidate(&rtk.key);
-
-        // Remove from table store immediately
-        self.add_dead_record(rtk, record);
-        self.purge_dead_records(false).await;
-
         Ok(())
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn contains_record(&mut self, key: TypedRecordKey) -> bool {
-        let rtk = RecordTableKey { key };
-        self.record_index.contains_key(&rtk)
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn with_record<R, F>(&mut self, key: TypedRecordKey, f: F) -> Option<R>
-    where
-        F: FnOnce(&Record<D>) -> R,
-    {
-        // Get record from index
-        let mut out = None;
-        let rtk = RecordTableKey { key };
-        if let Some(record) = self.record_index.get_mut(&rtk) {
-            // Callback
-            out = Some(f(record));
-
-            // Touch
-            record.touch(Timestamp::now());
-        }
-        if out.is_some() {
-            // Marks as changed because the record was touched and we want to keep the
-            // LRU ordering serialized
-            self.changed_records.insert(rtk);
-        }
-
-        out
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn peek_record<R, F>(&self, key: TypedRecordKey, f: F) -> Option<R>
-    where
-        F: FnOnce(&Record<D>) -> R,
-    {
-        // Get record from index
-        let mut out = None;
-        let rtk = RecordTableKey { key };
-        if let Some(record) = self.record_index.peek(&rtk) {
-            // Callback
-            out = Some(f(record));
-        }
-        out
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) fn with_record_mut<R, F>(&mut self, key: TypedRecordKey, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut Record<D>) -> R,
-    {
-        // Get record from index
-        let mut out = None;
-        let rtk = RecordTableKey { key };
-        if let Some(record) = self.record_index.get_mut(&rtk) {
-            // Callback
-            out = Some(f(record));
-
-            // Touch
-            record.touch(Timestamp::now());
-        }
-        if out.is_some() {
-            // Marks as changed because the record was touched and we want to keep the
-            // LRU ordering serialized
-            self.changed_records.insert(rtk);
-        }
-
-        out
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
     pub async fn get_subkey(
-        &mut self,
-        key: TypedRecordKey,
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
         want_descriptor: bool,
     ) -> VeilidAPIResult<Option<GetResult>> {
-        // Get record from index
-        let Some((subkey_count, has_subkey, opt_descriptor)) = self.with_record(key, |record| {
-            (
-                record.subkey_count(),
-                record.stored_subkeys().contains(subkey),
-                if want_descriptor {
-                    Some(record.descriptor().clone())
+        let _subkey_lock = self
+            .record_store_lock_table
+            .lock_subkey(
+                opaque_record_key.clone(),
+                subkey,
+                RecordStoreSubkeyLockPurpose::Get,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::get_subkey lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        let load_action_result = {
+            let mut inner = self.inner.lock();
+            inner.prepare_get_load_action(opaque_record_key, subkey)
+        };
+
+        match load_action_result {
+            LoadActionResult::NoRecord => Ok(None),
+            LoadActionResult::NoSubkey { descriptor } => Ok(Some(GetResult {
+                opt_value: None,
+                opt_descriptor: if want_descriptor {
+                    Some(descriptor)
                 } else {
                     None
                 },
-            )
-        }) else {
-            // Record not available
-            return Ok(None);
-        };
+            })),
+            LoadActionResult::Subkey {
+                descriptor,
+                mut load_action,
+            } => {
+                let res = load_action.load().await;
+                {
+                    let mut inner = self.inner.lock();
+                    inner.finish_load_action(load_action);
+                }
+                let opt_value = res?.map(|x| x.signed_value_data());
 
-        // Check if the subkey is in range
-        if subkey as usize >= subkey_count {
-            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
+                Ok(Some(GetResult {
+                    opt_value,
+                    opt_descriptor: if want_descriptor {
+                        Some(descriptor)
+                    } else {
+                        None
+                    },
+                }))
+            }
         }
-
-        // See if we have this subkey stored
-        if !has_subkey {
-            // If not, return no value but maybe with descriptor
-            return Ok(Some(GetResult {
-                opt_value: None,
-                opt_descriptor,
-            }));
-        }
-
-        // If subkey exists in subkey cache, use that
-        let stk = SubkeyTableKey { key, subkey };
-        if let Some(record_data) = self.subkey_cache.get(&stk) {
-            let out = record_data.signed_value_data().clone();
-
-            return Ok(Some(GetResult {
-                opt_value: Some(out),
-                opt_descriptor,
-            }));
-        }
-        // If not in cache, try to pull from table store if it is in our stored subkey set
-        let Some(record_data) = self
-            .subkey_table
-            .load_json::<RecordData>(0, &stk.bytes())
-            .await
-            .map_err(VeilidAPIError::internal)?
-        else {
-            apibail_internal!("failed to get subkey that was stored");
-        };
-
-        let out = record_data.signed_value_data().clone();
-
-        // Add to cache, do nothing with lru out
-        self.add_to_subkey_cache(stk, record_data);
-
-        Ok(Some(GetResult {
-            opt_value: Some(out),
-            opt_descriptor,
-        }))
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
     pub async fn peek_subkey(
         &self,
-        key: TypedRecordKey,
+        opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
         want_descriptor: bool,
     ) -> VeilidAPIResult<Option<GetResult>> {
-        // record from index
-        let Some((subkey_count, has_subkey, opt_descriptor)) = self.peek_record(key, |record| {
-            (
-                record.subkey_count(),
-                record.stored_subkeys().contains(subkey),
-                if want_descriptor {
-                    Some(record.descriptor().clone())
+        let _subkey_lock = self
+            .record_store_lock_table
+            .lock_subkey(
+                opaque_record_key.clone(),
+                subkey,
+                RecordStoreSubkeyLockPurpose::Peek,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::peek_subkey lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        let load_action_result = {
+            let mut inner = self.inner.lock();
+            inner.prepare_peek_load_action(opaque_record_key, subkey)
+        };
+
+        match load_action_result {
+            LoadActionResult::NoRecord => Ok(None),
+            LoadActionResult::NoSubkey { descriptor } => Ok(Some(GetResult {
+                opt_value: None,
+                opt_descriptor: if want_descriptor {
+                    Some(descriptor)
                 } else {
                     None
                 },
-            )
-        }) else {
-            // Record not available
-            return Ok(None);
-        };
+            })),
+            LoadActionResult::Subkey {
+                descriptor,
+                mut load_action,
+            } => {
+                let res = load_action.load().await;
+                {
+                    let mut inner = self.inner.lock();
+                    inner.finish_load_action(load_action);
+                }
+                let opt_value = res?.map(|x| x.signed_value_data());
 
-        // Check if the subkey is in range
-        if subkey as usize >= subkey_count {
-            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
+                Ok(Some(GetResult {
+                    opt_value,
+                    opt_descriptor: if want_descriptor {
+                        Some(descriptor)
+                    } else {
+                        None
+                    },
+                }))
+            }
         }
-
-        // See if we have this subkey stored
-        if !has_subkey {
-            // If not, return no value but maybe with descriptor
-            return Ok(Some(GetResult {
-                opt_value: None,
-                opt_descriptor,
-            }));
-        }
-
-        // If subkey exists in subkey cache, use that
-        let stk = SubkeyTableKey { key, subkey };
-        if let Some(record_data) = self.subkey_cache.peek(&stk) {
-            let out = record_data.signed_value_data().clone();
-
-            return Ok(Some(GetResult {
-                opt_value: Some(out),
-                opt_descriptor,
-            }));
-        }
-        // If not in cache, try to pull from table store if it is in our stored subkey set
-        let Some(record_data) = self
-            .subkey_table
-            .load_json::<RecordData>(0, &stk.bytes())
-            .await
-            .map_err(VeilidAPIError::internal)?
-        else {
-            apibail_internal!("failed to peek subkey that was stored");
-        };
-
-        let out = record_data.signed_value_data().clone();
-
-        Ok(Some(GetResult {
-            opt_value: Some(out),
-            opt_descriptor,
-        }))
     }
 
     #[instrument(level = "trace", target = "stor", skip_all)]
-    async fn update_watched_value(
-        &mut self,
-        key: TypedRecordKey,
+    pub async fn set_single_subkey(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
-        watch_update_mode: InboundWatchUpdateMode,
-    ) {
-        let (do_update, opt_ignore_target) = match watch_update_mode {
-            InboundWatchUpdateMode::NoUpdate => (false, None),
-            InboundWatchUpdateMode::UpdateAll => (true, None),
-            InboundWatchUpdateMode::ExcludeTarget(target) => (true, Some(target)),
-        };
-        if !do_update {
-            return;
-        }
-
-        let rtk = RecordTableKey { key };
-        let Some(wr) = self.watched_records.get_mut(&rtk) else {
-            return;
-        };
-
-        // Update all watchers
-        let mut changed = false;
-        for w in &mut wr.watches {
-            // If this watcher is watching the changed subkey then add to the watcher's changed list
-            // Don't bother marking changes for value sets coming from the same watching node/target because they
-            // are already going to be aware of the changes in that case
-            if Some(&w.params.target) != opt_ignore_target.as_ref()
-                && w.params.subkeys.contains(subkey)
-                && w.changed.insert(subkey)
-            {
-                changed = true;
-            }
-        }
-        if changed {
-            self.changed_watched_values.insert(rtk);
-        }
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn set_subkey(
-        &mut self,
-        key: TypedRecordKey,
-        subkey: ValueSubkey,
-        signed_value_data: Arc<SignedValueData>,
+        value: Arc<SignedValueData>,
         watch_update_mode: InboundWatchUpdateMode,
     ) -> VeilidAPIResult<()> {
-        // Check size limit for data
-        if signed_value_data.value_data().data().len() > self.limits.max_subkey_size {
-            apibail_invalid_argument!(
-                "record subkey too large",
-                "signed_value_data.value_data.data.len",
-                signed_value_data.value_data().data().len()
-            );
-        }
+        let _subkey_lock = self
+            .record_store_lock_table
+            .lock_subkey(
+                opaque_record_key.clone(),
+                subkey,
+                RecordStoreSubkeyLockPurpose::Set,
+            )
+            .await;
 
-        // Get record subkey count and total size of all record subkey data exclusive of structures
-        let Some((subkey_count, prior_record_data_size)) = self.with_record(key, |record| {
-            (record.subkey_count(), record.record_data_size())
-        }) else {
-            apibail_invalid_argument!("no record at this key", "key", key);
+        let opt_commit_action = self.inner.lock().set_single_subkey(
+            opaque_record_key,
+            subkey,
+            value,
+            &watch_update_mode,
+        )?;
+
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
         };
 
-        // Check if the subkey is in range
-        if subkey as usize >= subkey_count {
-            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
-        }
+        Ok(())
+    }
 
-        // Get the previous subkey and ensure we aren't going over the record size limit
-        let mut prior_subkey_size = 0usize;
-
-        // If subkey exists in subkey cache, use that
-        let stk = SubkeyTableKey { key, subkey };
-        let stk_bytes = stk.bytes();
-
-        if let Some(record_data) = self.subkey_cache.peek(&stk) {
-            prior_subkey_size = record_data.data_size();
-        } else {
-            // If not in cache, try to pull from table store
-            if let Some(record_data) = self
-                .subkey_table
-                .load_json::<RecordData>(0, &stk_bytes)
-                .await
-                .map_err(VeilidAPIError::internal)?
-            {
-                prior_subkey_size = record_data.data_size();
-            }
-        }
-
-        // Make new record data
-        let subkey_record_data = RecordData::new(signed_value_data);
-
-        // Check new total record size
-        let new_subkey_size = subkey_record_data.data_size();
-        let new_record_data_size = prior_record_data_size - prior_subkey_size + new_subkey_size;
-        if new_record_data_size > self.limits.max_record_total_size {
-            apibail_generic!("dht record too large");
-        }
-
-        // Check new total storage space
-        self.total_storage_space
-            .sub(prior_subkey_size as u64)
-            .unwrap();
-        self.total_storage_space
-            .add(new_subkey_size as u64)
-            .unwrap();
-        if !self.total_storage_space.check_limit() {
-            apibail_try_again!("out of storage space");
-        }
-
-        // Write subkey
-        self.subkey_table
-            .store_json(0, &stk_bytes, &subkey_record_data)
-            .await
-            .map_err(VeilidAPIError::internal)?;
-
-        // Write to inspect cache
-        self.inspect_cache.replace_subkey_seq(
-            &stk.key,
-            subkey,
-            subkey_record_data.signed_value_data().value_data().seq(),
-        );
-
-        // Write to subkey cache
-        self.add_to_subkey_cache(stk, subkey_record_data);
-
-        // Update record
-        self.with_record_mut(key, |record| {
-            record.store_subkey(subkey);
-            record.set_record_data_size(new_record_data_size);
-        })
-        .expect("record should still be here");
-
-        // Update storage space
-        self.total_storage_space.commit().unwrap();
-
-        // Send updates to
-        self.update_watched_value(key, subkey, watch_update_mode)
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub async fn set_subkeys_single_record(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        subkey_values: &SubkeyValueList,
+        watch_update_mode: InboundWatchUpdateMode,
+    ) -> VeilidAPIResult<()> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(opaque_record_key.clone(), RecordStoreRecordLockPurpose::Set)
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::set_subkeys_single_record lock",
+                    self.unlocked_inner.name
+                ),
+            )
             .await;
+
+        let opt_commit_action = self.inner.lock().set_subkeys_single_record(
+            opaque_record_key,
+            subkey_values,
+            &watch_update_mode,
+        )?;
+
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
+        };
+
+        Ok(())
+    }
+
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub async fn set_subkeys_multiple_records(
+        &self,
+        keys_and_subkeys: &RecordSubkeyValueList,
+        watch_update_mode: InboundWatchUpdateMode,
+    ) -> VeilidAPIResult<()> {
+        let _records_lock = self
+            .record_store_lock_table
+            .lock_records(
+                keys_and_subkeys.iter().map(|x| x.0.clone()).collect(),
+                RecordStoreRecordLockPurpose::Set,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::set_subkeys_multiple_records lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        let opt_commit_action = self
+            .inner
+            .lock()
+            .set_subkeys_multiple_records(keys_and_subkeys, &watch_update_mode)?;
+
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
+        };
 
         Ok(())
     }
 
     #[instrument(level = "trace", target = "stor", skip_all, err)]
     pub async fn inspect_record(
-        &mut self,
-        key: TypedRecordKey,
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
         subkeys: &ValueSubkeyRangeSet,
         want_descriptor: bool,
     ) -> VeilidAPIResult<Option<InspectResult>> {
-        // Get record from index
-        let Some((schema_subkeys, opt_descriptor)) = self.with_record(key, |record| {
+        let _peek_lock = self
+            .record_store_lock_table
+            .peek_lock(opaque_record_key.clone())
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::inspect_record lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        let res = self.with_record(opaque_record_key, |record| {
             // Get number of subkeys from schema and ensure we are getting the
             // right number of sequence numbers betwen that and what we asked for
             let schema_subkeys = record
                 .schema()
-                .truncate_subkeys(subkeys, Some(MAX_INSPECT_VALUE_A_SEQS_LEN));
-            (
-                schema_subkeys,
-                if want_descriptor {
-                    Some(record.descriptor().clone())
-                } else {
-                    None
-                },
-            )
-        }) else {
-            // Record not available
-            return Ok(None);
-        };
+                .truncate_subkeys(subkeys, Some(DHTSchema::MAX_SUBKEY_COUNT));
+            let opt_descriptor = if want_descriptor {
+                Some(record.descriptor().clone())
+            } else {
+                None
+            };
 
-        // Check if we can return some subkeys
-        if schema_subkeys.is_empty() {
-            apibail_invalid_argument!(
-                "subkeys set does not overlap schema",
-                "subkeys",
-                schema_subkeys
-            );
-        }
+            // Check if we can return some subkeys
+            if schema_subkeys.is_empty() {
+                // No overlapping keys
+                return Ok(None);
+            }
 
-        // See if we have this inspection cached
-        if let Some(icv) = self.inspect_cache.get(&key, &schema_subkeys) {
-            return Ok(Some(InspectResult::new(
+            // Collect the requested subkey sequence numbers
+            let seqs = schema_subkeys
+                .iter()
+                .map(|subkey| record.subkey_seq(subkey))
+                .collect();
+
+            Ok(Some(InspectResult::new(
                 self,
                 subkeys.clone(),
                 "inspect_record",
-                schema_subkeys.clone(),
-                icv.seqs,
+                schema_subkeys,
+                seqs,
                 opt_descriptor,
-            )?));
+            )?))
+        })?;
+
+        match res {
+            None => Ok(None),
+            Some(out) => out,
         }
+    }
 
-        // Build sequence number list to return
-        #[allow(clippy::unnecessary_cast)]
-        let mut seqs = Vec::with_capacity(schema_subkeys.len() as usize);
-        for subkey in schema_subkeys.iter() {
-            let stk = SubkeyTableKey { key, subkey };
-            let opt_seq = if let Some(record_data) = self.subkey_cache.peek(&stk) {
-                Some(record_data.signed_value_data().value_data().seq())
-            } else {
-                // If not in cache, try to pull from table store if it is in our stored subkey set
-                // XXX: This would be better if it didn't have to pull the whole record data to get the seq.
-                self.subkey_table
-                    .load_json::<RecordData>(0, &stk.bytes())
-                    .await
-                    .map_err(VeilidAPIError::internal)?
-                    .map(|record_data| record_data.signed_value_data().value_data().seq())
-            };
-            seqs.push(opt_seq)
-        }
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub fn peek_record<F, R>(&self, opaque_record_key: &OpaqueRecordKey, func: F) -> Option<R>
+    where
+        F: FnOnce(&Record<D>) -> R,
+    {
+        let inner = self.inner.lock();
+        inner.peek_record(opaque_record_key, func)
+    }
 
-        // Save seqs cache
-        self.inspect_cache.put(
-            key,
-            schema_subkeys.clone(),
-            InspectCacheL2Value { seqs: seqs.clone() },
-        );
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub fn with_record<F, R>(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        func: F,
+    ) -> VeilidAPIResult<Option<R>>
+    where
+        F: FnOnce(&Record<D>) -> R,
+    {
+        let mut inner = self.inner.lock();
+        inner.with_record(opaque_record_key, func)
+    }
 
-        Ok(Some(InspectResult::new(
-            self,
-            subkeys.clone(),
-            "inspect_record",
-            schema_subkeys,
-            seqs,
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub fn with_record_detail_mut<R, F>(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        func: F,
+    ) -> VeilidAPIResult<Option<R>>
+    where
+        F: FnOnce(Arc<SignedValueDescriptor>, &mut D) -> R,
+    {
+        let mut inner = self.inner.lock();
+        inner.with_record_detail_mut(opaque_record_key, func)
+    }
+
+    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    pub fn lookup_inbound_transaction_id(
+        &self,
+        raw_id: u64,
+    ) -> VeilidAPIResult<Option<InboundTransactionId>> {
+        self.inner.lock().lookup_inbound_transaction_id(raw_id)
+    }
+
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn begin_inbound_transaction(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        opt_descriptor: Option<SignedValueDescriptor>,
+        want_descriptor: bool,
+        signing_member_id: MemberId,
+    ) -> VeilidAPIResult<InboundTransactBeginResult> {
+        let record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactBegin,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::begin_inbound_transaction lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        // prepare
+        let begin_res = self.inner.lock().prepare_begin_inbound_transaction(
+            opaque_record_key,
             opt_descriptor,
-        )?))
-    }
+            want_descriptor,
+            signing_member_id,
+        )?;
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn _change_existing_watch(
-        &mut self,
-        key: TypedRecordKey,
-        params: InboundWatchParameters,
-        watch_id: u64,
-    ) -> VeilidAPIResult<InboundWatchResult> {
-        if params.count == 0 {
-            apibail_internal!("cancel watch should not have gotten here");
-        }
-        if params.expiration.as_u64() == 0 {
-            apibail_internal!("zero expiration should have been resolved to max by now");
-        }
-        // Get the watch list for this record
-        let rtk = RecordTableKey { key };
-        let Some(watch_list) = self.watched_records.get_mut(&rtk) else {
-            // No watches, nothing to change
-            return Ok(InboundWatchResult::Rejected);
+        let begin_context = match begin_res {
+            PrepareBeginInboundTransactionResult::Done(inbound_transact_begin_result) => {
+                return Ok(inbound_transact_begin_result);
+            }
+            PrepareBeginInboundTransactionResult::Continue(
+                prepare_begin_inbound_transaction_context,
+            ) => prepare_begin_inbound_transaction_context,
         };
 
-        // Check each watch to see if we have an exact match for the id to change
-        for w in &mut watch_list.watches {
-            // If the watch id doesn't match, then we're not updating
-            // Also do not allow the watcher key to change
-            if w.id == watch_id && w.params.watcher == params.watcher {
-                // Updating an existing watch
-                w.params = params;
-                return Ok(InboundWatchResult::Changed {
-                    expiration: w.params.expiration,
-                });
-            }
-        }
+        // Transaction can be added, so let's get a snapshot if the record exists already
+        let opt_snapshot = self.snapshot_record_locked(&record_lock).await?;
 
-        // No existing watch found
-        Ok(InboundWatchResult::Rejected)
+        // finish
+        self.inner
+            .lock()
+            .finish_begin_inbound_transaction(begin_context, opt_snapshot)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn _create_new_watch(
-        &mut self,
-        key: TypedRecordKey,
-        params: InboundWatchParameters,
-        member_check: Box<dyn Fn(PublicKey) -> bool + Send>,
-    ) -> VeilidAPIResult<InboundWatchResult> {
-        // Generate a record-unique watch id > 0
-        let rtk = RecordTableKey { key };
-        let mut id = 0;
-        while id == 0 {
-            id = get_random_u64();
-        }
-        if let Some(watched_record) = self.watched_records.get_mut(&rtk) {
-            // Make sure it doesn't match any other id (unlikely, but lets be certain)
-            'x: loop {
-                for w in &mut watched_record.watches {
-                    if w.id == id {
-                        loop {
-                            id = id.overflowing_add(1).0;
-                            if id != 0 {
-                                break;
-                            }
-                        }
-                        continue 'x;
-                    }
-                }
-                break;
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn end_inbound_transaction(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        transaction_id: InboundTransactionId,
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
+        let record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactEnd,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::end_inbound_transaction lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        // prepare
+        let end_res = self
+            .inner
+            .lock()
+            .prepare_end_inbound_transaction(opaque_record_key, transaction_id)?;
+
+        let end_context = match end_res {
+            PrepareEndInboundTransactionResult::Done(inbound_transact_end_result) => {
+                return Ok(inbound_transact_end_result);
             }
-        }
-
-        // Calculate watch limits
-        let mut watch_count = 0;
-        let mut target_watch_count = 0;
-
-        let is_member = member_check(params.watcher);
-
-        let rtk = RecordTableKey { key };
-        if let Some(watched_record) = self.watched_records.get_mut(&rtk) {
-            // Total up the number of watches for this key
-            for w in &mut watched_record.watches {
-                // See if this watch should be counted toward any limits
-                let count_watch = if is_member {
-                    // If the watcher is a member of the schema, then consider the total per-watcher key
-                    w.params.watcher == params.watcher
-                } else {
-                    // If the watcher is not a member of the schema, the check if this watch is an anonymous watch and contributes to per-record key total
-                    !member_check(w.params.watcher)
-                };
-
-                // For any watch, if the target matches our also tally that separately
-                // If the watcher is a member of the schema, then consider the total per-target-per-watcher key
-                // If the watcher is not a member of the schema, then it is an anonymous watch and the total is per-target-per-record key
-                if count_watch {
-                    watch_count += 1;
-                    if w.params.target == params.target {
-                        target_watch_count += 1;
-                    }
-                }
-            }
-        }
-
-        // For members, no more than one watch per target per watcher per record
-        // For anonymous, no more than one watch per target per record
-        if target_watch_count > 0 {
-            // Too many watches
-            return Ok(InboundWatchResult::Rejected);
-        }
-
-        // Check watch table for limits
-        let watch_limit = if is_member {
-            self.limits.member_watch_limit
-        } else {
-            self.limits.public_watch_limit
-        };
-        if watch_count >= watch_limit {
-            return Ok(InboundWatchResult::Rejected);
-        }
-
-        // Ok this is an acceptable new watch, add it
-        let watch_list = self.watched_records.entry(rtk).or_default();
-        let expiration = params.expiration;
-        watch_list.watches.push(InboundWatch {
-            params,
-            id,
-            changed: ValueSubkeyRangeSet::new(),
-        });
-        Ok(InboundWatchResult::Created { id, expiration })
-    }
-
-    /// Add or update an inbound record watch for changes
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub async fn watch_record(
-        &mut self,
-        key: TypedRecordKey,
-        mut params: InboundWatchParameters,
-        opt_watch_id: Option<u64>,
-    ) -> VeilidAPIResult<InboundWatchResult> {
-        // If count is zero then we're cancelling a watch completely
-        if params.count == 0 {
-            if let Some(watch_id) = opt_watch_id {
-                let cancelled = self.cancel_watch(key, watch_id, params.watcher).await?;
-                if cancelled {
-                    return Ok(InboundWatchResult::Cancelled);
-                }
-                return Ok(InboundWatchResult::Rejected);
-            }
-            apibail_internal!("shouldn't have let a None watch id get here");
-        }
-
-        // See if expiration timestamp is too far in the future or not enough in the future
-        let cur_ts = get_timestamp();
-        let max_ts = cur_ts + self.limits.max_watch_expiration.as_u64();
-        let min_ts = cur_ts + self.limits.min_watch_expiration.as_u64();
-
-        if params.expiration.as_u64() == 0 || params.expiration.as_u64() > max_ts {
-            // Clamp expiration max time (or set zero expiration to max)
-            params.expiration = Timestamp::new(max_ts);
-        } else if params.expiration.as_u64() < min_ts {
-            // Don't add watches with too low of an expiration time
-            if let Some(watch_id) = opt_watch_id {
-                let cancelled = self.cancel_watch(key, watch_id, params.watcher).await?;
-                if cancelled {
-                    return Ok(InboundWatchResult::Cancelled);
-                }
-            }
-            return Ok(InboundWatchResult::Rejected);
-        }
-
-        // Make a closure to check for member vs anonymous
-        let Some(member_check) = self.with_record(key, |record| {
-            let schema = record.schema();
-            let owner = *record.owner();
-            Box::new(move |watcher| owner == watcher || schema.is_member(&watcher))
-        }) else {
-            // Record not found
-            return Ok(InboundWatchResult::Rejected);
+            PrepareEndInboundTransactionResult::Continue(
+                prepare_end_inbound_transaction_context,
+            ) => prepare_end_inbound_transaction_context,
         };
 
-        // Create or update depending on if a watch id is specified or not
-        if let Some(watch_id) = opt_watch_id {
-            self._change_existing_watch(key, params, watch_id).await
-        } else {
-            self._create_new_watch(key, params, member_check).await
-        }
+        // snapshot
+        let res_opt_end_snapshot = self.snapshot_record_locked(&record_lock).await;
+
+        // finish
+        self.inner
+            .lock()
+            .finish_end_inbound_transaction(end_context, res_opt_end_snapshot)
     }
 
-    /// Clear a specific watch for a record
-    /// returns true if the watch was found and cancelled
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    async fn cancel_watch(
-        &mut self,
-        key: TypedRecordKey,
-        watch_id: u64,
-        watcher: PublicKey,
-    ) -> VeilidAPIResult<bool> {
-        if watch_id == 0 {
-            apibail_internal!("should not have let a zero watch id get here");
-        }
-        // See if we are cancelling an existing watch
-        let rtk = RecordTableKey { key };
-        let mut is_empty = false;
-        let mut ret = false;
-        if let Some(watch_list) = self.watched_records.get_mut(&rtk) {
-            let mut dead_watcher = None;
-            for (wn, w) in watch_list.watches.iter_mut().enumerate() {
-                // Must match the watch id and the watcher key to cancel
-                if w.id == watch_id && w.params.watcher == watcher {
-                    // Canceling an existing watch
-                    dead_watcher = Some(wn);
-                    ret = true;
-                    break;
-                }
-            }
-            if let Some(dw) = dead_watcher {
-                watch_list.watches.remove(dw);
-                if watch_list.watches.is_empty() {
-                    is_empty = true;
-                }
-            }
-        }
-        if is_empty {
-            self.watched_records.remove(&rtk);
-        }
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn commit_inbound_transaction<C: FnOnce() -> D>(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        transaction_id: InboundTransactionId,
+        make_record_detail: C,
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactCommit,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::commit_inbound_transaction lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
 
-        Ok(ret)
+        // prepare
+        let commit_res = self.inner.lock().prepare_commit_inbound_transaction(
+            opaque_record_key,
+            transaction_id,
+            make_record_detail,
+        )?;
+
+        let mut commit_context = match commit_res {
+            PrepareCommitInboundTransactionResult::Done(inbound_transact_commit_result) => {
+                return Ok(inbound_transact_commit_result);
+            }
+            PrepareCommitInboundTransactionResult::Continue(
+                prepare_commit_inbound_transaction_context,
+            ) => prepare_commit_inbound_transaction_context,
+        };
+
+        // commit action
+        if let Some(commit_action) = commit_context.opt_commit_action.take() {
+            self.process_commit_action(commit_action).await;
+        };
+
+        // finish
+        self.inner
+            .lock()
+            .finish_commit_inbound_transaction(commit_context)
     }
 
-    /// Move watches from one store to another
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn rollback_inbound_transaction(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        transaction_id: InboundTransactionId,
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactRollback,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::rollback_inbound_transaction lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        self.inner
+            .lock()
+            .rollback_inbound_transaction(opaque_record_key, transaction_id)
+    }
+
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn inbound_transaction_get(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        transaction_id: InboundTransactionId,
+        opt_subkey: Option<ValueSubkey>,
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactGet,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::inbound_transaction_get lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        self.inner
+            .lock()
+            .inbound_transaction_get(opaque_record_key, transaction_id, opt_subkey)
+    }
+
+    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    pub async fn inbound_transaction_set(
+        &self,
+        opaque_record_key: &OpaqueRecordKey,
+        transaction_id: InboundTransactionId,
+        subkey: ValueSubkey,
+        value: Arc<SignedValueData>,
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
+        let _record_lock = self
+            .record_store_lock_table
+            .lock_record(
+                opaque_record_key.clone(),
+                RecordStoreRecordLockPurpose::TransactSet,
+            )
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(
+                    self,
+                    "RecordStore({})::inbound_transaction_set lock",
+                    self.unlocked_inner.name
+                ),
+            )
+            .await;
+
+        self.inner
+            .lock()
+            .inbound_transaction_set(opaque_record_key, transaction_id, subkey, value)
+    }
+
+    /// See if any inbound transactions have expired and clear them out
     #[instrument(level = "trace", target = "stor", skip_all)]
-    pub fn move_watches(
-        &mut self,
-        key: TypedRecordKey,
-        in_watch: Option<(InboundWatchList, bool)>,
-    ) -> Option<(InboundWatchList, bool)> {
-        let rtk = RecordTableKey { key };
-        let out = self.watched_records.remove(&rtk);
-        if let Some(in_watch) = in_watch {
-            self.watched_records.insert(rtk, in_watch.0);
-            if in_watch.1 {
-                self.changed_watched_values.insert(rtk);
-            }
-        }
-        let is_watched = self.changed_watched_values.remove(&rtk);
-        out.map(|r| (r, is_watched))
-    }
-
-    /// See if any watched records have expired and clear them out
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub fn check_watched_records(&mut self) {
-        let now = Timestamp::now();
-        self.watched_records.retain(|key, watch_list| {
-            watch_list.watches.retain(|w| {
-                w.params.count != 0 && w.params.expiration > now && !w.params.subkeys.is_empty()
-            });
-            if watch_list.watches.is_empty() {
-                // If we're removing the watched record, drop any changed watch values too
-                self.changed_watched_values.remove(key);
-                false
-            } else {
-                true
-            }
-        });
-    }
-
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn take_value_changes(&mut self, changes: &mut Vec<ValueChangedInfo>) {
-        // ValueChangedInfo but without the subkey data that requires a double mutable borrow to get
-        struct EarlyValueChangedInfo {
-            target: Target,
-            key: TypedRecordKey,
-            subkeys: ValueSubkeyRangeSet,
-            count: u32,
-            watch_id: u64,
-        }
-
-        let mut evcis = vec![];
-        let mut empty_watched_records = vec![];
-        for rtk in self.changed_watched_values.drain() {
-            if let Some(watch) = self.watched_records.get_mut(&rtk) {
-                // Process watch notifications
-                let mut dead_watchers = vec![];
-                for (wn, w) in watch.watches.iter_mut().enumerate() {
-                    // Get the subkeys that have changed
-                    let subkeys = w.changed.clone();
-
-                    // If no subkeys on this watcher have changed then skip it
-                    if subkeys.is_empty() {
-                        continue;
-                    }
-
-                    w.changed.clear();
-
-                    // Reduce the count of changes sent
-                    // if count goes to zero mark this watcher dead
-                    w.params.count -= 1;
-                    let count = w.params.count;
-                    if count == 0 {
-                        dead_watchers.push(wn);
-                    }
-
-                    evcis.push(EarlyValueChangedInfo {
-                        target: w.params.target,
-                        key: rtk.key,
-                        subkeys,
-                        count,
-                        watch_id: w.id,
-                    });
-                }
-
-                // Remove in reverse so we don't have to offset the index to remove the right key
-                for dw in dead_watchers.iter().rev().copied() {
-                    watch.watches.remove(dw);
-                    if watch.watches.is_empty() {
-                        empty_watched_records.push(rtk);
-                    }
-                }
-            }
-        }
-        for ewr in empty_watched_records {
-            self.watched_records.remove(&ewr);
-        }
-
-        for evci in evcis {
-            // Get the first subkey data
-            let Some(first_subkey) = evci.subkeys.first() else {
-                veilid_log!(self error "first subkey should exist for value change notification");
-                continue;
-            };
-            let get_result = match self.get_subkey(evci.key, first_subkey, false).await {
-                Ok(Some(skr)) => skr,
-                Ok(None) => {
-                    veilid_log!(self error "subkey should have data for value change notification");
-                    continue;
-                }
-                Err(e) => {
-                    veilid_log!(self error "error getting subkey data for value change notification: {}", e);
-                    continue;
-                }
-            };
-            let Some(value) = get_result.opt_value else {
-                veilid_log!(self error "first subkey should have had value for value change notification");
-                continue;
-            };
-
-            changes.push(ValueChangedInfo {
-                target: evci.target,
-                record_key: evci.key,
-                subkeys: evci.subkeys,
-                count: evci.count,
-                watch_id: evci.watch_id,
-                value: Some(value),
-            });
-        }
+    pub fn drop_expired_inbound_transactions(&self) {
+        self.inner.lock().drop_expired_inbound_transactions();
     }
 
     /// LRU out some records until we reclaim the amount of space requested
     /// This will force a garbage collection of the space immediately
-    /// If zero is passed in here, a garbage collection will be performed of dead records
-    /// without removing any live records
+    /// If zero is passed in here, it is equivalent to flush()
     #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn reclaim_space(&mut self, space: usize) -> usize {
-        let mut reclaimed = 0usize;
-        while reclaimed < space {
-            if let Some((k, v)) = self.record_index.remove_lru() {
-                reclaimed += mem::size_of::<RecordTableKey>();
-                reclaimed += v.total_size();
-                self.add_dead_record(k, v);
-            } else {
-                break;
-            }
-        }
-        self.purge_dead_records(false).await;
-        reclaimed
-    }
-
-    pub fn debug_records(&self) -> String {
-        // Dump fields in an abbreviated way
-        let mut out = String::new();
-
-        out += "Record Index:\n";
-        for (rik, rec) in &self.record_index {
-            out += &format!(
-                "  {} age={} len={} subkeys={}\n",
-                rik.key,
-                display_duration(get_timestamp() - rec.last_touched().as_u64()),
-                rec.record_data_size(),
-                rec.stored_subkeys(),
-            );
-        }
-        out += &format!("Subkey Cache Count: {}\n", self.subkey_cache.len());
-        out += &format!(
-            "Subkey Cache Total Size: {}\n",
-            self.subkey_cache_total_size.get()
-        );
-        out += &format!("Total Storage Space: {}\n", self.total_storage_space.get());
-        out += &format!("Dead Records: {}\n", self.dead_records.len());
-        for dr in &self.dead_records {
-            out += &format!("  {}\n", dr.key.key);
-        }
-        out += &format!("Changed Records: {}\n", self.changed_records.len());
-        for cr in &self.changed_records {
-            out += &format!("  {}\n", cr.key);
-        }
-
-        out
-    }
-
-    pub fn debug_record_info(&self, key: TypedRecordKey) -> String {
-        let record_info = self
-            .peek_record(key, |r| format!("{:#?}", r))
-            .unwrap_or("Not found".to_owned());
-        let watched_record = match self.watched_records.get(&RecordTableKey { key }) {
-            Some(w) => {
-                format!("Remote Watches: {:#?}", w)
-            }
-            None => "No remote watches".to_owned(),
+    pub async fn reclaim_space(&self, space: u64) -> ReclaimedSpace {
+        let (opt_commit_action, reclaimed_space) = {
+            let mut inner = self.inner.lock();
+            inner.reclaim_space(space)
         };
-        format!("{}\n{}\n", record_info, watched_record)
+        if let Some(commit_action) = opt_commit_action {
+            self.process_commit_action(commit_action).await;
+        };
+
+        veilid_log!(self debug "RecordStore({}): Reclaimed space ({} requested, {} reclaimed, {} total)", self.unlocked_inner.name, space, reclaimed_space.reclaimed, reclaimed_space.total);
+
+        reclaimed_space
     }
 
-    pub async fn debug_record_subkey_info(
-        &self,
-        key: TypedRecordKey,
-        subkey: ValueSubkey,
-    ) -> String {
-        match self.peek_subkey(key, subkey, true).await {
-            Ok(Some(v)) => {
-                format!("{:#?}", v)
-            }
-            Ok(None) => "Subkey not available".to_owned(),
-            Err(e) => format!("{}", e),
+    //////////////////////////////////////////////////////////////////////////////////
+
+    async fn process_commit_action(&self, mut commit_action: CommitAction<D>) {
+        if let Err(e) = commit_action.commit().await {
+            veilid_log!(self error "Error committing record index: {}", e);
         }
+
+        let res = {
+            let mut inner = self.inner.lock();
+            inner.finish_commit_action(commit_action)
+        };
+
+        if let Err(e) = res {
+            veilid_log!(self error "Error finishing record index commit: {}", e);
+        }
+    }
+
+    #[instrument(level = "trace", target = "stor", skip_all)]
+    pub(super) fn contains_record(&self, opaque_record_key: &OpaqueRecordKey) -> bool {
+        self.inner
+            .lock()
+            .peek_record(opaque_record_key, |_| true)
+            .unwrap_or_default()
     }
 }

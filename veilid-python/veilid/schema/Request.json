@@ -1,14 +1,19 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Request",
   "type": "object",
+  "properties": {
+    "id": {
+      "description": "Operation Id (pairs with Response, or empty if unidirectional).",
+      "type": "integer",
+      "format": "uint32",
+      "default": 0,
+      "minimum": 0
+    }
+  },
   "oneOf": [
     {
       "type": "object",
-      "required": [
-        "args",
-        "op"
-      ],
       "properties": {
         "args": {
           "type": "array",
@@ -18,88 +23,118 @@
         },
         "op": {
           "type": "string",
-          "enum": [
-            "Control"
-          ]
+          "const": "Control"
         }
-      }
+      },
+      "required": [
+        "op",
+        "args"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "GetState"
-          ]
+          "const": "GetState"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "IsShutdown"
-          ]
+          "const": "IsShutdown"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "Attach"
-          ]
+          "const": "Attach"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "Detach"
-          ]
+          "const": "Detach"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "NewPrivateRoute"
-          ]
+          "const": "GenerateMemberId"
+        },
+        "writer_key": {
+          "type": "string"
         }
-      }
+      },
+      "required": [
+        "op",
+        "writer_key"
+      ]
     },
     {
       "type": "object",
+      "properties": {
+        "encryption_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "type": "string",
+          "const": "GetDhtRecordKey"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/DHTSchema"
+        }
+      },
       "required": [
-        "kinds",
+        "op",
+        "schema",
+        "owner"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "NewPrivateRoute"
+        }
+      },
+      "required": [
         "op"
-      ],
+      ]
+    },
+    {
+      "type": "object",
       "properties": {
         "kinds": {
           "type": "array",
@@ -109,71 +144,56 @@
         },
         "op": {
           "type": "string",
-          "enum": [
-            "NewCustomPrivateRoute"
-          ]
+          "const": "NewCustomPrivateRoute"
         },
         "sequencing": {
-          "default": "NoPreference",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Sequencing"
-            }
-          ]
+          "$ref": "#/$defs/Sequencing",
+          "default": "NoPreference"
         },
         "stability": {
-          "default": "LowLatency",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Stability"
-            }
-          ]
+          "$ref": "#/$defs/Stability",
+          "default": "LowLatency"
         }
-      }
+      },
+      "required": [
+        "op",
+        "kinds"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "blob",
-        "op"
-      ],
       "properties": {
         "blob": {
           "type": "string"
         },
         "op": {
           "type": "string",
-          "enum": [
-            "ImportRemotePrivateRoute"
-          ]
+          "const": "ImportRemotePrivateRoute"
         }
-      }
+      },
+      "required": [
+        "op",
+        "blob"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op",
-        "route_id"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "ReleasePrivateRoute"
-          ]
+          "const": "ReleasePrivateRoute"
         },
         "route_id": {
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "op",
+        "route_id"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "call_id",
-        "message",
-        "op"
-      ],
       "properties": {
         "call_id": {
           "type": "string"
@@ -183,1317 +203,177 @@
         },
         "op": {
           "type": "string",
-          "enum": [
-            "AppCallReply"
-          ]
+          "const": "AppCallReply"
         }
-      }
-    },
-    {
-      "type": "object",
-      "required": [
-        "op"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "enum": [
-            "NewRoutingContext"
-          ]
-        }
-      }
-    },
-    {
-      "type": "object",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "rc_op"
-          ],
-          "properties": {
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "Release"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "rc_op"
-          ],
-          "properties": {
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "WithDefaultSafety"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "rc_op",
-            "safety_selection"
-          ],
-          "properties": {
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "WithSafety"
-              ]
-            },
-            "safety_selection": {
-              "$ref": "#/definitions/SafetySelection"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "rc_op",
-            "sequencing"
-          ],
-          "properties": {
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "WithSequencing"
-              ]
-            },
-            "sequencing": {
-              "$ref": "#/definitions/Sequencing"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "rc_op"
-          ],
-          "properties": {
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "Safety"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "message",
-            "rc_op",
-            "target"
-          ],
-          "properties": {
-            "message": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "AppCall"
-              ]
-            },
-            "target": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "message",
-            "rc_op",
-            "target"
-          ],
-          "properties": {
-            "message": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "AppMessage"
-              ]
-            },
-            "target": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "rc_op",
-            "schema"
-          ],
-          "properties": {
-            "kind": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "owner": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "CreateDhtRecord"
-              ]
-            },
-            "schema": {
-              "$ref": "#/definitions/DHTSchema"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "OpenDhtRecord"
-              ]
-            },
-            "writer": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "CloseDhtRecord"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "DeleteDhtRecord"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "force_refresh",
-            "key",
-            "rc_op",
-            "subkey"
-          ],
-          "properties": {
-            "force_refresh": {
-              "type": "boolean"
-            },
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "GetDhtValue"
-              ]
-            },
-            "subkey": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "data",
-            "key",
-            "rc_op",
-            "subkey"
-          ],
-          "properties": {
-            "data": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "options": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/SetDHTValueOptions"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "SetDhtValue"
-              ]
-            },
-            "subkey": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "count": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "expiration": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "WatchDhtValues"
-              ]
-            },
-            "subkeys": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "array",
-                "items": [
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  },
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  }
-                ],
-                "maxItems": 2,
-                "minItems": 2
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "CancelDhtWatch"
-              ]
-            },
-            "subkeys": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "array",
-                "items": [
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  },
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  }
-                ],
-                "maxItems": 2,
-                "minItems": 2
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "key",
-            "rc_op"
-          ],
-          "properties": {
-            "key": {
-              "type": "string"
-            },
-            "rc_op": {
-              "type": "string",
-              "enum": [
-                "InspectDhtRecord"
-              ]
-            },
-            "scope": {
-              "default": "Local",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/DHTReportScope"
-                }
-              ]
-            },
-            "subkeys": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "array",
-                "items": [
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  },
-                  {
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0.0
-                  }
-                ],
-                "maxItems": 2,
-                "minItems": 2
-              }
-            }
-          }
-        }
-      ],
+      },
       "required": [
         "op",
-        "rc_id"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "enum": [
-            "RoutingContext"
-          ]
-        },
-        "rc_id": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        }
-      }
+        "call_id",
+        "message"
+      ]
     },
     {
       "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "NewRoutingContext"
+        }
+      },
       "required": [
-        "column_count",
-        "name",
         "op"
-      ],
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "RoutingContext"
+        }
+      },
+      "$ref": "#/$defs/RoutingContextRequest",
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "TransactDhtRecords"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TransactDHTRecordsOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "op",
+        "record_keys"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "DhtTransaction"
+        }
+      },
+      "$ref": "#/$defs/DhtTransactionRequest",
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
       "properties": {
         "column_count": {
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "name": {
           "type": "string"
         },
         "op": {
           "type": "string",
-          "enum": [
-            "OpenTableDb"
-          ]
+          "const": "OpenTableDb"
         }
-      }
-    },
-    {
-      "type": "object",
-      "required": [
-        "name",
-        "op"
-      ],
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "op": {
-          "type": "string",
-          "enum": [
-            "DeleteTableDb"
-          ]
-        }
-      }
-    },
-    {
-      "type": "object",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "db_op"
-          ],
-          "properties": {
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "Release"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "db_op"
-          ],
-          "properties": {
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "GetColumnCount"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "db_op"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "GetKeys"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "db_op"
-          ],
-          "properties": {
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "Transact"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "db_op",
-            "key",
-            "value"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "Store"
-              ]
-            },
-            "key": {
-              "type": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "db_op",
-            "key"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "Load"
-              ]
-            },
-            "key": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "db_op",
-            "key"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "db_op": {
-              "type": "string",
-              "enum": [
-                "Delete"
-              ]
-            },
-            "key": {
-              "type": "string"
-            }
-          }
-        }
-      ],
-      "required": [
-        "db_id",
-        "op"
-      ],
-      "properties": {
-        "db_id": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "op": {
-          "type": "string",
-          "enum": [
-            "TableDb"
-          ]
-        }
-      }
-    },
-    {
-      "type": "object",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "tx_op"
-          ],
-          "properties": {
-            "tx_op": {
-              "type": "string",
-              "enum": [
-                "Commit"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "tx_op"
-          ],
-          "properties": {
-            "tx_op": {
-              "type": "string",
-              "enum": [
-                "Rollback"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "key",
-            "tx_op",
-            "value"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "key": {
-              "type": "string"
-            },
-            "tx_op": {
-              "type": "string",
-              "enum": [
-                "Store"
-              ]
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "col",
-            "key",
-            "tx_op"
-          ],
-          "properties": {
-            "col": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "key": {
-              "type": "string"
-            },
-            "tx_op": {
-              "type": "string",
-              "enum": [
-                "Delete"
-              ]
-            }
-          }
-        }
-      ],
+      },
       "required": [
         "op",
-        "tx_id"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "enum": [
-            "TableDbTransaction"
-          ]
-        },
-        "tx_id": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        }
-      }
+        "name",
+        "column_count"
+      ]
     },
     {
       "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "const": "DeleteTableDb"
+        }
+      },
       "required": [
-        "kind",
+        "op",
+        "name"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "TableDb"
+        }
+      },
+      "$ref": "#/$defs/TableDbRequest",
+      "required": [
         "op"
-      ],
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "TableDbTransaction"
+        }
+      },
+      "$ref": "#/$defs/TableDbTransactionRequest",
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
       "properties": {
         "kind": {
           "type": "string"
         },
         "op": {
           "type": "string",
-          "enum": [
-            "GetCryptoSystem"
-          ]
+          "const": "GetCryptoSystem"
         }
-      }
-    },
-    {
-      "type": "object",
+      },
       "required": [
-        "op"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "enum": [
-            "BestCryptoSystem"
-          ]
-        }
-      }
-    },
-    {
-      "type": "object",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "Release"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "Kind"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "key",
-            "secret"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "CachedDh"
-              ]
-            },
-            "key": {
-              "type": "string"
-            },
-            "secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "key",
-            "secret"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "ComputeDh"
-              ]
-            },
-            "key": {
-              "type": "string"
-            },
-            "secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "domain",
-            "key",
-            "secret"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "GenerateSharedSecret"
-              ]
-            },
-            "domain": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "len"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "RandomBytes"
-              ]
-            },
-            "len": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "DefaultSaltLength"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "password",
-            "salt"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "HashPassword"
-              ]
-            },
-            "password": {
-              "type": "string"
-            },
-            "salt": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "password",
-            "password_hash"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "VerifyPassword"
-              ]
-            },
-            "password": {
-              "type": "string"
-            },
-            "password_hash": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "password",
-            "salt"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "DeriveSharedSecret"
-              ]
-            },
-            "password": {
-              "type": "string"
-            },
-            "salt": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "RandomNonce"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "RandomSharedSecret"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "GenerateKeyPair"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "data"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "GenerateHash"
-              ]
-            },
-            "data": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "key",
-            "secret"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "ValidateKeyPair"
-              ]
-            },
-            "key": {
-              "type": "string"
-            },
-            "secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "data",
-            "hash_digest"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "ValidateHash"
-              ]
-            },
-            "data": {
-              "type": "string"
-            },
-            "hash_digest": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "key1",
-            "key2"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "Distance"
-              ]
-            },
-            "key1": {
-              "type": "string"
-            },
-            "key2": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "data",
-            "key",
-            "secret"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "Sign"
-              ]
-            },
-            "data": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op",
-            "data",
-            "key",
-            "signature"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "Verify"
-              ]
-            },
-            "data": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "signature": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "cs_op"
-          ],
-          "properties": {
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "AeadOverhead"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "body",
-            "cs_op",
-            "nonce",
-            "shared_secret"
-          ],
-          "properties": {
-            "associated_data": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "body": {
-              "type": "string"
-            },
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "DecryptAead"
-              ]
-            },
-            "nonce": {
-              "type": "string"
-            },
-            "shared_secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "body",
-            "cs_op",
-            "nonce",
-            "shared_secret"
-          ],
-          "properties": {
-            "associated_data": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "body": {
-              "type": "string"
-            },
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "EncryptAead"
-              ]
-            },
-            "nonce": {
-              "type": "string"
-            },
-            "shared_secret": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "body",
-            "cs_op",
-            "nonce",
-            "shared_secret"
-          ],
-          "properties": {
-            "body": {
-              "type": "string"
-            },
-            "cs_op": {
-              "type": "string",
-              "enum": [
-                "CryptNoAuth"
-              ]
-            },
-            "nonce": {
-              "type": "string"
-            },
-            "shared_secret": {
-              "type": "string"
-            }
-          }
-        }
-      ],
-      "required": [
-        "cs_id",
-        "op"
-      ],
-      "properties": {
-        "cs_id": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "op": {
-          "type": "string",
-          "enum": [
-            "CryptoSystem"
-          ]
-        }
-      }
-    },
-    {
-      "type": "object",
-      "required": [
-        "data",
-        "node_ids",
         "op",
-        "signatures"
-      ],
+        "kind"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "CryptoSystem"
+        }
+      },
+      "$ref": "#/$defs/CryptoSystemRequest",
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
       "properties": {
         "data": {
           "type": "string"
@@ -1506,9 +386,7 @@
         },
         "op": {
           "type": "string",
-          "enum": [
-            "VerifySignatures"
-          ]
+          "const": "VerifySignatures"
         },
         "signatures": {
           "type": "array",
@@ -1516,15 +394,16 @@
             "type": "string"
           }
         }
-      }
+      },
+      "required": [
+        "op",
+        "node_ids",
+        "data",
+        "signatures"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "data",
-        "key_pairs",
-        "op"
-      ],
       "properties": {
         "data": {
           "type": "string"
@@ -1537,169 +416,748 @@
         },
         "op": {
           "type": "string",
-          "enum": [
-            "GenerateSignatures"
-          ]
+          "const": "GenerateSignatures"
         }
-      }
+      },
+      "required": [
+        "op",
+        "data",
+        "key_pairs"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "kind",
-        "op"
-      ],
       "properties": {
         "kind": {
           "type": "string"
         },
         "op": {
           "type": "string",
-          "enum": [
-            "GenerateKeyPair"
-          ]
+          "const": "GenerateKeyPair"
         }
-      }
+      },
+      "required": [
+        "op",
+        "kind"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "Now"
-          ]
+          "const": "Now"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "command",
-        "op"
-      ],
       "properties": {
         "command": {
           "type": "string"
         },
         "op": {
           "type": "string",
-          "enum": [
-            "Debug"
-          ]
+          "const": "Debug"
         }
-      }
+      },
+      "required": [
+        "op",
+        "command"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "VeilidVersionString"
-          ]
+          "const": "VeilidVersionString"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "VeilidVersion"
-          ]
+          "const": "VeilidVersion"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "VeilidFeatures"
-          ]
+          "const": "VeilidFeatures"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
       "properties": {
         "op": {
           "type": "string",
-          "enum": [
-            "DefaultVeilidConfig"
-          ]
+          "const": "DefaultVeilidConfig"
         }
-      }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "ValidCryptoKinds"
+        }
+      },
+      "required": [
+        "op"
+      ]
     }
   ],
-  "properties": {
-    "id": {
-      "description": "Operation Id (pairs with Response, or empty if unidirectional).",
-      "default": 0,
-      "type": "integer",
-      "format": "uint32",
-      "minimum": 0.0
-    }
-  },
-  "definitions": {
+  "$defs": {
     "AllowOffline": {
       "type": "boolean"
+    },
+    "CryptoSystemRequest": {
+      "type": "object",
+      "properties": {
+        "cs_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "Release"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "Kind"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CachedDh"
+            },
+            "key": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "ComputeDh"
+            },
+            "key": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "GenerateSharedSecret"
+            },
+            "domain": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "secret",
+            "domain"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "RandomBytes"
+            },
+            "len": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "cs_op",
+            "len"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "SharedSecretLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "NonceLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "HashDigestLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "PublicKeyLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "SecretKeyLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "SignatureLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "DefaultSaltLength"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "AeadOverhead"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckSharedSecret"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckNonce"
+            },
+            "nonce": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "nonce"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckHashDigest"
+            },
+            "digest": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckPublicKey"
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckSecretKey"
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "CheckSignature"
+            },
+            "signature": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "signature"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "HashPassword"
+            },
+            "password": {
+              "type": "string"
+            },
+            "salt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "password",
+            "salt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "VerifyPassword"
+            },
+            "password": {
+              "type": "string"
+            },
+            "password_hash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "password",
+            "password_hash"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "DeriveSharedSecret"
+            },
+            "password": {
+              "type": "string"
+            },
+            "salt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "password",
+            "salt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "RandomNonce"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "RandomSharedSecret"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "GenerateKeyPair"
+            }
+          },
+          "required": [
+            "cs_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "GenerateHash"
+            },
+            "data": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "ValidateKeyPair"
+            },
+            "key": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "ValidateHash"
+            },
+            "data": {
+              "type": "string"
+            },
+            "hash_digest": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "data",
+            "hash_digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "Sign"
+            },
+            "data": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "secret",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cs_op": {
+              "type": "string",
+              "const": "Verify"
+            },
+            "data": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "signature": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "key",
+            "data",
+            "signature"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "associated_data": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "cs_op": {
+              "type": "string",
+              "const": "DecryptAead"
+            },
+            "nonce": {
+              "type": "string"
+            },
+            "shared_secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "body",
+            "nonce",
+            "shared_secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "associated_data": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "cs_op": {
+              "type": "string",
+              "const": "EncryptAead"
+            },
+            "nonce": {
+              "type": "string"
+            },
+            "shared_secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "body",
+            "nonce",
+            "shared_secret"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "cs_op": {
+              "type": "string",
+              "const": "CryptNoAuth"
+            },
+            "nonce": {
+              "type": "string"
+            },
+            "shared_secret": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cs_op",
+            "body",
+            "nonce",
+            "shared_secret"
+          ]
+        }
+      ],
+      "required": [
+        "cs_id"
+      ]
     },
     "DHTReportScope": {
       "description": "DHT Record Report Scope",
       "oneOf": [
         {
-          "description": "Return only the local copy sequence numbers Useful for seeing what subkeys you have locally and which ones have not been retrieved",
+          "description": "Return only the local copy sequence numbers\nUseful for seeing what subkeys you have locally and which ones have not been retrieved",
           "type": "string",
-          "enum": [
-            "Local"
-          ]
+          "const": "Local"
         },
         {
-          "description": "Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters Provides an independent view of both the local sequence numbers and the network sequence numbers for nodes that would be reached as if the local copy did not exist locally. Useful for determining if the current local copy should be updated from the network.",
+          "description": "Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters\nProvides an independent view of both the local sequence numbers and the network sequence numbers for nodes that\nwould be reached as if the local copy did not exist locally.\nUseful for determining if the current local copy should be updated from the network.",
           "type": "string",
-          "enum": [
-            "SyncGet"
-          ]
+          "const": "SyncGet"
         },
         {
-          "description": "Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters Provides an independent view of both the local sequence numbers and the network sequence numbers for nodes that would be reached as if the local copy did not exist locally. Useful for determining if the unchanged local copy should be pushed to the network.",
+          "description": "Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters\nProvides an independent view of both the local sequence numbers and the network sequence numbers for nodes that\nwould be reached as if the local copy did not exist locally.\nUseful for determining if the unchanged local copy should be pushed to the network.",
           "type": "string",
-          "enum": [
-            "SyncSet"
-          ]
+          "const": "SyncSet"
         },
         {
-          "description": "Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters Provides an view of both the local sequence numbers and the network sequence numbers for nodes that would be reached as if a GetValue operation were being performed, including accepting newer values from the network. Useful for determining which subkeys would change with a GetValue operation",
+          "description": "Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters\nProvides an view of both the local sequence numbers and the network sequence numbers for nodes that\nwould be reached as if a GetValue operation were being performed, including accepting newer values from the network.\nUseful for determining which subkeys would change with a GetValue operation",
           "type": "string",
-          "enum": [
-            "UpdateGet"
-          ]
+          "const": "UpdateGet"
         },
         {
-          "description": "Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters Provides an view of both the local sequence numbers and the network sequence numbers for nodes that would be reached as if a SetValue operation were being performed, including accepting newer values from the network. This simulates a SetValue with the initial sequence number incremented by 1, like a real SetValue would when updating. Useful for determine which subkeys would change on an SetValue operation",
+          "description": "Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters\nProvides an view of both the local sequence numbers and the network sequence numbers for nodes that\nwould be reached as if a SetValue operation were being performed, including accepting newer values from the network.\nThis simulates a SetValue with the initial sequence number incremented by 1, like a real SetValue would when updating.\nUseful for determine which subkeys would change on an SetValue operation",
           "type": "string",
-          "enum": [
-            "UpdateSet"
-          ]
+          "const": "UpdateSet"
         }
       ]
     },
@@ -1707,78 +1165,609 @@
       "description": "Enum over all the supported DHT Schemas",
       "oneOf": [
         {
-          "description": "Default DHT Schema (DFLT)",
           "type": "object",
-          "required": [
-            "kind",
-            "o_cnt"
-          ],
           "properties": {
             "kind": {
               "type": "string",
-              "enum": [
-                "DFLT"
-              ]
-            },
-            "o_cnt": {
-              "description": "Owner subkey count",
-              "type": "integer",
-              "format": "uint16",
-              "minimum": 0.0
+              "const": "DFLT"
             }
-          }
+          },
+          "$ref": "#/$defs/DHTSchemaDFLT",
+          "required": [
+            "kind"
+          ]
         },
         {
-          "description": "Simple DHT Schema (SMPL)",
           "type": "object",
-          "required": [
-            "kind",
-            "members",
-            "o_cnt"
-          ],
           "properties": {
             "kind": {
               "type": "string",
-              "enum": [
-                "SMPL"
-              ]
-            },
-            "members": {
-              "description": "Members",
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/DHTSchemaSMPLMember"
-              }
-            },
-            "o_cnt": {
-              "description": "Owner subkey count",
-              "type": "integer",
-              "format": "uint16",
-              "minimum": 0.0
+              "const": "SMPL"
             }
-          }
+          },
+          "$ref": "#/$defs/DHTSchemaSMPL",
+          "required": [
+            "kind"
+          ]
         }
+      ]
+    },
+    "DHTSchemaDFLT": {
+      "description": "Default DHT Schema (DFLT)",
+      "type": "object",
+      "properties": {
+        "o_cnt": {
+          "description": "Owner subkey count",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "o_cnt"
+      ]
+    },
+    "DHTSchemaSMPL": {
+      "description": "Simple DHT Schema (SMPL)",
+      "type": "object",
+      "properties": {
+        "members": {
+          "description": "Members",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DHTSchemaSMPLMember"
+          }
+        },
+        "o_cnt": {
+          "description": "Owner subkey count",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "o_cnt",
+        "members"
       ]
     },
     "DHTSchemaSMPLMember": {
       "description": "Simple DHT Schema (SMPL) Member",
       "type": "object",
-      "required": [
-        "m_cnt",
-        "m_key"
-      ],
       "properties": {
         "m_cnt": {
           "description": "Member subkey count",
           "type": "integer",
           "format": "uint16",
-          "minimum": 0.0
+          "maximum": 65535,
+          "minimum": 0
         },
         "m_key": {
           "description": "Member key",
           "type": "string"
         }
+      },
+      "required": [
+        "m_key",
+        "m_cnt"
+      ]
+    },
+    "DHTTransactionSetValueOptions": {
+      "description": "Options that override defaults for DHTTransaction::set",
+      "type": "object",
+      "properties": {
+        "writer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
+    },
+    "DhtTransactionRequest": {
+      "type": "object",
+      "properties": {
+        "dhttx_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "dhttx_op": {
+              "type": "string",
+              "const": "Release"
+            }
+          },
+          "required": [
+            "dhttx_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dhttx_op": {
+              "type": "string",
+              "const": "Commit"
+            }
+          },
+          "required": [
+            "dhttx_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dhttx_op": {
+              "type": "string",
+              "const": "Rollback"
+            }
+          },
+          "required": [
+            "dhttx_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dhttx_op": {
+              "type": "string",
+              "const": "Get"
+            },
+            "key": {
+              "type": "string"
+            },
+            "subkey": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "dhttx_op",
+            "key",
+            "subkey"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "dhttx_op": {
+              "type": "string",
+              "const": "Set"
+            },
+            "key": {
+              "type": "string"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DHTTransactionSetValueOptions"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "subkey": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "dhttx_op",
+            "key",
+            "subkey",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dhttx_op": {
+              "type": "string",
+              "const": "Inspect"
+            },
+            "key": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/DHTReportScope",
+              "default": "Local"
+            },
+            "subkeys": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueSubkeyRangeSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "dhttx_op",
+            "key"
+          ]
+        }
+      ],
+      "required": [
+        "dhttx_id"
+      ]
+    },
+    "RoutingContextRequest": {
+      "type": "object",
+      "properties": {
+        "rc_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "rc_op": {
+              "type": "string",
+              "const": "Release"
+            }
+          },
+          "required": [
+            "rc_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rc_op": {
+              "type": "string",
+              "const": "WithDefaultSafety"
+            }
+          },
+          "required": [
+            "rc_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rc_op": {
+              "type": "string",
+              "const": "WithSafety"
+            },
+            "safety_selection": {
+              "$ref": "#/$defs/SafetySelection"
+            }
+          },
+          "required": [
+            "rc_op",
+            "safety_selection"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rc_op": {
+              "type": "string",
+              "const": "WithSequencing"
+            },
+            "sequencing": {
+              "$ref": "#/$defs/Sequencing"
+            }
+          },
+          "required": [
+            "rc_op",
+            "sequencing"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rc_op": {
+              "type": "string",
+              "const": "Safety"
+            }
+          },
+          "required": [
+            "rc_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "AppCall"
+            },
+            "target": {
+              "$ref": "#/$defs/Target"
+            }
+          },
+          "required": [
+            "rc_op",
+            "target",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "AppMessage"
+            },
+            "target": {
+              "$ref": "#/$defs/Target"
+            }
+          },
+          "required": [
+            "rc_op",
+            "target",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "CreateDhtRecord"
+            },
+            "schema": {
+              "$ref": "#/$defs/DHTSchema"
+            }
+          },
+          "required": [
+            "rc_op",
+            "kind",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "OpenDhtRecord"
+            },
+            "writer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "CloseDhtRecord"
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "DeleteDhtRecord"
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "force_refresh": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "GetDhtValue"
+            },
+            "subkey": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "rc_op",
+            "key",
+            "subkey",
+            "force_refresh"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SetDHTValueOptions"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "SetDhtValue"
+            },
+            "subkey": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "rc_op",
+            "key",
+            "subkey",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "expiration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "WatchDhtValues"
+            },
+            "subkeys": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueSubkeyRangeSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "CancelDhtWatch"
+            },
+            "subkeys": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueSubkeyRangeSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "rc_op": {
+              "type": "string",
+              "const": "InspectDhtRecord"
+            },
+            "scope": {
+              "$ref": "#/$defs/DHTReportScope",
+              "default": "Local"
+            },
+            "subkeys": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueSubkeyRangeSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "rc_op",
+            "key"
+          ]
+        }
+      ],
+      "required": [
+        "rc_id"
+      ]
     },
     "SafetySelection": {
       "description": "The choice of safety route to include in compiled routes.",
@@ -1786,45 +1775,40 @@
         {
           "description": "Don't use a safety route, only specify the sequencing preference.",
           "type": "object",
-          "required": [
-            "Unsafe"
-          ],
           "properties": {
             "Unsafe": {
-              "$ref": "#/definitions/Sequencing"
+              "$ref": "#/$defs/Sequencing"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "Unsafe"
+          ]
         },
         {
           "description": "Use a safety route and parameters specified by a SafetySpec.",
           "type": "object",
-          "required": [
-            "Safe"
-          ],
           "properties": {
             "Safe": {
-              "$ref": "#/definitions/SafetySpec"
+              "$ref": "#/$defs/SafetySpec"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "Safe"
+          ]
         }
       ]
     },
     "SafetySpec": {
       "description": "Options for safety routes (sender privacy).",
       "type": "object",
-      "required": [
-        "hop_count",
-        "sequencing",
-        "stability"
-      ],
       "properties": {
         "hop_count": {
           "description": "Must be greater than 0.",
           "type": "integer",
           "format": "uint",
-          "minimum": 0.0
+          "minimum": 0
         },
         "preferred_route": {
           "description": "Preferred safety route set id if it still exists.",
@@ -1835,21 +1819,18 @@
         },
         "sequencing": {
           "description": "Prefer connection-oriented sequenced protocols.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Sequencing"
-            }
-          ]
+          "$ref": "#/$defs/Sequencing"
         },
         "stability": {
           "description": "Prefer reliability over speed.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Stability"
-            }
-          ]
+          "$ref": "#/$defs/Stability"
         }
-      }
+      },
+      "required": [
+        "hop_count",
+        "stability",
+        "sequencing"
+      ]
     },
     "Sequencing": {
       "type": "string",
@@ -1860,13 +1841,14 @@
       ]
     },
     "SetDHTValueOptions": {
+      "description": "Options that override defaults for set_dht_value",
       "type": "object",
       "properties": {
         "allow_offline": {
-          "description": "Defaults to true. If false, the value will not be written if the node is offline, and a TryAgain error will be returned.",
+          "description": "Defaults to true. If false, the value will not be written if the node is offline,\nand a TryAgain error will be returned.",
           "anyOf": [
             {
-              "$ref": "#/definitions/AllowOffline"
+              "$ref": "#/$defs/AllowOffline"
             },
             {
               "type": "null"
@@ -1874,6 +1856,7 @@
           ]
         },
         "writer": {
+          "description": "Override writer key pair for this operation",
           "type": [
             "string",
             "null"
@@ -1887,6 +1870,299 @@
         "LowLatency",
         "Reliable"
       ]
+    },
+    "TableDbRequest": {
+      "type": "object",
+      "properties": {
+        "db_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "db_op": {
+              "type": "string",
+              "const": "Release"
+            }
+          },
+          "required": [
+            "db_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "db_op": {
+              "type": "string",
+              "const": "GetColumnCount"
+            }
+          },
+          "required": [
+            "db_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "db_op": {
+              "type": "string",
+              "const": "GetKeys"
+            }
+          },
+          "required": [
+            "db_op",
+            "col"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "db_op": {
+              "type": "string",
+              "const": "Transact"
+            }
+          },
+          "required": [
+            "db_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "db_op": {
+              "type": "string",
+              "const": "Store"
+            },
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "db_op",
+            "col",
+            "key",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "db_op": {
+              "type": "string",
+              "const": "Load"
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "db_op",
+            "col",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "db_op": {
+              "type": "string",
+              "const": "Delete"
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "db_op",
+            "col",
+            "key"
+          ]
+        }
+      ],
+      "required": [
+        "db_id"
+      ]
+    },
+    "TableDbTransactionRequest": {
+      "type": "object",
+      "properties": {
+        "tx_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "tx_op": {
+              "type": "string",
+              "const": "Commit"
+            }
+          },
+          "required": [
+            "tx_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tx_op": {
+              "type": "string",
+              "const": "Rollback"
+            }
+          },
+          "required": [
+            "tx_op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "key": {
+              "type": "string"
+            },
+            "tx_op": {
+              "type": "string",
+              "const": "Store"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tx_op",
+            "col",
+            "key",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "key": {
+              "type": "string"
+            },
+            "tx_op": {
+              "type": "string",
+              "const": "Delete"
+            }
+          },
+          "required": [
+            "tx_op",
+            "col",
+            "key"
+          ]
+        }
+      ],
+      "required": [
+        "tx_id"
+      ]
+    },
+    "Target": {
+      "description": "Valid destinations for a message sent over a routing context.",
+      "oneOf": [
+        {
+          "description": "Node by its node id",
+          "type": "object",
+          "properties": {
+            "NodeId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "NodeId"
+          ]
+        },
+        {
+          "description": "Remote private route by its id.",
+          "type": "object",
+          "properties": {
+            "RouteId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "RouteId"
+          ]
+        }
+      ]
+    },
+    "Timestamp": {
+      "type": "string"
+    },
+    "TransactDHTRecordsOptions": {
+      "description": "Options for DHT record transactions",
+      "type": "object",
+      "properties": {
+        "default_signing_keypair": {
+          "description": "The signing keypair to use when opening the transaction.\nSetting this does not override any writer keys used by transaction operations.\nIf a record in the transaction is already opened for writing then the writer key will be used.\nThis is only useful if you have records in a transaction that are only open for reading.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ValueSubkeyRangeSet": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        ]
+      }
     }
   }
 }

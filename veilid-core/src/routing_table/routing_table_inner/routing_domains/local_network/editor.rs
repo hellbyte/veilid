@@ -4,9 +4,7 @@ use super::*;
 
 #[derive(Debug)]
 enum RoutingDomainChangeLocalNetwork {
-    SetLocalNetworks {
-        local_networks: Vec<(IpAddr, IpAddr)>,
-    },
+    SetInterfaceAddresses { interface_addresses: Vec<IfAddr> },
     Common(RoutingDomainChangeCommon),
 }
 
@@ -23,9 +21,11 @@ impl<'a> RoutingDomainEditorLocalNetwork<'a> {
         }
     }
 
-    pub fn set_local_networks(&mut self, local_networks: Vec<(IpAddr, IpAddr)>) -> &mut Self {
+    pub fn set_interface_addresses(&mut self, interface_addresses: Vec<IfAddr>) -> &mut Self {
         self.changes
-            .push(RoutingDomainChangeLocalNetwork::SetLocalNetworks { local_networks });
+            .push(RoutingDomainChangeLocalNetwork::SetInterfaceAddresses {
+                interface_addresses,
+            });
         self
     }
 }
@@ -47,12 +47,24 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
         self
     }
     #[instrument(level = "debug", skip(self))]
-    fn set_relay_node(&mut self, relay_node: Option<NodeRef>) -> &mut Self {
+    fn set_relays(&mut self, relays: Vec<RoutingDomainRelay>) -> &mut Self {
         self.changes.push(RoutingDomainChangeLocalNetwork::Common(
-            RoutingDomainChangeCommon::SetRelayNode { relay_node },
+            RoutingDomainChangeCommon::SetRelays { relays },
         ));
         self
     }
+    #[instrument(level = "debug", skip(self))]
+    fn set_relay_state(
+        &mut self,
+        relay: RoutingDomainRelay,
+        state: RoutingDomainRelayState,
+    ) -> &mut Self {
+        self.changes.push(RoutingDomainChangeLocalNetwork::Common(
+            RoutingDomainChangeCommon::SetRelayState { relay, state },
+        ));
+        self
+    }
+
     #[instrument(level = "debug", skip(self))]
     fn add_dial_info(&mut self, dial_info: DialInfo, class: DialInfoClass) -> &mut Self {
         self.changes.push(RoutingDomainChangeLocalNetwork::Common(
@@ -126,33 +138,33 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
                 let detail = &mut rti.local_network_routing_domain;
                 {
                     let old_dial_info_details = detail.dial_info_details().clone();
-                    let old_relay_node = detail.relay_node();
+                    let old_relays = detail.relays();
                     let old_outbound_protocols = detail.outbound_protocols();
                     let old_inbound_protocols = detail.inbound_protocols();
                     let old_address_types = detail.address_types();
                     let old_capabilities = detail.capabilities();
-                    let old_network_class = detail.network_class();
+                    let old_confirmed = detail.confirmed();
 
                     for change in self.changes.drain(..) {
                         match change {
                             RoutingDomainChangeLocalNetwork::Common(common_change) => {
                                 detail.apply_common_change(common_change);
                             }
-                            RoutingDomainChangeLocalNetwork::SetLocalNetworks {
-                                local_networks,
+                            RoutingDomainChangeLocalNetwork::SetInterfaceAddresses {
+                                interface_addresses,
                             } => {
-                                detail.set_local_networks(local_networks);
+                                detail.set_interface_addresses(interface_addresses);
                             }
                         }
                     }
 
                     let new_dial_info_details = detail.dial_info_details().clone();
-                    let new_relay_node = detail.relay_node();
+                    let new_relays = detail.relays();
                     let new_outbound_protocols = detail.outbound_protocols();
                     let new_inbound_protocols = detail.inbound_protocols();
                     let new_address_types = detail.address_types();
                     let new_capabilities = detail.capabilities();
-                    let new_network_class = detail.network_class();
+                    let new_confirmed = detail.confirmed();
 
                     // Compare and see if peerinfo needs republication
                     let removed_dial_info = old_dial_info_details
@@ -179,17 +191,19 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
                         );
                         peer_info_changed = true;
                     }
-                    if let Some(nrn) = new_relay_node {
-                        if let Some(orn) = old_relay_node {
-                            if !nrn.same_entry(&orn) {
-                                veilid_log!(rti info "[LocalNetwork] change relay: {} -> {}", orn, nrn);
-                                peer_info_changed = true;
-                            }
-                        } else {
-                            veilid_log!(rti info "[LocalNetwork] set relay: {}", nrn);
-                            peer_info_changed = true;
-                        }
+
+                    if old_relays.len() != new_relays.len()
+                        || old_relays
+                            .iter()
+                            .zip(new_relays.iter())
+                            .any(|x| !x.0.relay_node.same_entry(&x.1.relay_node))
+                    {
+                        veilid_log!(rti info "[LocalNetwork] relays changed: [{}] -> [{}]",
+                                old_relays.iter().map(|x| x.relay_node.to_string()).collect::<Vec<_>>().join(","),
+                                new_relays.iter().map(|x| x.relay_node.to_string()).collect::<Vec<_>>().join(","));
+                        peer_info_changed = true;
                     }
+
                     if old_outbound_protocols != new_outbound_protocols {
                         veilid_log!(rti info
                             "[LocalNetwork] changed network: outbound {:?}->{:?}",
@@ -213,15 +227,15 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
                     }
                     if old_capabilities != new_capabilities {
                         veilid_log!(rti info
-                            "[PublicInternet] changed network: capabilities {:?}->{:?}",
+                            "[LocalNetwork] changed network: capabilities {:?}->{:?}",
                             old_capabilities, new_capabilities
                         );
                         peer_info_changed = true;
                     }
-                    if old_network_class != new_network_class {
+                    if old_confirmed != new_confirmed {
                         veilid_log!(rti info
-                            "[LocalNetwork] changed network class: {:?}->{:?}",
-                            old_network_class, new_network_class
+                            "[LocalNetwork] changed confirmation: {:?}->{:?}",
+                            old_confirmed, new_confirmed
                         );
                         peer_info_changed = true;
                     }
@@ -257,7 +271,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
     fn shutdown(&mut self) -> PinBoxFuture<'_, ()> {
         Box::pin(async move {
             self.clear_dial_info_details(None, None)
-                .set_relay_node(None)
+                .set_relays(vec![])
                 .commit(true)
                 .await;
             self.routing_table

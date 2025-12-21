@@ -3,10 +3,24 @@ import 'package:flutter/services.dart';
 
 /// TextField History Controller
 class HistoryTextEditingController {
+  ////////////////////////////////////////////////////////////////////////////
+
+  late void Function(void Function()) setState;
+
+  final TextEditingController _controller;
+
+  late final FocusNode _historyFocusNode;
+
+  final List<String> _history = [];
+
+  var _historyPosition = 0;
+
+  var _historyCurrentEdit = '';
+
   HistoryTextEditingController(
       {required this.setState, TextEditingController? controller})
       : _controller = controller ?? TextEditingController() {
-    _historyFocusNode = FocusNode(onKeyEvent: (_node, event) {
+    _historyFocusNode = FocusNode(onKeyEvent: (node, event) {
       if (event.runtimeType == KeyDownEvent &&
           event.logicalKey == LogicalKeyboardKey.arrowUp) {
         if (_historyPosition > 0) {
@@ -55,15 +69,6 @@ class HistoryTextEditingController {
   }
 
   FocusNode get focusNode => _historyFocusNode;
+
   TextEditingController get controller => _controller;
-
-  ////////////////////////////////////////////////////////////////////////////
-
-  late void Function(void Function()) setState;
-  final TextEditingController _controller;
-  late final FocusNode _historyFocusNode;
-
-  final List<String> _history = [];
-  int _historyPosition = 0;
-  String _historyCurrentEdit = '';
 }

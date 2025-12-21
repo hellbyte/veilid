@@ -178,7 +178,7 @@ fn fix_android_emulator() {
             .or(env::var("ANDROID_SDK_ROOT"))
             .expect("ANDROID_HOME or ANDROID_SDK_ROOT not set");
         let lib_path = glob(&format!(
-            "{android_home}/ndk/27.0.12077973/**/lib{missing_library}.a"
+            "{android_home}/ndk/28.2.13676358/**/lib{missing_library}.a"
         ))
         .expect("failed to glob")
         .next()
@@ -244,6 +244,11 @@ fn main() {
 
     // Gather build-time information, such as the features that were enabled when veilid-core was built.
     bosion::gather();
+
+    println!(
+        "cargo:rustc-env=TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
 
     if is_input_file_outdated("./proto/veilid.capnp", "./proto/veilid_capnp.rs").unwrap() {
         println!("cargo:warning=rebuilding proto/veilid_capnp.rs because it has changed from the last generation of proto/veilid.capnp");

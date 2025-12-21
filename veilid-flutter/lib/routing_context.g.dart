@@ -8,19 +8,16 @@ part of 'routing_context.dart';
 
 DHTSchemaDFLT _$DHTSchemaDFLTFromJson(Map<String, dynamic> json) =>
     DHTSchemaDFLT(
-      oCnt: (json['o_cnt'] as num).toInt(),
+      oCnt: (json['oCnt'] as num).toInt(),
       $type: json['kind'] as String?,
     );
 
 Map<String, dynamic> _$DHTSchemaDFLTToJson(DHTSchemaDFLT instance) =>
-    <String, dynamic>{
-      'o_cnt': instance.oCnt,
-      'kind': instance.$type,
-    };
+    <String, dynamic>{'oCnt': instance.oCnt, 'kind': instance.$type};
 
 DHTSchemaSMPL _$DHTSchemaSMPLFromJson(Map<String, dynamic> json) =>
     DHTSchemaSMPL(
-      oCnt: (json['o_cnt'] as num).toInt(),
+      oCnt: (json['oCnt'] as num).toInt(),
       members: (json['members'] as List<dynamic>)
           .map(DHTSchemaMember.fromJson)
           .toList(),
@@ -29,47 +26,44 @@ DHTSchemaSMPL _$DHTSchemaSMPLFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$DHTSchemaSMPLToJson(DHTSchemaSMPL instance) =>
     <String, dynamic>{
-      'o_cnt': instance.oCnt,
+      'oCnt': instance.oCnt,
       'members': instance.members.map((e) => e.toJson()).toList(),
       'kind': instance.$type,
     };
 
 _DHTSchemaMember _$DHTSchemaMemberFromJson(Map<String, dynamic> json) =>
     _DHTSchemaMember(
-      mKey: FixedEncodedString43.fromJson(json['m_key']),
-      mCnt: (json['m_cnt'] as num).toInt(),
+      mKey: BareMemberId.fromJson(json['mKey']),
+      mCnt: (json['mCnt'] as num).toInt(),
     );
 
 Map<String, dynamic> _$DHTSchemaMemberToJson(_DHTSchemaMember instance) =>
-    <String, dynamic>{
-      'm_key': instance.mKey.toJson(),
-      'm_cnt': instance.mCnt,
-    };
+    <String, dynamic>{'mKey': instance.mKey.toJson(), 'mCnt': instance.mCnt};
 
 _DHTRecordDescriptor _$DHTRecordDescriptorFromJson(Map<String, dynamic> json) =>
     _DHTRecordDescriptor(
-      key: Typed<FixedEncodedString43>.fromJson(json['key']),
-      owner: FixedEncodedString43.fromJson(json['owner']),
+      key: RecordKey.fromJson(json['key']),
+      owner: Typed<BarePublicKey>.fromJson(json['owner']),
       schema: DHTSchema.fromJson(json['schema']),
-      ownerSecret: json['owner_secret'] == null
+      ownerSecret: json['ownerSecret'] == null
           ? null
-          : FixedEncodedString43.fromJson(json['owner_secret']),
+          : Typed<BareSecretKey>.fromJson(json['ownerSecret']),
     );
 
 Map<String, dynamic> _$DHTRecordDescriptorToJson(
-        _DHTRecordDescriptor instance) =>
-    <String, dynamic>{
-      'key': instance.key.toJson(),
-      'owner': instance.owner.toJson(),
-      'schema': instance.schema.toJson(),
-      'owner_secret': instance.ownerSecret?.toJson(),
-    };
+  _DHTRecordDescriptor instance,
+) => <String, dynamic>{
+  'key': instance.key.toJson(),
+  'owner': instance.owner.toJson(),
+  'schema': instance.schema.toJson(),
+  'ownerSecret': instance.ownerSecret?.toJson(),
+};
 
 _ValueData _$ValueDataFromJson(Map<String, dynamic> json) => _ValueData(
-      seq: (json['seq'] as num).toInt(),
-      data: const Uint8ListJsonConverter.jsIsArray().fromJson(json['data']),
-      writer: FixedEncodedString43.fromJson(json['writer']),
-    );
+  seq: (json['seq'] as num).toInt(),
+  data: const Uint8ListJsonConverter.jsIsArray().fromJson(json['data']),
+  writer: Typed<BarePublicKey>.fromJson(json['writer']),
+);
 
 Map<String, dynamic> _$ValueDataToJson(_ValueData instance) =>
     <String, dynamic>{
@@ -79,29 +73,31 @@ Map<String, dynamic> _$ValueDataToJson(_ValueData instance) =>
     };
 
 _SafetySpec _$SafetySpecFromJson(Map<String, dynamic> json) => _SafetySpec(
-      hopCount: (json['hop_count'] as num).toInt(),
-      stability: Stability.fromJson(json['stability']),
-      sequencing: Sequencing.fromJson(json['sequencing']),
-      preferredRoute: json['preferred_route'] as String?,
-    );
+  hopCount: (json['hopCount'] as num).toInt(),
+  stability: Stability.fromJson(json['stability']),
+  sequencing: Sequencing.fromJson(json['sequencing']),
+  preferredRoute: json['preferredRoute'] == null
+      ? null
+      : Typed<BareRouteId>.fromJson(json['preferredRoute']),
+);
 
 Map<String, dynamic> _$SafetySpecToJson(_SafetySpec instance) =>
     <String, dynamic>{
-      'hop_count': instance.hopCount,
+      'hopCount': instance.hopCount,
       'stability': instance.stability.toJson(),
       'sequencing': instance.sequencing.toJson(),
-      'preferred_route': instance.preferredRoute,
+      'preferredRoute': instance.preferredRoute?.toJson(),
     };
 
 _RouteBlob _$RouteBlobFromJson(Map<String, dynamic> json) => _RouteBlob(
-      routeId: json['route_id'] as String,
-      blob: const Uint8ListJsonConverter().fromJson(json['blob']),
-    );
+  routeId: Typed<BareRouteId>.fromJson(json['routeId']),
+  blob: const Uint8ListJsonConverter.jsIsArray().fromJson(json['blob']),
+);
 
 Map<String, dynamic> _$RouteBlobToJson(_RouteBlob instance) =>
     <String, dynamic>{
-      'route_id': instance.routeId,
-      'blob': const Uint8ListJsonConverter().toJson(instance.blob),
+      'routeId': instance.routeId.toJson(),
+      'blob': const Uint8ListJsonConverter.jsIsArray().toJson(instance.blob),
     };
 
 _DHTRecordReport _$DHTRecordReportFromJson(Map<String, dynamic> json) =>
@@ -109,13 +105,13 @@ _DHTRecordReport _$DHTRecordReportFromJson(Map<String, dynamic> json) =>
       subkeys: (json['subkeys'] as List<dynamic>)
           .map(ValueSubkeyRange.fromJson)
           .toList(),
-      offlineSubkeys: (json['offline_subkeys'] as List<dynamic>)
+      offlineSubkeys: (json['offlineSubkeys'] as List<dynamic>)
           .map(ValueSubkeyRange.fromJson)
           .toList(),
-      localSeqs: (json['local_seqs'] as List<dynamic>)
+      localSeqs: (json['localSeqs'] as List<dynamic>)
           .map((e) => (e as num?)?.toInt())
           .toList(),
-      networkSeqs: (json['network_seqs'] as List<dynamic>)
+      networkSeqs: (json['networkSeqs'] as List<dynamic>)
           .map((e) => (e as num?)?.toInt())
           .toList(),
     );
@@ -123,20 +119,19 @@ _DHTRecordReport _$DHTRecordReportFromJson(Map<String, dynamic> json) =>
 Map<String, dynamic> _$DHTRecordReportToJson(_DHTRecordReport instance) =>
     <String, dynamic>{
       'subkeys': instance.subkeys.map((e) => e.toJson()).toList(),
-      'offline_subkeys':
-          instance.offlineSubkeys.map((e) => e.toJson()).toList(),
-      'local_seqs': instance.localSeqs,
-      'network_seqs': instance.networkSeqs,
+      'offlineSubkeys': instance.offlineSubkeys.map((e) => e.toJson()).toList(),
+      'localSeqs': instance.localSeqs,
+      'networkSeqs': instance.networkSeqs,
     };
 
 _SetDHTValueOptions _$SetDHTValueOptionsFromJson(Map<String, dynamic> json) =>
     _SetDHTValueOptions(
       writer: json['writer'] == null ? null : KeyPair.fromJson(json['writer']),
-      allowOffline: json['allow_offline'] as bool?,
+      allowOffline: json['allowOffline'] as bool?,
     );
 
 Map<String, dynamic> _$SetDHTValueOptionsToJson(_SetDHTValueOptions instance) =>
     <String, dynamic>{
       'writer': instance.writer?.toJson(),
-      'allow_offline': instance.allowOffline,
+      'allowOffline': instance.allowOffline,
     };

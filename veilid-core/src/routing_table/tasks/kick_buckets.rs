@@ -16,23 +16,23 @@ impl RoutingTable {
         _last_ts: Timestamp,
         cur_ts: Timestamp,
     ) -> EyreResult<()> {
-        let crypto = self.crypto();
         let kick_queue: Vec<BucketIndex> = core::mem::take(&mut *self.kick_queue.lock())
             .into_iter()
             .collect();
         let mut inner = self.inner.write();
 
         // Get our exempt nodes for each crypto kind
-        let mut exempt_peers_by_kind = BTreeMap::<CryptoKind, BTreeSet<NodeId>>::new();
+        let mut exempt_peers_by_kind = BTreeMap::<CryptoKind, BTreeSet<BareNodeId>>::new();
 
         for kind in VALID_CRYPTO_KINDS {
             let our_node_id = self.node_id(kind);
             let Some(buckets) = inner.buckets.get(&kind) else {
                 continue;
             };
-            let sort = make_closest_node_id_sort(&crypto, our_node_id);
+            let sort =
+                make_closest_bare_node_id_sort(our_node_id.ref_value().to_bare_hash_coordinate());
 
-            let mut closest_peers = BTreeSet::<NodeId>::new();
+            let mut closest_peers = BTreeSet::<BareNodeId>::new();
             let mut closest_unreliable_count = 0usize;
             let mut closest_reliable_count = 0usize;
 
@@ -60,14 +60,14 @@ impl RoutingTable {
                         BucketEntryState::Unreliable => {
                             // Add to closest unreliable nodes list
                             if closest_unreliable_count < KEEP_N_CLOSEST_UNRELIABLE_PEERS_COUNT {
-                                closest_peers.insert(*key);
+                                closest_peers.insert(key.clone());
                                 closest_unreliable_count += 1;
                             }
                         }
                         BucketEntryState::Reliable => {
                             // Add to closest reliable nodes list
                             if closest_reliable_count < KEEP_N_CLOSEST_RELIABLE_PEERS_COUNT {
-                                closest_peers.insert(*key);
+                                closest_peers.insert(key.clone());
                                 closest_reliable_count += 1;
                             }
                         }

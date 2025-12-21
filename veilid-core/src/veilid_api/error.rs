@@ -22,6 +22,9 @@ macro_rules! apibail_try_again {
     ($x:expr) => {
         return Err(VeilidAPIError::try_again($x))
     };
+    ($fmt:literal, $($args:tt)*) => {
+        return Err(VeilidAPIError::try_again( format!($fmt, $($args)*) ))
+    };
 }
 
 #[allow(unused_macros)]
@@ -30,6 +33,9 @@ macro_rules! apibail_generic {
     ($x:expr) => {
         return Err(VeilidAPIError::generic($x))
     };
+    ($fmt:literal, $($args:tt)*) => {
+        return Err(VeilidAPIError::generic( format!($fmt, $($args)*) ))
+    };
 }
 
 #[allow(unused_macros)]
@@ -37,6 +43,9 @@ macro_rules! apibail_generic {
 macro_rules! apibail_internal {
     ($x:expr) => {
         return Err(VeilidAPIError::internal($x))
+    };
+    ($fmt:literal, $($args:tt)*) => {
+        return Err(VeilidAPIError::internal( format!($fmt, $($args)*) ))
     };
 }
 
@@ -70,6 +79,10 @@ macro_rules! apibail_no_connection {
     ($x:expr) => {
         return Err(VeilidAPIError::no_connection($x))
     };
+    ($fmt:literal, $($args: tt)* ) => {
+        return Err(VeilidAPIError::no_connection( format!($fmt, arg $($args)*) ))
+    };
+
 }
 
 #[allow(unused_macros)]
@@ -132,7 +145,7 @@ pub enum VeilidAPIError {
     #[error("Key not found: {key}")]
     KeyNotFound {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: OpaqueRecordKey,
     },
     #[error("Internal: {message}")]
     Internal { message: String },
@@ -180,7 +193,7 @@ impl VeilidAPIError {
             message: msg.to_string(),
         }
     }
-    pub fn key_not_found(key: TypedRecordKey) -> Self {
+    pub fn key_not_found(key: OpaqueRecordKey) -> Self {
         Self::KeyNotFound { key }
     }
     pub fn internal<T: ToString>(msg: T) -> Self {
@@ -236,6 +249,36 @@ impl VeilidAPIError {
             NetworkResult::Value(v) => Ok(v),
         }
     }
+
+    pub(crate) fn log_level(&self) -> Level {
+        match self {
+            VeilidAPIError::NotInitialized
+            | VeilidAPIError::AlreadyInitialized
+            | VeilidAPIError::InvalidTarget { message: _ }
+            | VeilidAPIError::Internal { message: _ }
+            | VeilidAPIError::Generic { message: _ }
+            | VeilidAPIError::ParseError {
+                message: _,
+                value: _,
+            }
+            | VeilidAPIError::InvalidArgument {
+                context: _,
+                argument: _,
+                value: _,
+            }
+            | VeilidAPIError::MissingArgument {
+                context: _,
+                argument: _,
+            }
+            | VeilidAPIError::Shutdown => Level::ERROR,
+
+            VeilidAPIError::NoConnection { message: _ }
+            | VeilidAPIError::KeyNotFound { key: _ }
+            | VeilidAPIError::Unimplemented { message: _ } => Level::WARN,
+
+            VeilidAPIError::Timeout | VeilidAPIError::TryAgain { message: _ } => Level::DEBUG,
+        }
+    }
 }
 
 pub type VeilidAPIResult<T> = Result<T, VeilidAPIError>;
@@ -245,17 +288,17 @@ pub trait OkVeilidAPIResult<T> {
     fn ok_try_again_timeout(self) -> VeilidAPIResult<Option<T>>;
 }
 
-impl<T> OkVeilidAPIResult<T> for VeilidAPIResult<T> {
+impl<T> OkVeilidAPIResult<T> for VeilidAPIResult<Option<T>> {
     fn ok_try_again(self) -> VeilidAPIResult<Option<T>> {
         match self {
-            Ok(v) => Ok(Some(v)),
+            Ok(v) => Ok(v),
             Err(VeilidAPIError::TryAgain { message: _ }) => Ok(None),
             Err(e) => Err(e),
         }
     }
     fn ok_try_again_timeout(self) -> VeilidAPIResult<Option<T>> {
         match self {
-            Ok(v) => Ok(Some(v)),
+            Ok(v) => Ok(v),
             Err(VeilidAPIError::TryAgain { message: _ }) => Ok(None),
             Err(VeilidAPIError::Timeout) => Ok(None),
             Err(e) => Err(e),

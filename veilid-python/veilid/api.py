@@ -49,49 +49,49 @@ class RoutingContext(ABC):
         pass
 
     @abstractmethod
-    async def app_call(self, target: types.TypedKey | types.RouteId, message: bytes) -> bytes:
+    async def app_call(self, target: types.Target, message: bytes) -> bytes:
         pass
 
     @abstractmethod
-    async def app_message(self, target: types.TypedKey | types.RouteId, message: bytes):
+    async def app_message(self, target: types.Target, message: bytes):
         pass
 
     @abstractmethod
     async def create_dht_record(
-        self, schema: types.DHTSchema, owner: Optional[types.KeyPair] = None, kind: Optional[types.CryptoKind] = None
+        self, kind: types.CryptoKind, schema: types.DHTSchema, owner: Optional[types.KeyPair] = None
     ) -> types.DHTRecordDescriptor:
         pass
 
     @abstractmethod
     async def open_dht_record(
-        self, key: types.TypedKey, writer: Optional[types.KeyPair] = None
+        self, key: types.RecordKey, writer: Optional[types.KeyPair] = None
     ) -> types.DHTRecordDescriptor:
         pass
 
     @abstractmethod
-    async def close_dht_record(self, key: types.TypedKey):
+    async def close_dht_record(self, key: types.RecordKey):
         pass
 
     @abstractmethod
-    async def delete_dht_record(self, key: types.TypedKey):
+    async def delete_dht_record(self, key: types.RecordKey):
         pass
 
     @abstractmethod
     async def get_dht_value(
-        self, key: types.TypedKey, subkey: types.ValueSubkey, force_refresh: bool = False
+        self, key: types.RecordKey, subkey: types.ValueSubkey, force_refresh: bool = False
     ) -> Optional[types.ValueData]:
         pass
 
     @abstractmethod
     async def set_dht_value(
-        self, key: types.TypedKey, subkey: types.ValueSubkey, data: bytes, options: Optional[types.SetDHTValueOptions] = None
+        self, key: types.RecordKey, subkey: types.ValueSubkey, data: bytes, options: Optional[types.SetDHTValueOptions] = None
     ) -> Optional[types.ValueData]:
         pass
 
     @abstractmethod
     async def watch_dht_values(
         self,
-        key: types.TypedKey,
+        key: types.RecordKey,
         subkeys: list[tuple[types.ValueSubkey, types.ValueSubkey]] = [],
         expiration: types.Timestamp = types.Timestamp(0),
         count: int = 0xFFFFFFFF,
@@ -101,7 +101,7 @@ class RoutingContext(ABC):
     @abstractmethod
     async def cancel_dht_watch(
         self,
-        key: types.TypedKey,
+        key: types.RecordKey,
         subkeys: list[tuple[types.ValueSubkey, types.ValueSubkey]] = [],
     ) -> bool:
         pass
@@ -109,7 +109,7 @@ class RoutingContext(ABC):
     @abstractmethod
     async def inspect_dht_record(
         self,
-        key: types.TypedKey,
+        key: types.RecordKey,
         subkeys: list[tuple[types.ValueSubkey, types.ValueSubkey]],
         scope: types.DHTReportScope = types.DHTReportScope.LOCAL,
     ) -> types.DHTRecordReport:
@@ -255,7 +255,59 @@ class CryptoSystem(ABC):
         pass
 
     @abstractmethod
+    async def shared_secret_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def nonce_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def hash_digest_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def public_key_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def secret_key_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def signature_length(self) -> int:
+        pass
+
+    @abstractmethod
     async def default_salt_length(self) -> int:
+        pass
+
+    @abstractmethod
+    async def aead_overhead(self) -> int:
+        pass
+
+    @abstractmethod
+    async def check_shared_secret(self, secret: types.SharedSecret):
+        pass
+
+    @abstractmethod
+    async def check_nonce(self, nonce: types.Nonce):
+        pass
+
+    @abstractmethod
+    async def check_hash_digest(self, digest: types.HashDigest):
+        pass
+
+    @abstractmethod
+    async def check_public_key(self, key: types.PublicKey):
+        pass
+
+    @abstractmethod
+    async def check_secret_key(self, key: types.SecretKey):
+        pass
+
+    @abstractmethod
+    async def check_signature(self, signature: types.Signature):
         pass
 
     @abstractmethod
@@ -295,12 +347,6 @@ class CryptoSystem(ABC):
         pass
 
     @abstractmethod
-    async def distance(
-        self, key1: types.HashDigest, key2: types.HashDigest
-    ) -> types.HashDistance:
-        pass
-
-    @abstractmethod
     async def sign(
         self, key: types.PublicKey, secret: types.SecretKey, data: bytes
     ) -> types.Signature:
@@ -308,10 +354,6 @@ class CryptoSystem(ABC):
 
     @abstractmethod
     async def verify(self, key: types.PublicKey, data: bytes, signature: types.Signature) -> bool:
-        pass
-
-    @abstractmethod
-    async def aead_overhead(self) -> int:
         pass
 
     @abstractmethod
@@ -338,6 +380,57 @@ class CryptoSystem(ABC):
     async def crypt_no_auth(
         self, body: bytes, nonce: types.Nonce, shared_secret: types.SharedSecret
     ) -> bytes:
+        pass
+
+
+class DHTTransaction(ABC):
+    ref_count: int
+
+    def __init__(
+        self,
+    ):
+        self.ref_count = 0
+
+    async def __aenter__(self) -> Self:
+        self.ref_count += 1
+        return self
+
+    async def __aexit__(self, *excinfo):
+        self.ref_count -= 1
+        if self.ref_count == 0 and not self.is_done():
+            await self.rollback()
+
+    @abstractmethod
+    def is_done(self) -> bool:
+        pass
+
+    @abstractmethod
+    async def commit(self):
+        pass
+
+    @abstractmethod
+    async def rollback(self):
+        pass
+
+    @abstractmethod
+    async def get(
+        self, key: types.RecordKey, subkey: types.ValueSubkey
+    ) -> Optional[types.ValueData]:
+        pass
+
+    @abstractmethod
+    async def set(
+        self, key: types.RecordKey, subkey: types.ValueSubkey, data: bytes, options: Optional[types.DHTTransactionSetValueOptions] = None
+    ) -> Optional[types.ValueData]:
+        pass
+
+    @abstractmethod
+    async def inspect(
+        self,
+        key: types.RecordKey,
+        subkeys: list[tuple[types.ValueSubkey, types.ValueSubkey]],
+        scope: types.DHTReportScope = types.DHTReportScope.LOCAL,
+    ) -> types.DHTRecordReport:
         pass
 
 
@@ -387,7 +480,7 @@ class VeilidAPI(ABC):
         pass
 
     @abstractmethod
-    async def new_private_route(self) -> tuple[types.RouteId, bytes]:
+    async def new_private_route(self) -> types.RouteBlob:
         pass
 
     @abstractmethod
@@ -396,7 +489,7 @@ class VeilidAPI(ABC):
         kinds: list[types.CryptoKind],
         stability: types.Stability,
         sequencing: types.Sequencing,
-    ) -> tuple[types.RouteId, bytes]:
+    ) -> types.RouteBlob:
         pass
 
     @abstractmethod
@@ -428,26 +521,36 @@ class VeilidAPI(ABC):
         pass
 
     @abstractmethod
-    async def best_crypto_system(self) -> CryptoSystem:
-        pass
-
-    @abstractmethod
     async def verify_signatures(
         self,
-        node_ids: list[types.TypedKey],
+        node_ids: list[types.PublicKey],
         data: bytes,
-        signatures: list[types.TypedSignature],
-    ) -> Optional[list[types.TypedKey]]:
+        signatures: list[types.Signature],
+    ) -> Optional[list[types.PublicKey]]:
         pass
 
     @abstractmethod
     async def generate_signatures(
-        self, data: bytes, key_pairs: list[types.TypedKeyPair]
-    ) -> list[types.TypedSignature]:
+        self, data: bytes, key_pairs: list[types.KeyPair]
+    ) -> list[types.Signature]:
         pass
 
     @abstractmethod
-    async def generate_key_pair(self, kind: types.CryptoKind) -> list[types.TypedKeyPair]:
+    async def generate_key_pair(self, kind: types.CryptoKind) -> list[types.KeyPair]:
+        pass
+
+    @abstractmethod
+    async def generate_member_id(self, writer_key: types.PublicKey) -> types.MemberId:
+        pass
+
+    @abstractmethod
+    async def get_dht_record_key(
+        self, schema: types.DHTSchema, owner: types.PublicKey, encryption_key: Optional[types.SharedSecret]) -> types.RecordKey:
+        pass
+
+    @abstractmethod
+    async def transact_dht_records(
+        self, record_keys: list[types.RecordKey], options: Optional[types.TransactDHTRecordsOptions]) -> DHTTransaction:
         pass
 
     @abstractmethod
@@ -472,4 +575,8 @@ class VeilidAPI(ABC):
 
     @abstractmethod
     async def default_veilid_config(self) -> str:
+        pass
+
+    @abstractmethod
+    async def valid_crypto_kinds(self) -> list[types.CryptoKind]:
         pass

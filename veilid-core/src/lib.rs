@@ -11,8 +11,7 @@
 //! - [Examples](https://gitlab.com/veilid/veilid/-/tree/main/veilid-core/examples/)
 //! - [API Documentation](https://docs.rs/veilid-core)
 //!
-//! The public API is accessed by getting a [VeilidAPI] object via a call to [api_startup], [api_startup_json], or
-//! [api_startup_config].
+//! The public API is accessed by getting a [VeilidAPI] object via a call to [api_startup], [api_startup_json].
 //!
 //! From there, a [RoutingContext] object can get you access to public and private routed operations.
 //!
@@ -64,14 +63,19 @@ mod veilid_config;
 
 pub(crate) use self::component::*;
 pub(crate) use self::core_context::RegisteredComponents;
+#[allow(unused_imports)]
+pub(crate) use self::logging::{
+    debug_duration, record_duration, record_duration_fut, MeasureDebugFuture, MeasureFuture,
+    DEBUGWARN,
+};
 pub(crate) use self::stats_accounting::*;
 
 pub use self::component::VeilidComponentGuard;
-pub use self::core_context::{api_startup, api_startup_config, api_startup_json, UpdateCallback};
+pub use self::core_context::{api_startup, api_startup_json, UpdateCallback};
 pub use self::logging::{
     ApiTracingLayer, FmtStripFields, VeilidLayerFilter, VeilidLayerLogKeyFilter,
     DEFAULT_LOG_FACILITIES_ENABLED_LIST, DEFAULT_LOG_FACILITIES_IGNORE_LIST,
-    DURATION_LOG_FACILITIES, FLAME_LOG_FACILITIES_IGNORE_LIST, VEILID_LOG_KEY_FIELD,
+    FLAME_LOG_FACILITIES_IGNORE_LIST, VEILID_LOG_KEY_FIELD,
 };
 pub use self::veilid_api::*;
 pub use self::veilid_config::*;
@@ -111,7 +115,7 @@ pub fn veilid_version() -> (u32, u32, u32) {
     )
 }
 
-#[cfg(not(docsrs))]
+#[cfg(all(not(docsrs), not(doc)))]
 include!(env!("BOSION_PATH"));
 
 /// Return the features that were enabled when veilid-core was built.
@@ -133,6 +137,7 @@ use enumset::*;
 use eyre::{bail, eyre, Report as EyreReport, Result as EyreResult, WrapErr};
 #[allow(unused_imports)]
 use futures_util::stream::{FuturesOrdered, FuturesUnordered};
+use get_size::*;
 use indent::*;
 use parking_lot::*;
 use schemars::JsonSchema;

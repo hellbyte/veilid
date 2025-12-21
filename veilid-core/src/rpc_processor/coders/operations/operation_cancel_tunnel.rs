@@ -10,7 +10,7 @@ impl RPCOperationCancelTunnelQ {
     pub fn new(id: TunnelId) -> Self {
         Self { id }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -27,7 +27,7 @@ impl RPCOperationCancelTunnelQ {
         reader: &veilid_capnp::operation_cancel_tunnel_q::Reader,
     ) -> Result<Self, RPCError> {
         let id = TunnelId::new(reader.get_id());
-        Ok(Self { id })
+        Self::new(id)
     }
     pub fn encode(
         &self,
@@ -55,19 +55,19 @@ impl RPCOperationCancelTunnelA {
     pub fn new_error(error: TunnelError) -> Self {
         Self::Error(error)
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
     pub fn decode(
         reader: &veilid_capnp::operation_cancel_tunnel_a::Reader,
     ) -> Result<Self, RPCError> {
-        match reader.which().map_err(RPCError::protocol)? {
+        match reader.which()? {
             veilid_capnp::operation_cancel_tunnel_a::Which::Tunnel(r) => {
-                Ok(Self::Tunnel(TunnelId::new(r)))
+                Ok(Self::new_tunnel(TunnelId::new(r)))
             }
             veilid_capnp::operation_cancel_tunnel_a::Which::Error(r) => {
-                let tunnel_error = decode_tunnel_error(r.map_err(RPCError::protocol)?);
-                Ok(Self::Error(tunnel_error))
+                let tunnel_error = decode_tunnel_error(r?);
+                Ok(Self::new_error(tunnel_error))
             }
         }
     }

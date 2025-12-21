@@ -1,7 +1,7 @@
 [package]
 # --- Bumpversion match - do not reorder
 name = "veilid-server"
-version = "0.4.8"
+version = "0.5.0"
 # ---
 description = "Veilid Headless Node"
 resolver = "2"
@@ -17,26 +17,22 @@ name = "veilid-server"
 path = "src/main.rs"
 
 [features]
-default = ["rt-tokio", "veilid-core/default", "otlp-tonic"]
-default-async-std = ["rt-async-std", "veilid-core/default-async-std"]
+default = [
+    "rt-tokio",
+    "veilid-core/default",
+    "otlp-tonic",
+    "veilid-remote-api/default",
+]
+
+default-async-std = [
+    "rt-async-std",
+    "veilid-core/default-async-std",
+    "veilid-remote-api/default-async-std",
+]
+
+enable-protocol-wss = ["veilid-core/enable-protocol-wss"]
 footgun = ["veilid-core/footgun"]
 
-virtual-network = [
-    "veilid-core/virtual-network",
-    "veilid-core/virtual-network-server",
-]
-
-crypto-test = ["rt-tokio", "veilid-core/crypto-test"]
-crypto-test-none = ["rt-tokio", "veilid-core/crypto-test-none"]
-
-otlp-tonic = ["opentelemetry-otlp/grpc-tonic", "opentelemetry-otlp/trace"]
-# otlp-grpc = ["opentelemetry-otlp/grpc-sys", "opentelemetry-otlp/trace"]
-
-rt-async-std = [
-    "veilid-core/rt-async-std",
-    "async-std",
-    "opentelemetry_sdk/rt-async-std",
-]
 rt-tokio = [
     "veilid-core/rt-tokio",
     "tokio",
@@ -44,18 +40,33 @@ rt-tokio = [
     "tokio-util",
     "opentelemetry_sdk/rt-tokio",
 ]
-tracking = ["veilid-core/tracking"]
+
+rt-async-std = [
+    "veilid-core/rt-async-std",
+    "async-std",
+    "opentelemetry_sdk/rt-async-std",
+]
+
+# Debugging and testing features
+crypto-test = ["rt-tokio", "veilid-core/crypto-test"]
+crypto-test-none = ["rt-tokio", "veilid-core/crypto-test-none"]
 debug-json-api = []
 debug-locks = ["veilid-core/debug-locks"]
-perfetto = ["tracing-perfetto"]
 flame = ["tracing-flame"]
-tokio-console = ["rt-tokio", "console-subscriber"]
-
 geolocation = ["veilid-core/geolocation"]
+# otlp-grpc = ["opentelemetry-otlp/grpc-sys", "opentelemetry-otlp/trace"]
+otlp-tonic = ["opentelemetry-otlp/grpc-tonic", "opentelemetry-otlp/trace"]
+perfetto = ["tracing-perfetto"]
+tokio-console = ["rt-tokio", "console-subscriber"]
+tracking = ["veilid-core/tracking"]
+virtual-network = [
+    "veilid-core/virtual-network",
+    "veilid-core/virtual-network-server",
+]
 
 [dependencies]
 veilid-core = { path = "../veilid-core", default-features = false }
-veilid-remote-api = { path = "../veilid-remote-api"}
+veilid-remote-api = { path = "../veilid-remote-api", default-features = false }
 tracing = { version = "^0.1.41", features = ["log", "attributes"] }
 tracing-subscriber = { version = "^0.3.19", features = ["env-filter", "time"] }
 tracing-appender = "^0.2.3"
@@ -81,6 +92,7 @@ cfg-if = "^1.0.0"
 serde = "^1.0.218"
 serde_derive = "^1.0.218"
 serde_yaml = { package = "serde_yaml_ng", version = "^0.10.0" }
+serde_test = "^1.0.177"
 json = "^0"
 futures-util = { version = "^0", default-features = false, features = [
     "alloc",

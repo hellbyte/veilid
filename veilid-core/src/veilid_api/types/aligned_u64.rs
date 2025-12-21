@@ -19,8 +19,14 @@ macro_rules! aligned_u64_type {
             Serialize,
             Deserialize,
             JsonSchema,
+            GetSize,
         )]
-        #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+        #[cfg_attr(
+            all(target_arch = "wasm32", target_os = "unknown"),
+            derive(Tsify),
+            tsify(from_wasm_abi, into_wasm_abi)
+        )]
+        #[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
         #[repr(C, align(8))]
         #[serde(transparent)]
         #[must_use]
@@ -50,7 +56,7 @@ macro_rules! aligned_u64_type {
                 Self(v)
             }
             #[must_use]
-            pub fn as_u64(self) -> u64 {
+            pub const fn as_u64(self) -> u64 {
                 self.0
             }
         }

@@ -1,7 +1,7 @@
 [package]
 # --- Bumpversion match - do not reorder
 name = "veilid-core"
-version = "0.4.8"
+version = "0.5.0"
 # ---
 description = "Core library used to create a Veilid node and operate it as part of an application"
 build = "build.rs"
@@ -20,8 +20,10 @@ path = "src/lib.rs"
 
 [features]
 
+default = ["default-tokio"]
+
 # Common features
-default = ["enable-crypto-vld0", "rt-tokio"]
+default-tokio = ["enable-crypto-vld0", "rt-tokio"]
 default-async-std = ["enable-crypto-vld0", "rt-async-std"]
 default-wasm = ["enable-crypto-vld0"]
 
@@ -45,8 +47,35 @@ rt-tokio = [
 ]
 
 # Crypto support features
-enable-crypto-vld0 = [ "ed25519-dalek", "x25519-dalek", "curve25519-dalek", "blake3", "chacha20poly1305", "chacha20", "argon2" ]
-enable-crypto-none = [ "ed25519-dalek", "curve25519-dalek", "blake3", "argon2", "digest" ]
+enable-crypto-vld0 = [
+    "ed25519-dalek",
+    "x25519-dalek",
+    "curve25519-dalek",
+    "blake3",
+    "chacha20poly1305",
+    "chacha20",
+    "argon2",
+]
+enable-crypto-none = [
+    "ed25519-dalek",
+    "curve25519-dalek",
+    "blake3",
+    "argon2",
+    "digest",
+]
+
+# Protocol support features
+enable-protocol-wss = []
+
+# JSON format to use for serializing
+json-camel-case = []
+
+# GeoIP
+geolocation = ["maxminddb", "reqwest"]
+
+# Features that go against "Natural Security" concepts
+# https://gitlab.com/veilid/veilid/-/issues/420
+footgun = []
 
 # Debugging and testing features
 verbose-tracing = []
@@ -61,19 +90,12 @@ unstable-tunnels = []
 virtual-network = ["veilid-tools/virtual-network"]
 virtual-network-server = ["veilid-tools/virtual-network-server"]
 
-# GeoIP
-geolocation = ["maxminddb", "reqwest"]
-
-# Features that go against "Natural Security" concepts
-# https://gitlab.com/veilid/veilid/-/issues/420
-footgun = []
-
 ### DEPENDENCIES
 
 [dependencies]
 
 # Tools
-veilid-tools = { version = "0.4.8", path = "../veilid-tools", features = [
+veilid-tools = { version = "0.5.0", path = "../veilid-tools", features = [
     "tracing",
 ], default-features = false }
 paste = "1.0.15"
@@ -86,6 +108,7 @@ cfg-if = "1.0.0"
 hex = "0.4.3"
 lazy_static = "1.5.0"
 directories = "5.0.1"
+get-size = { version = "0.1.4", features = ["derive"] }
 
 # Logging
 tracing = { version = "0.1.41", features = ["log", "attributes"] }
@@ -96,7 +119,7 @@ thiserror = "1.0.69"
 
 # Data structures
 enumset = { version = "1.1.5", features = ["serde"] }
-keyvaluedb = "0.1.3"
+keyvaluedb = "0.1.4"
 range-set-blaze = "0.1.16"
 weak-table = "0.3.2"
 hashlink = { package = "veilid-hashlink", version = "0.1.1", features = [
@@ -108,7 +131,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
     "alloc",
 ] }
 flume = { version = "0.11.1", features = ["async"] }
-parking_lot = "0.12.3"
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 lock_api = "0.4.12"
 stop-token = { version = "0.7.0", default-features = false }
 
@@ -134,7 +157,7 @@ blake3 = { version = "1.8.2", optional = true }
 chacha20poly1305 = { version = "0.10.1", optional = true }
 chacha20 = { version = "0.9.1", optional = true }
 argon2 = { version = "0.5.3", optional = true }
-digest = { version = "0.10.7", optional = true, features = [ "rand_core" ]}
+digest = { version = "0.10.7", optional = true, features = ["rand_core"] }
 
 # Network
 async-std-resolver = { version = "0.24.4", optional = true }
@@ -147,7 +170,7 @@ serde_json = { version = "1.0.140" }
 serde-big-array = "0.5.1"
 json = "0.12.4"
 data-encoding = { version = "2.8.0" }
-schemars = "0.8.22"
+schemars = "1.0.3"
 lz4_flex = { version = "0.11.3", default-features = false, features = [
     "safe-encode",
     "safe-decode",
@@ -155,8 +178,9 @@ lz4_flex = { version = "0.11.3", default-features = false, features = [
 indent = "0.1.1"
 sanitize-filename = "0.5.0"
 serde_with = "3.12.0"
+bytes = { version = "1.10.1", features = ["serde"] }
 
-# Dependencies for native builds only
+### Dependencies for native builds only
 # Linux, Windows, Mac, iOS, Android
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 
@@ -182,8 +206,8 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ] }
 
 # Data structures
-keyring-manager = "0.5.1"
-keyvaluedb-sqlite = "0.1.3"
+keyring-manager = "0.6.0"
+keyvaluedb-sqlite = "0.1.4"
 
 # Network
 async-tungstenite = { version = "0.27.0", features = ["async-tls"] }
@@ -194,10 +218,10 @@ webpki-roots = "0.25.4"
 rustls = "0.21.12"
 rustls-pemfile = "1.0.4"
 
-# Dependencies for WASM builds only
+### Dependencies for WASM builds only
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 
-veilid-tools = { version = "0.4.8", path = "../veilid-tools", default-features = false, features = [
+veilid-tools = { version = "0.5.0", path = "../veilid-tools", default-features = false, features = [
     "rt-wasm-bindgen",
 ] }
 
@@ -209,9 +233,12 @@ async_executors = { version = "0.7.0", default-features = false, features = [
     "bindgen",
     "timer",
 ] }
-wasm-bindgen = "0.2.100"
-js-sys = "0.3.77"
-wasm-bindgen-futures = "0.4.50"
+
+js-sys = "0.3.83"
+wasm-bindgen = "0.2.106"
+wasm-bindgen-futures = "0.4.56"
+wasm-bindgen-derive = "0.3.0"
+
 send_wrapper = { version = "0.6.0", features = ["futures"] }
 serde_bytes = { version = "0.11", default-features = false, features = [
     "alloc",
@@ -226,7 +253,7 @@ ws_stream_wasm = "0.7.4"
 wasm-logger = "0.2.0"
 
 # Data Structures
-keyvaluedb-web = "0.1.3"
+keyvaluedb-web = "0.1.4"
 
 ### Configuration for WASM32 'web-sys' crate
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.web-sys]
@@ -276,7 +303,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 serial_test = { version = "2.0.0", default-features = false, features = [
     "async",
 ] }
-wasm-bindgen-test = "0.3.50"
+wasm-bindgen-test = "0.3.56"
 console_error_panic_hook = "0.1.7"
 wasm-logger = "0.2.0"
 veilid-tracing-wasm = "^0"
@@ -294,7 +321,7 @@ bosion = { version = "1.1.2", default-features = false }
 
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O", "--enable-mutable-globals"]
+wasm-opt = ["-O"]
 
 [package.metadata.wasm-pack.profile.dev.wasm-bindgen]
 dwarf-debug-info = true

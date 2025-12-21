@@ -6,7 +6,52 @@ use super::*;
 #[derive(Debug, PartialOrd, Ord, Hash, EnumSetType, Serialize, Deserialize)]
 #[enumset(repr = "u8")]
 pub enum Direction {
-    Inbound = 0,
-    Outbound = 1,
+    In = 0,
+    Out = 1,
 }
+
+impl Direction {
+    pub fn set_from_str(s: &str) -> VeilidAPIResult<DirectionSet> {
+        let s = s.to_ascii_lowercase();
+        if s == "all-direection" {
+            return Ok(DirectionSet::all());
+        }
+        if s == "no-direction" || s.is_empty() {
+            return Ok(DirectionSet::empty());
+        }
+        let mut dset = DirectionSet::empty();
+        for dstr in s.split("|") {
+            let d = Direction::from_str(dstr)?;
+            dset |= d;
+        }
+        Ok(dset)
+    }
+}
+
 pub type DirectionSet = EnumSet<Direction>;
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Direction::In => "in",
+            Direction::Out => "out",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for Direction {
+    type Err = VeilidAPIError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_ascii_lowercase();
+        if "in".starts_with(&s) {
+            Ok(Self::In)
+        } else if "out".starts_with(&s) {
+            Ok(Self::Out)
+        } else {
+            Err(VeilidAPIError::parse_error("Direction::from_str failed", s))
+        }
+    }
+}

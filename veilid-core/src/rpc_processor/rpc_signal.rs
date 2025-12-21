@@ -34,7 +34,7 @@ impl RPCProcessor {
         let statement = RPCStatement::new(RPCStatementDetail::Signal(Box::new(signal)));
 
         // Send the signal request
-        self.statement(dest, statement).await
+        self.statement(dest, statement, None, None).await
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -46,11 +46,7 @@ impl RPCProcessor {
 
         let has_capability_signal = routing_table
             .get_published_peer_info(msg.header.routing_domain())
-            .map(|ppi| {
-                ppi.signed_node_info()
-                    .node_info()
-                    .has_capability(CAP_SIGNAL)
-            })
+            .map(|ppi| ppi.node_info().has_capability(VEILID_CAPABILITY_SIGNAL))
             .unwrap_or(false);
         if !has_capability_signal {
             return Ok(NetworkResult::service_unavailable(

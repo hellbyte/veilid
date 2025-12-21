@@ -1,11 +1,11 @@
-use crate::tests::test_veilid_config::*;
+use crate::tests::fixtures::*;
 use crate::*;
 use futures_util::StreamExt as _;
 
 async fn startup() -> VeilidAPI {
     trace!("test_table_store: starting");
-    let (update_callback, config_callback) = setup_veilid_core();
-    api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    api_startup(update_callback, config)
         .await
         .expect("startup failed")
 }
@@ -144,15 +144,18 @@ pub async fn test_transaction(ts: &TableStore) {
     );
 
     let tx = db.transact();
-    assert!(tx.store(0, b"aaa", b"a-value").is_ok());
-    assert!(tx.store_json(1, b"bbb", &"b-value".to_owned()).is_ok());
-    assert!(tx.store(3, b"ddd", b"d-value").is_err());
-    assert!(tx.store(0, b"ddd", b"d-value").is_ok());
-    assert!(tx.delete(0, b"ddd").is_ok());
+    assert!(tx.store(0, b"aaa", b"a-value").await.is_ok());
+    assert!(tx
+        .store_json(1, b"bbb", &"b-value".to_owned())
+        .await
+        .is_ok());
+    assert!(tx.store(3, b"ddd", b"d-value").await.is_err());
+    assert!(tx.store(0, b"ddd", b"d-value").await.is_ok());
+    assert!(tx.delete(0, b"ddd").await.is_ok());
     assert!(tx.commit().await.is_ok());
 
     let tx = db.transact();
-    assert!(tx.delete(2, b"ccc").is_ok());
+    assert!(tx.delete(2, b"ccc").await.is_ok());
     tx.rollback();
 
     assert_eq!(db.load(0, b"aaa").await, Ok(Some(b"a-value".to_vec())));
@@ -180,7 +183,7 @@ pub async fn test_json(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &TableStore) {
             panic!("couldn't decode: {}", e);
         }
     };
-    assert_eq!(d, Some(keypair), "keys should be equal");
+    assert_eq!(d, Some(keypair.clone()), "keys should be equal");
 
     let d = match db.delete_json::<KeyPair>(0, b"asdf").await {
         Ok(x) => x,
@@ -188,7 +191,7 @@ pub async fn test_json(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &TableStore) {
             panic!("couldn't decode: {}", e);
         }
     };
-    assert_eq!(d, Some(keypair), "keys should be equal");
+    assert_eq!(d, Some(keypair.clone()), "keys should be equal");
 
     assert!(
         db.store(1, b"foo", b"1234567890").await.is_ok(),
@@ -196,7 +199,7 @@ pub async fn test_json(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &TableStore) {
     );
 
     assert!(
-        db.load_json::<TypedPublicKey>(1, b"foo").await.is_err(),
+        db.load_json::<PublicKey>(1, b"foo").await.is_err(),
         "should fail to unfreeze"
     );
 }
@@ -204,25 +207,25 @@ pub async fn test_json(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &TableStore) {
 pub async fn test_protect_unprotect(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &TableStore) {
     trace!("test_protect_unprotect");
 
-    let dek1 = TypedSharedSecret::new(
+    let dek1 = SharedSecret::new(
         vcrypto.kind(),
-        SharedSecret::new([
+        BareSharedSecret::new(&[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0,
         ]),
     );
 
-    let dek2 = TypedSharedSecret::new(
+    let dek2 = SharedSecret::new(
         vcrypto.kind(),
-        SharedSecret::new([
+        BareSharedSecret::new(&[
             1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0xFF,
         ]),
     );
 
-    let dek3 = TypedSharedSecret::new(
+    let dek3 = SharedSecret::new(
         vcrypto.kind(),
-        SharedSecret::new([0x80u8; SHARED_SECRET_LENGTH]),
+        BareSharedSecret::new(&[0x80u8; VLD0_SHARED_SECRET_LENGTH]),
     );
 
     let deks = [dek1, dek2, dek3];
@@ -240,7 +243,7 @@ pub async fn test_protect_unprotect(vcrypto: &AsyncCryptoSystemGuard<'_>, ts: &T
         for password in passwords {
             trace!("testing dek {} with password {}", dek, password);
             let dek_bytes = ts
-                .maybe_protect_device_encryption_key(dek, password)
+                .maybe_protect_device_encryption_key(dek.clone(), password)
                 .await
                 .unwrap_or_else(|_| panic!("protect: dek: '{}' pw: '{}'", dek, password));
 
@@ -317,7 +320,10 @@ pub async fn test_store_load_json_many(ts: &TableStore) {
     assert_eq!(stored_keys_set, keys, "should have same keys");
 
     let end_ts = Timestamp::now();
-    trace!("test_store_load_json_many duration={}", (end_ts - start_ts));
+    trace!(
+        "test_store_load_json_many duration={}",
+        end_ts.duration_since(start_ts)
+    );
 }
 
 pub async fn test_all() {

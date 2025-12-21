@@ -25,15 +25,17 @@ Uint8List base64UrlNoPadDecodeDynamic(dynamic source) =>
     base64UrlNoPadDecode(source as String);
 
 class Uint8ListJsonConverter implements JsonConverter<Uint8List, dynamic> {
-  const Uint8ListJsonConverter() : _jsIsArray = false;
-  const Uint8ListJsonConverter.jsIsArray() : _jsIsArray = true;
-
   final bool _jsIsArray;
+
+  const Uint8ListJsonConverter() : _jsIsArray = false;
+
+  const Uint8ListJsonConverter.jsIsArray() : _jsIsArray = true;
 
   @override
   Uint8List fromJson(dynamic json) => kIsWeb && _jsIsArray
       ? convertUint8ListFromJson(json)
       : base64UrlNoPadDecode(json as String);
+
   @override
   dynamic toJson(Uint8List data) => kIsWeb && _jsIsArray
       ? convertUint8ListToJson(data)
@@ -41,51 +43,55 @@ class Uint8ListJsonConverter implements JsonConverter<Uint8List, dynamic> {
 }
 
 @immutable
-abstract class EncodedString extends Equatable {
-  const EncodedString(String s) : contents = s;
-  final String contents;
-  @override
-  List<Object> get props => [contents];
+sealed class EncodedString extends Equatable {
+  ////////////////////////////////////////////////////////////////////////////
 
-  Uint8List decode() => base64UrlNoPadDecode(contents);
+  final String contents;
+
+  EncodedString._fromBytes(Uint8List bytes)
+      : contents = base64UrlNoPadEncode(bytes);
+
+  EncodedString._fromString(String s) : contents = s {
+    // Ensure things can be decoded, will throw an exception if it fails
+    base64UrlNoPadDecode(contents);
+  }
+
+  EncodedString._fromJson(dynamic json) : contents = json as String {
+    // Ensure things can be decoded, will throw an exception if it fails
+    base64UrlNoPadDecode(contents);
+  }
+
+  String toJson() => toString();
+
+  Uint8List toBytes() => base64UrlNoPadDecode(contents);
 
   @override
   String toString() => contents;
 
-  static int encodedLength<T extends EncodedString>() {
-    switch (T) {
-      case FixedEncodedString32:
-        return FixedEncodedString32.encodedLength();
-      case FixedEncodedString43:
-        return FixedEncodedString43.encodedLength();
-      case FixedEncodedString86:
-        return FixedEncodedString86.encodedLength();
-      default:
-        throw UnimplementedError();
-    }
-  }
-
-  static int decodedLength<T extends EncodedString>() {
-    switch (T) {
-      case FixedEncodedString32:
-        return FixedEncodedString32.decodedLength();
-      case FixedEncodedString43:
-        return FixedEncodedString43.decodedLength();
-      case FixedEncodedString86:
-        return FixedEncodedString86.decodedLength();
-      default:
-        throw UnimplementedError();
-    }
-  }
+  ////////////////////////////////////////////////////////////////////////////
 
   static T fromBytes<T extends EncodedString>(Uint8List bytes) {
     switch (T) {
-      case FixedEncodedString32:
-        return FixedEncodedString32.fromBytes(bytes) as T;
-      case FixedEncodedString43:
-        return FixedEncodedString43.fromBytes(bytes) as T;
-      case FixedEncodedString86:
-        return FixedEncodedString86.fromBytes(bytes) as T;
+      case const (BarePublicKey):
+        return BarePublicKey.fromBytes(bytes) as T;
+      case const (BareSignature):
+        return BareSignature.fromBytes(bytes) as T;
+      case const (Nonce):
+        return Nonce.fromBytes(bytes) as T;
+      case const (BareSecretKey):
+        return BareSecretKey.fromBytes(bytes) as T;
+      case const (BareHashDigest):
+        return BareHashDigest.fromBytes(bytes) as T;
+      case const (BareOpaqueRecordKey):
+        return BareOpaqueRecordKey.fromBytes(bytes) as T;
+      case const (BareSharedSecret):
+        return BareSharedSecret.fromBytes(bytes) as T;
+      case const (BareRouteId):
+        return BareRouteId.fromBytes(bytes) as T;
+      case const (BareNodeId):
+        return BareNodeId.fromBytes(bytes) as T;
+      case const (BareMemberId):
+        return BareMemberId.fromBytes(bytes) as T;
       default:
         throw UnimplementedError();
     }
@@ -93,93 +99,118 @@ abstract class EncodedString extends Equatable {
 
   static T fromString<T extends EncodedString>(String s) {
     switch (T) {
-      case FixedEncodedString32:
-        return FixedEncodedString32.fromString(s) as T;
-      case FixedEncodedString43:
-        return FixedEncodedString43.fromString(s) as T;
-      case FixedEncodedString86:
-        return FixedEncodedString86.fromString(s) as T;
+      case const (BarePublicKey):
+        return BarePublicKey.fromString(s) as T;
+      case const (BareSignature):
+        return BareSignature.fromString(s) as T;
+      case const (Nonce):
+        return Nonce.fromString(s) as T;
+      case const (BareSecretKey):
+        return BareSecretKey.fromString(s) as T;
+      case const (BareHashDigest):
+        return BareHashDigest.fromString(s) as T;
+      case const (BareOpaqueRecordKey):
+        return BareOpaqueRecordKey.fromString(s) as T;
+      case const (BareSharedSecret):
+        return BareSharedSecret.fromString(s) as T;
+      case const (BareRouteId):
+        return BareRouteId.fromString(s) as T;
+      case const (BareNodeId):
+        return BareNodeId.fromString(s) as T;
+      case const (BareMemberId):
+        return BareMemberId.fromString(s) as T;
       default:
         throw UnimplementedError();
     }
   }
+
+  static T fromJson<T extends EncodedString>(dynamic json) {
+    switch (T) {
+      case const (BarePublicKey):
+        return BarePublicKey.fromJson(json) as T;
+      case const (BareSignature):
+        return BareSignature.fromJson(json) as T;
+      case const (Nonce):
+        return Nonce.fromJson(json) as T;
+      case const (BareSecretKey):
+        return BareSecretKey.fromJson(json) as T;
+      case const (BareHashDigest):
+        return BareHashDigest.fromJson(json) as T;
+      case const (BareOpaqueRecordKey):
+        return BareOpaqueRecordKey.fromJson(json) as T;
+      case const (BareSharedSecret):
+        return BareSharedSecret.fromJson(json) as T;
+      case const (BareRouteId):
+        return BareRouteId.fromJson(json) as T;
+      case const (BareNodeId):
+        return BareNodeId.fromJson(json) as T;
+      case const (BareMemberId):
+        return BareMemberId.fromJson(json) as T;
+      default:
+        throw UnimplementedError();
+    }
+  }
+
+  @override
+  List<Object> get props => [contents];
 }
 
-@immutable
-class FixedEncodedString32 extends EncodedString {
-  factory FixedEncodedString32.fromBytes(Uint8List bytes) {
-    if (bytes.length != decodedLength()) {
-      throw Exception('length ${bytes.length} should be ${decodedLength()}');
-    }
-    return FixedEncodedString32._(base64UrlNoPadEncode(bytes));
-  }
-
-  factory FixedEncodedString32.fromString(String s) {
-    final d = base64UrlNoPadDecode(s);
-    if (d.length != decodedLength()) {
-      throw Exception('length ${s.length} should be ${encodedLength()}');
-    }
-    return FixedEncodedString32._(s);
-  }
-  factory FixedEncodedString32.fromJson(dynamic json) =>
-      FixedEncodedString32.fromString(json as String);
-  const FixedEncodedString32._(super.s);
-  static int encodedLength() => 32;
-
-  static int decodedLength() => 24;
-
-  String toJson() => toString();
+class BarePublicKey extends EncodedString {
+  BarePublicKey.fromBytes(super.bytes) : super._fromBytes();
+  BarePublicKey.fromString(super.s) : super._fromString();
+  BarePublicKey.fromJson(super.json) : super._fromJson();
 }
 
-@immutable
-class FixedEncodedString43 extends EncodedString {
-  factory FixedEncodedString43.fromBytes(Uint8List bytes) {
-    if (bytes.length != decodedLength()) {
-      throw Exception('length ${bytes.length} should be ${decodedLength()}');
-    }
-    return FixedEncodedString43._(base64UrlNoPadEncode(bytes));
-  }
-
-  factory FixedEncodedString43.fromString(String s) {
-    final d = base64UrlNoPadDecode(s);
-    if (d.length != decodedLength()) {
-      throw Exception('length ${s.length} should be ${encodedLength()}');
-    }
-    return FixedEncodedString43._(s);
-  }
-  factory FixedEncodedString43.fromJson(dynamic json) =>
-      FixedEncodedString43.fromString(json as String);
-  const FixedEncodedString43._(super.s);
-  static int encodedLength() => 43;
-
-  static int decodedLength() => 32;
-
-  String toJson() => toString();
+class BareSignature extends EncodedString {
+  BareSignature.fromBytes(super.bytes) : super._fromBytes();
+  BareSignature.fromString(super.s) : super._fromString();
+  BareSignature.fromJson(super.json) : super._fromJson();
 }
 
-@immutable
-class FixedEncodedString86 extends EncodedString {
-  factory FixedEncodedString86.fromBytes(Uint8List bytes) {
-    if (bytes.length != decodedLength()) {
-      throw Exception('length ${bytes.length} should be ${decodedLength()}');
-    }
-    return FixedEncodedString86._(base64UrlNoPadEncode(bytes));
-  }
+class Nonce extends EncodedString {
+  Nonce.fromBytes(super.bytes) : super._fromBytes();
+  Nonce.fromString(super.s) : super._fromString();
+  Nonce.fromJson(super.json) : super._fromJson();
+}
 
-  factory FixedEncodedString86.fromString(String s) {
-    final d = base64UrlNoPadDecode(s);
-    if (d.length != decodedLength()) {
-      throw Exception('length ${s.length} should be ${encodedLength()}');
-    }
-    return FixedEncodedString86._(s);
-  }
+class BareSecretKey extends EncodedString {
+  BareSecretKey.fromBytes(super.bytes) : super._fromBytes();
+  BareSecretKey.fromString(super.s) : super._fromString();
+  BareSecretKey.fromJson(super.json) : super._fromJson();
+}
 
-  factory FixedEncodedString86.fromJson(dynamic json) =>
-      FixedEncodedString86.fromString(json as String);
-  const FixedEncodedString86._(super.s);
-  static int encodedLength() => 86;
+class BareHashDigest extends EncodedString {
+  BareHashDigest.fromBytes(super.bytes) : super._fromBytes();
+  BareHashDigest.fromString(super.s) : super._fromString();
+  BareHashDigest.fromJson(super.json) : super._fromJson();
+}
 
-  static int decodedLength() => 64;
+class BareOpaqueRecordKey extends EncodedString {
+  BareOpaqueRecordKey.fromBytes(super.bytes) : super._fromBytes();
+  BareOpaqueRecordKey.fromString(super.s) : super._fromString();
+  BareOpaqueRecordKey.fromJson(super.json) : super._fromJson();
+}
 
-  String toJson() => toString();
+class BareSharedSecret extends EncodedString {
+  BareSharedSecret.fromBytes(super.bytes) : super._fromBytes();
+  BareSharedSecret.fromString(super.s) : super._fromString();
+  BareSharedSecret.fromJson(super.json) : super._fromJson();
+}
+
+class BareRouteId extends EncodedString {
+  BareRouteId.fromBytes(super.bytes) : super._fromBytes();
+  BareRouteId.fromString(super.s) : super._fromString();
+  BareRouteId.fromJson(super.json) : super._fromJson();
+}
+
+class BareNodeId extends EncodedString {
+  BareNodeId.fromBytes(super.bytes) : super._fromBytes();
+  BareNodeId.fromString(super.s) : super._fromString();
+  BareNodeId.fromJson(super.json) : super._fromJson();
+}
+
+class BareMemberId extends EncodedString {
+  BareMemberId.fromBytes(super.bytes) : super._fromBytes();
+  BareMemberId.fromString(super.s) : super._fromString();
+  BareMemberId.fromJson(super.json) : super._fromJson();
 }

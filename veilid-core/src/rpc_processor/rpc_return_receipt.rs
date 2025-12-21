@@ -24,7 +24,7 @@ impl RPCProcessor {
             RPCStatement::new(RPCStatementDetail::ReturnReceipt(Box::new(return_receipt)));
 
         // Send the return_receipt request
-        network_result_try!(self.statement(dest, statement).await?);
+        network_result_try!(self.statement(dest, statement, None, None).await?);
 
         Ok(NetworkResult::value(()))
     }

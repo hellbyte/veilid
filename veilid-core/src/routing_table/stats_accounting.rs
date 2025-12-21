@@ -16,12 +16,6 @@ pub struct StateReasonSpan {
     enter_ts: Timestamp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StateSpan {
-    state: BucketEntryState,
-    enter_ts: Timestamp,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct StateStatsAccounting {
     rolling_state_reason_spans: VecDeque<StateReasonSpan>,
@@ -42,13 +36,13 @@ impl StateStatsAccounting {
 
         let mut last_ts = cur_ts;
         for rss in self.rolling_state_reason_spans.iter().rev() {
-            let span_dur = last_ts.saturating_sub(rss.enter_ts);
+            let span_dur = last_ts.duration_since(rss.enter_ts);
 
             match BucketEntryState::from(rss.state_reason) {
-                BucketEntryState::Punished => ss.punished += span_dur,
-                BucketEntryState::Dead => ss.dead += span_dur,
-                BucketEntryState::Unreliable => ss.unreliable += span_dur,
-                BucketEntryState::Reliable => ss.reliable += span_dur,
+                BucketEntryState::Punished => ss.punished.saturating_add_assign(span_dur),
+                BucketEntryState::Dead => ss.dead.saturating_add_assign(span_dur),
+                BucketEntryState::Unreliable => ss.unreliable.saturating_add_assign(span_dur),
+                BucketEntryState::Reliable => ss.reliable.saturating_add_assign(span_dur),
             }
             match rss.state_reason {
                 BucketEntryStateReason::Punished(_) => {
@@ -56,22 +50,30 @@ impl StateStatsAccounting {
                 }
                 BucketEntryStateReason::Dead(bucket_entry_dead_reason) => {
                     match bucket_entry_dead_reason {
-                        BucketEntryDeadReason::CanNotSend => srs.can_not_send += span_dur,
-                        BucketEntryDeadReason::TooManyLostAnswers => {
-                            srs.too_many_lost_answers += span_dur
+                        BucketEntryDeadReason::CanNotSend => {
+                            srs.can_not_send.saturating_add_assign(span_dur)
                         }
-                        BucketEntryDeadReason::NoPingResponse => srs.no_ping_response += span_dur,
+                        BucketEntryDeadReason::TooManyLostAnswers => {
+                            srs.too_many_lost_answers.saturating_add_assign(span_dur)
+                        }
+                        BucketEntryDeadReason::NoPingResponse => {
+                            srs.no_ping_response.saturating_add_assign(span_dur)
+                        }
                     }
                 }
                 BucketEntryStateReason::Unreliable(bucket_entry_unreliable_reason) => {
                     match bucket_entry_unreliable_reason {
-                        BucketEntryUnreliableReason::FailedToSend => srs.failed_to_send += span_dur,
-                        BucketEntryUnreliableReason::LostAnswers => srs.lost_answers += span_dur,
+                        BucketEntryUnreliableReason::FailedToSend => {
+                            srs.failed_to_send.saturating_add_assign(span_dur)
+                        }
+                        BucketEntryUnreliableReason::LostAnswers => {
+                            srs.lost_answers.saturating_add_assign(span_dur)
+                        }
                         BucketEntryUnreliableReason::NotSeenConsecutively => {
-                            srs.not_seen_consecutively += span_dur
+                            srs.not_seen_consecutively.saturating_add_assign(span_dur)
                         }
                         BucketEntryUnreliableReason::InUnreliablePingSpan => {
-                            srs.in_unreliable_ping_span += span_dur
+                            srs.in_unreliable_ping_span.saturating_add_assign(span_dur)
                         }
                     }
                 }
@@ -82,7 +84,7 @@ impl StateStatsAccounting {
 
             last_ts = rss.enter_ts;
         }
-        ss.span = cur_ts.saturating_sub(last_ts);
+        ss.span = cur_ts.duration_since(last_ts);
         ss
     }
 
@@ -213,7 +215,7 @@ impl AnswerStatsAccounting {
             consecutive_lost_answers_average /= len;
         }
 
-        let span = cur_ts.saturating_sub(last_ts);
+        let span = cur_ts.duration_since(last_ts);
 
         AnswerStats {
             span,

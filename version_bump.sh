@@ -29,3 +29,22 @@ cargo upgrade -p veilid-tools@$NEW_VERSION -p veilid-core@$NEW_VERSION -p veilid
 
 # Update lockfile
 cargo update -w
+
+# Update python lockfile
+pushd veilid-python 2>/dev/null
+uv lock
+popd 2>/dev/null
+
+# Update flutter lockfiles
+pushd veilid-flutter 2>/dev/null
+flutter pub get
+popd 2>/dev/null
+
+# Update npm lockfiles
+pushd veilid-wasm 2>/dev/null
+wasm-pack build --dev --target bundler --weak-refs
+popd 2>/dev/null
+
+pushd veilid-wasm/tests 2>/dev/null
+npm install --package-lock-only
+popd 2>/dev/null

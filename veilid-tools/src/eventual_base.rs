@@ -158,7 +158,7 @@ impl<T> EventualBaseInner<T> {
 pub trait EventualBase: Clone + Unpin {
     type ResolvedType;
 
-    fn base_inner(&self) -> MutexGuard<EventualBaseInner<Self::ResolvedType>>;
+    fn base_inner(&self) -> MutexGuard<'_, EventualBaseInner<Self::ResolvedType>>;
 
     fn resolve_to_value(&self, value: Self::ResolvedType) -> EventualResolvedFuture<Self> {
         let wakers = {

@@ -48,7 +48,10 @@ Future<VeilidConfig> getDefaultVeilidConfig({
                 : defaultConfig.network.routingTable.bootstrap,
             bootstrapKeys: bootstrapKeys != null
                 ? bootstrapKeys.isNotEmpty
-                    ? bootstrapKeys.split(',').map(TypedKey.fromString).toList()
+                    ? bootstrapKeys
+                        .split(',')
+                        .map(PublicKey.fromString)
+                        .toList()
                     : []
                 : defaultConfig.network.routingTable.bootstrapKeys),
       ));

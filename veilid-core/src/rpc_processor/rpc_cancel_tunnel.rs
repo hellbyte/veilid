@@ -14,7 +14,7 @@ impl RPCProcessor {
                     if !opi
                         .signed_node_info()
                         .node_info()
-                        .has_capability(CAP_TUNNEL)
+                        .has_capability(VEILID_CAPABILITY_TUNNEL)
                     {
                         return Ok(NetworkResult::service_unavailable(
                             "tunnel is not available",

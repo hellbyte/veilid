@@ -7,13 +7,13 @@ import 'processor_connection_state.dart';
 import 'veilid_fixture.dart';
 
 class UpdateProcessorFixture {
-  UpdateProcessorFixture({required this.veilidFixture});
-
   static final _fixtureMutex = Mutex();
+
   VeilidFixture veilidFixture;
 
-  ProcessorConnectionState processorConnectionState =
-      ProcessorConnectionState();
+  final processorConnectionState = ProcessorConnectionState();
+
+  UpdateProcessorFixture({required this.veilidFixture});
 
   Future<void> setUp() async {
     await _fixtureMutex.acquire();

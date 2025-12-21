@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "strict": true,
+  },
+  "include": ["pkg/*.d.ts"]
+}

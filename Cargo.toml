@@ -24,6 +24,7 @@ cursive = { git = "https://gitlab.com/veilid/cursive.git" }
 cursive_core = { git = "https://gitlab.com/veilid/cursive.git" }
 
 # For local development
+# keyring-manager = { path = "../keyring-manager" }
 # keyvaluedb = { path = "../keyvaluedb/keyvaluedb" }
 # keyvaluedb-memorydb = { path = "../keyvaluedb/keyvaluedb-memorydb" }
 # keyvaluedb-sqlite = { path = "../keyvaluedb/keyvaluedb-sqlite" }
@@ -31,7 +32,7 @@ cursive_core = { git = "https://gitlab.com/veilid/cursive.git" }
 # igd = { package = "veilid-igd", path = "../rust-igd" }
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 
 [profile.dev.package.backtrace]
@@ -39,30 +40,87 @@ opt-level = 3
 
 [profile.dev.package.argon2]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.ed25519-dalek]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.x25519-dalek]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.chacha20poly1305]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.blake3]
 opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [profile.dev.package.chacha20]
 opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.sha2]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.poly1305]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.cipher]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.crypto-common]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.generic-array]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.capnp]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.data-encoding]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.lz4_flex]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.signature]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+
+[profile.dev.package.digest]
+opt-level = 3
+overflow-checks = false
 debug-assertions = false
 
 [workspace.lints.clippy]

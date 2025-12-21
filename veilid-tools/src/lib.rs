@@ -44,6 +44,7 @@ pub mod network_interfaces;
 pub mod network_result;
 pub mod pin;
 pub mod random;
+pub mod raw_timestamp;
 pub mod single_shot_eventual;
 pub mod sleep;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -55,7 +56,6 @@ pub mod static_string_table;
 pub mod tick_task;
 pub mod timeout;
 pub mod timeout_or;
-pub mod timestamp;
 pub mod tools;
 #[cfg(feature = "virtual-network")]
 pub mod virtual_network;
@@ -125,6 +125,13 @@ pub use async_lock::RwLockReadGuardArc as AsyncRwLockReadGuardArc;
 pub use async_lock::RwLockWriteGuard as AsyncRwLockWriteGuard;
 #[doc(no_inline)]
 pub use async_lock::RwLockWriteGuardArc as AsyncRwLockWriteGuardArc;
+
+#[doc(no_inline)]
+pub use async_lock::Semaphore as AsyncSemaphore;
+#[doc(no_inline)]
+pub use async_lock::SemaphoreGuard as AsyncSemaphoreGuard;
+#[doc(no_inline)]
+pub use async_lock::SemaphoreGuardArc as AsyncSemaphoreGuardArc;
 
 cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
@@ -215,6 +222,8 @@ pub use pin::*;
 #[doc(inline)]
 pub use random::*;
 #[doc(inline)]
+pub use raw_timestamp::*;
+#[doc(inline)]
 pub use single_shot_eventual::*;
 #[doc(inline)]
 pub use sleep::*;
@@ -235,8 +244,6 @@ pub use tick_task::*;
 pub use timeout::*;
 #[doc(inline)]
 pub use timeout_or::*;
-#[doc(inline)]
-pub use timestamp::*;
 #[doc(inline)]
 pub use tools::*;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]

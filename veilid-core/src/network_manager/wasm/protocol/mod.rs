@@ -29,7 +29,11 @@ impl ProtocolNetworkConnection {
             ProtocolType::TCP => {
                 panic!("TCP dial info is not supported on WASM targets");
             }
-            ProtocolType::WS | ProtocolType::WSS => {
+            ProtocolType::WS => {
+                ws::WebsocketProtocolHandler::connect(registry, dial_info, timeout_ms).await
+            }
+            #[cfg(feature = "enable-protocol-wss")]
+            ProtocolType::WSS => {
                 ws::WebsocketProtocolHandler::connect(registry, dial_info, timeout_ms).await
             }
         }

@@ -1,4 +1,3 @@
-// ignore_for_file: prefer_single_quotes
 import 'dart:io' show Platform;
 
 import 'package:ansicolor/ansicolor.dart';
@@ -7,7 +6,7 @@ import 'package:loggy/loggy.dart';
 import 'package:veilid/veilid.dart';
 
 // Loggy tools
-const LogLevel traceLevel = LogLevel('Trace', 1);
+const traceLevel = LogLevel('Trace', 1);
 
 VeilidConfigLogLevel convertToVeilidConfigLogLevel(LogLevel? level) {
   if (level == null) {
@@ -66,7 +65,7 @@ String wrapWithLogColor(LogLevel? level, String text) {
 
 void setRootLogLevel(LogLevel? level) {
   Loggy('').level = getLogOptions(level);
-  Veilid.instance.changeLogLevel("all", convertToVeilidConfigLogLevel(level));
+  Veilid.instance.changeLogLevel('all', convertToVeilidConfigLogLevel(level));
 }
 
 extension PrettyPrintLogRecord on LogRecord {
@@ -78,9 +77,9 @@ extension PrettyPrintLogRecord on LogRecord {
 }
 
 class CallbackPrinter extends LoggyPrinter {
-  CallbackPrinter() : super();
-
   void Function(LogRecord)? callback;
+
+  CallbackPrinter() : super();
 
   @override
   void onLog(LogRecord record) {
@@ -95,13 +94,14 @@ class CallbackPrinter extends LoggyPrinter {
     callback?.call(record);
   }
 
+  // Keep this as a function
   // ignore: use_setters_to_change_properties
   void setCallback(void Function(LogRecord)? cb) {
     callback = cb;
   }
 }
 
-CallbackPrinter globalTerminalPrinter = CallbackPrinter();
+var globalTerminalPrinter = CallbackPrinter();
 
 extension TraceLoggy on Loggy {
   void trace(dynamic message, [Object? error, StackTrace? stackTrace]) =>

@@ -13,7 +13,7 @@ pub(in crate::storage_manager) struct OutboundWatchState {
     /// The number of nodes we got at our last reconciliation
     opt_last_consensus_node_count: Option<usize>,
     /// Calculated field: minimum expiration time for all our nodes
-    min_expiration_ts: Timestamp,
+    min_expiration: Timestamp,
     /// Calculated field: the set of value changed routes for this watch from all per node watches
     value_changed_routes: BTreeSet<PublicKey>,
 }
@@ -34,7 +34,7 @@ nodes: [{}]
 remaining_count: {}
 opt_next_reconcile_ts: {}
 opt_consensus_node_count: {}
-min_expiration_ts: {}
+min_expiration: {}
 value_changed_routes: [{}]"#,
             self.params,
             self.nodes
@@ -53,7 +53,7 @@ value_changed_routes: [{}]"#,
             } else {
                 "None".to_owned()
             },
-            self.min_expiration_ts,
+            self.min_expiration,
             value_changed_routes.join(","),
         )
     }
@@ -91,7 +91,7 @@ impl OutboundWatchStateEditor<'_> {
 impl OutboundWatchState {
     pub fn new(params: OutboundWatchParameters) -> Self {
         let remaining_count = params.count;
-        let min_expiration_ts = params.expiration_ts;
+        let min_expiration = params.expiration;
 
         Self {
             params,
@@ -99,7 +99,7 @@ impl OutboundWatchState {
             remaining_count,
             opt_next_reconcile_ts: None,
             opt_last_consensus_node_count: None,
-            min_expiration_ts,
+            min_expiration,
             value_changed_routes: BTreeSet::new(),
         }
     }
@@ -119,8 +119,8 @@ impl OutboundWatchState {
     pub fn last_consensus_node_count(&self) -> Option<usize> {
         self.opt_last_consensus_node_count
     }
-    pub fn min_expiration_ts(&self) -> Timestamp {
-        self.min_expiration_ts
+    pub fn min_expiration(&self) -> Timestamp {
+        self.min_expiration
     }
     pub fn value_changed_routes(&self) -> &BTreeSet<PublicKey> {
         &self.value_changed_routes
@@ -146,24 +146,30 @@ impl OutboundWatchState {
 
     pub fn edit<R, F: FnOnce(&mut OutboundWatchStateEditor) -> R>(
         &mut self,
-        per_node_state: &HashMap<PerNodeKey, PerNodeState>,
+        per_node_state: &HashMap<PerNodeKey, OutboundWatchPerNodeState>,
         closure: F,
     ) -> R {
         let mut editor = OutboundWatchStateEditor { state: self };
         let res = closure(&mut editor);
 
         // Update calculated fields
-        self.min_expiration_ts = self
+        self.min_expiration = self
             .nodes
             .iter()
-            .map(|x| per_node_state.get(x).unwrap().expiration_ts)
+            .map(|x| per_node_state.get(x).unwrap().expiration)
             .reduce(|a, b| a.min(b))
-            .unwrap_or(self.params.expiration_ts);
+            .unwrap_or(self.params.expiration);
 
         self.value_changed_routes = self
             .nodes
             .iter()
-            .filter_map(|x| per_node_state.get(x).unwrap().opt_value_changed_route)
+            .filter_map(|x| {
+                per_node_state
+                    .get(x)
+                    .cloned()
+                    .unwrap()
+                    .opt_value_changed_route
+            })
             .collect();
 
         res
@@ -171,7 +177,7 @@ impl OutboundWatchState {
 
     pub fn watch_node_refs(
         &self,
-        per_node_state: &HashMap<PerNodeKey, PerNodeState>,
+        per_node_state: &HashMap<PerNodeKey, OutboundWatchPerNodeState>,
     ) -> Vec<NodeRef> {
         self.nodes
             .iter()

@@ -1,31 +1,37 @@
-[tool.poetry]
-# --- Bumpversion match - do not reorder
+[project]
 name = "veilid"
-version = "0.4.8"
+version = "0.5.0"
 # ---
 description = "Create an application in Python using the distributed Veilid framework for private, E2EE, app-to-app communication."
-authors = ["Veilid Team <contact@veilid.com>"]
+authors = [{ name = "Veilid Team", email = "contact@veilid.com" }]
+requires-python = ">=3.12.5,<4"
 readme = "README.md"
 license = "MPL-2.0"
-packages = [{ include = "veilid" }]
+dependencies = [
+    "jsonschema>=4.17.3,<5",
+    "appdirs>=1.4.4,<2",
+]
 
-[tool.poetry.urls]
+[project.urls]
 homepage = "https://veilid.com"
 repository = "https://gitlab.com/veilid/veilid"
 
-[tool.poetry.dependencies]
-python = "^3.12.5"
-jsonschema = "^4.17.3"
-appdirs = "^1.4.4"
+[dependency-groups]
+dev = [
+    "pytest>=7.3.2,<8",
+    "pytest-cov>=5.0.0,<6",
+    "pytest-asyncio>=0.21.0,<0.22",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.3.2"
-pytest-cov = "^5.0.0"
-pytest-asyncio = "^0.21.0"
+[tool.hatch.build.targets.sdist]
+include = ["veilid"]
+
+[tool.hatch.build.targets.wheel]
+include = ["veilid"]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.black]
 line-length = 99

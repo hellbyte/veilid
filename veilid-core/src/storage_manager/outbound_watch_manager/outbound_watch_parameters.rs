@@ -7,7 +7,7 @@ impl_veilid_log_facility!("stor");
 pub struct OutboundWatchParameters {
     /// Requested expiration timestamp. A zero timestamp here indicates
     /// that the watch it to be renewed indefinitely
-    pub expiration_ts: Timestamp,
+    pub expiration: Timestamp,
     /// How many notifications the requestor asked for
     pub count: u32,
     /// Subkeys requested for this watch
@@ -23,7 +23,7 @@ impl fmt::Display for OutboundWatchParameters {
         write!(
             f,
             "{{ expiration={}, count={}, subkeys={}, opt_watcher={}, safety_selection={:?} }}",
-            self.expiration_ts,
+            self.expiration,
             self.count,
             self.subkeys,
             if let Some(watcher) = &self.opt_watcher {

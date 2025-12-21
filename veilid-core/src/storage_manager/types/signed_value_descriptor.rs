@@ -2,10 +2,12 @@ use super::*;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Clone, PartialOrd, PartialEq, Eq, Ord, Serialize, Deserialize)]
+#[derive(Clone, PartialOrd, PartialEq, Eq, Ord, Serialize, Deserialize, GetSize)]
 pub struct SignedValueDescriptor {
+    #[serde(with = "public_key_try_untyped_vld0")]
     owner: PublicKey,
     schema_data: Vec<u8>,
+    #[serde(with = "signature_try_untyped_vld0")]
     signature: Signature,
 }
 impl SignedValueDescriptor {
@@ -17,20 +19,51 @@ impl SignedValueDescriptor {
         }
     }
 
-    pub fn validate(&self, vcrypto: &CryptoSystemGuard<'_>) -> VeilidAPIResult<()> {
+    pub fn validate(
+        &self,
+        vcrypto: &CryptoSystemGuard<'_>,
+        opaque_record_key: &OpaqueRecordKey,
+    ) -> VeilidAPIResult<()> {
+        if self.owner.kind() != vcrypto.kind() {
+            apibail_parse_error!(
+                "wrong kind of owner for signed value descriptor",
+                &self.owner
+            );
+        }
+        if self.signature.kind() != vcrypto.kind() {
+            apibail_parse_error!(
+                "wrong kind of signature for signed value descriptor",
+                &self.signature
+            );
+        }
         // validate signature
         if !vcrypto.verify(&self.owner, &self.schema_data, &self.signature)? {
             apibail_parse_error!(
                 "failed to validate signature of signed value descriptor",
-                self.signature
+                &self.signature
             );
         }
-        // validate schema
+        // validate schema bytes
         let _ = DHTSchema::try_from(self.schema_data.as_slice())?;
+
+        // Verify record key matches
+        let verify_key = StorageManager::make_opaque_record_key(
+            vcrypto,
+            self.ref_owner().ref_value(),
+            self.schema_data(),
+        );
+        if opaque_record_key != &verify_key {
+            apibail_parse_error!("failed to validate record key match", verify_key);
+        }
+
         Ok(())
     }
 
-    pub fn owner(&self) -> &PublicKey {
+    pub fn owner(&self) -> PublicKey {
+        self.owner.clone()
+    }
+
+    pub fn ref_owner(&self) -> &PublicKey {
         &self.owner
     }
 
@@ -42,7 +75,12 @@ impl SignedValueDescriptor {
         DHTSchema::try_from(self.schema_data.as_slice())
     }
 
-    pub fn signature(&self) -> &Signature {
+    #[expect(dead_code)]
+    pub fn signature(&self) -> Signature {
+        self.signature.clone()
+    }
+
+    pub fn ref_signature(&self) -> &Signature {
         &self.signature
     }
 
@@ -52,6 +90,12 @@ impl SignedValueDescriptor {
         vcrypto: &CryptoSystemGuard<'_>,
         owner_secret: SecretKey,
     ) -> VeilidAPIResult<Self> {
+        if owner.kind() != vcrypto.kind() {
+            apibail_parse_error!(
+                "wrong kind of owner for signed value descriptor signature",
+                &owner
+            );
+        }
         // create signature
         let signature = vcrypto.sign(&owner, &owner_secret, &schema_data)?;
         Ok(Self {
@@ -59,10 +103,6 @@ impl SignedValueDescriptor {
             schema_data,
             signature,
         })
-    }
-
-    pub fn total_size(&self) -> usize {
-        mem::size_of::<Self>() + self.schema_data.len()
     }
 
     pub fn cmp_no_sig(&self, other: &Self) -> cmp::Ordering {

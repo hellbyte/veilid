@@ -2,14 +2,13 @@ import asyncio
 import importlib.resources as importlib_resources
 import json
 import os
-import traceback
 
 from typing import Awaitable, Callable, Optional, Self
 
 from jsonschema import exceptions, validators
 
 from . import schema
-from .api import CryptoSystem, RoutingContext, TableDb, TableDbTransaction, VeilidAPI
+from .api import CryptoSystem, RoutingContext, TableDb, TableDbTransaction, DHTTransaction, VeilidAPI
 from .error import raise_api_result
 from .operations import (
     CryptoSystemOperation,
@@ -17,10 +16,10 @@ from .operations import (
     RoutingContextOperation,
     TableDbOperation,
     TableDbTransactionOperation,
+    DhtTransactionOperation,
 )
 from .state import VeilidState, VeilidUpdate
 from .types import (
-    HashDistance,
     CryptoKind,
     DHTRecordDescriptor,
     DHTRecordReport,
@@ -28,7 +27,7 @@ from .types import (
     DHTSchema,
     HashDigest,
     KeyPair,
-    NewPrivateRouteResult,
+    RouteBlob,
     Nonce,
     OperationId,
     PublicKey,
@@ -37,17 +36,22 @@ from .types import (
     SecretKey,
     Sequencing,
     SetDHTValueOptions,
+    TransactDHTRecordsOptions,
+    DHTTransactionSetValueOptions,
     SharedSecret,
     Signature,
+    MemberId,
     Stability,
     Timestamp,
-    TypedKey,
-    TypedKeyPair,
-    TypedSignature,
+    PublicKey,
+    KeyPair,
+    Signature,
     ValueData,
     ValueSubkey,
     VeilidJSONEncoder,
     VeilidVersion,
+    Target,
+    RecordKey,
     urlsafe_b64decode_no_pad,
 )
 
@@ -59,7 +63,7 @@ _STREAM_LIMIT = (65536 * 4)
 def _get_schema_validator(schema):
     cls = validators.validator_for(schema)
     cls.check_schema(schema)
-    validator = cls(schema)
+    validator = cls(schema) # type: ignore
     return validator
 
 
@@ -165,7 +169,7 @@ class _JsonVeilidAPI(VeilidAPI):
         cls, ipc_path: str, update_callback: Callable[[VeilidUpdate], Awaitable]
     ) -> Self:
 
-        if os.name=='nt': 
+        if os.name=='nt':
             async def open_windows_pipe(path=None, *,
                                    limit=65536, **kwds):
                 """Similar to `open_unix_connection` but works with Windows Named Pipes."""
@@ -184,7 +188,7 @@ class _JsonVeilidAPI(VeilidAPI):
         veilid_api = cls(reader, writer, update_callback)
         veilid_api.handle_recv_messages_task = asyncio.create_task(
             veilid_api.handle_recv_messages(), name="JsonVeilidAPI.handle_recv_messages"
-            ) 
+            )
         return veilid_api
 
     async def handle_recv_message_response(self, j: dict):
@@ -323,7 +327,7 @@ class _JsonVeilidAPI(VeilidAPI):
         return VeilidState.from_json(
             raise_api_result(await self.send_ndjson_request(Operation.GET_STATE))
         )
-    
+
     async def is_shutdown(self) -> bool:
         return raise_api_result(await self.send_ndjson_request(Operation.IS_SHUTDOWN))
 
@@ -333,21 +337,59 @@ class _JsonVeilidAPI(VeilidAPI):
     async def detach(self):
         raise_api_result(await self.send_ndjson_request(Operation.DETACH))
 
-    async def new_private_route(self) -> tuple[RouteId, bytes]:
-        return NewPrivateRouteResult.from_json(
+    async def generate_member_id(self, writer_key: PublicKey) -> MemberId:
+        assert isinstance(writer_key, PublicKey)
+
+        return MemberId(
+            raise_api_result(
+                await self.send_ndjson_request(Operation.GENERATE_MEMBER_ID, writer_key=writer_key)
+            )
+        )
+
+    async def get_dht_record_key(
+        self, schema: DHTSchema, owner: PublicKey, encryption_key: Optional[SharedSecret]) -> RecordKey:
+        assert isinstance(schema, DHTSchema)
+        assert isinstance(owner, PublicKey)
+        if encryption_key is not None:
+            assert isinstance(encryption_key, SharedSecret)
+
+        return RecordKey(raise_api_result(
+            await self.send_ndjson_request(
+                Operation.GET_DHT_RECORD_KEY,
+                schema=schema,
+                owner=owner,
+                encryption_key=encryption_key,
+            )
+        ))
+
+    async def transact_dht_records(self, record_keys: list[RecordKey], options: TransactDHTRecordsOptions | None) -> DHTTransaction:
+        assert isinstance(record_keys, list)
+        for record_key in record_keys:
+            assert isinstance(record_key, RecordKey)
+        assert options is None or isinstance(options, TransactDHTRecordsOptions)
+
+        dhttx_id = raise_api_result(
+            await self.send_ndjson_request(
+                Operation.TRANSACT_DHT_RECORDS, record_keys=record_keys, options=options
+            )
+        )
+        return _JsonDHTTransaction(self, dhttx_id)
+
+    async def new_private_route(self) -> RouteBlob:
+        return RouteBlob.from_json(
             raise_api_result(await self.send_ndjson_request(Operation.NEW_PRIVATE_ROUTE))
-        ).to_tuple()
+        )
 
     async def new_custom_private_route(
         self, kinds: list[CryptoKind], stability: Stability, sequencing: Sequencing
-    ) -> tuple[RouteId, bytes]:
+    ) -> RouteBlob:
         assert isinstance(kinds, list)
         for k in kinds:
             assert isinstance(k, CryptoKind)
         assert isinstance(stability, Stability)
         assert isinstance(sequencing, Sequencing)
 
-        return NewPrivateRouteResult.from_json(
+        return RouteBlob.from_json(
             raise_api_result(
                 await self.send_ndjson_request(
                     Operation.NEW_CUSTOM_PRIVATE_ROUTE,
@@ -356,7 +398,7 @@ class _JsonVeilidAPI(VeilidAPI):
                     sequencing=sequencing,
                 )
             )
-        ).to_tuple()
+        )
 
     async def import_remote_private_route(self, blob: bytes) -> RouteId:
         assert isinstance(blob, bytes)
@@ -414,19 +456,15 @@ class _JsonVeilidAPI(VeilidAPI):
         )
         return _JsonCryptoSystem(self, cs_id)
 
-    async def best_crypto_system(self) -> CryptoSystem:
-        cs_id = raise_api_result(await self.send_ndjson_request(Operation.BEST_CRYPTO_SYSTEM))
-        return _JsonCryptoSystem(self, cs_id)
-
     async def verify_signatures(
-        self, node_ids: list[TypedKey], data: bytes, signatures: list[TypedSignature]
-    ) -> Optional[list[TypedKey]]:
+        self, node_ids: list[PublicKey], data: bytes, signatures: list[Signature]
+    ) -> Optional[list[PublicKey]]:
         assert isinstance(node_ids, list)
         for ni in node_ids:
-            assert isinstance(ni, TypedKey)
+            assert isinstance(ni, PublicKey)
         assert isinstance(data, bytes)
         for sig in signatures:
-            assert isinstance(sig, TypedSignature)
+            assert isinstance(sig, Signature)
 
         out = raise_api_result(
                 await self.send_ndjson_request(
@@ -440,22 +478,22 @@ class _JsonVeilidAPI(VeilidAPI):
             return out
         return list(
             map(
-                lambda x: TypedKey(x),
+                lambda x: PublicKey(x),
                 out
             )
         )
 
     async def generate_signatures(
-        self, data: bytes, key_pairs: list[TypedKeyPair]
-    ) -> list[TypedSignature]:
+        self, data: bytes, key_pairs: list[KeyPair]
+    ) -> list[Signature]:
         assert isinstance(data, bytes)
         assert isinstance(key_pairs, list)
         for kp in key_pairs:
-            assert isinstance(kp, TypedKeyPair)
+            assert isinstance(kp, KeyPair)
 
         return list(
             map(
-                lambda x: TypedSignature(x),
+                lambda x: Signature(x),
                 raise_api_result(
                     await self.send_ndjson_request(
                         Operation.GENERATE_SIGNATURES, data=data, key_pairs=key_pairs
@@ -464,12 +502,12 @@ class _JsonVeilidAPI(VeilidAPI):
             )
         )
 
-    async def generate_key_pair(self, kind: CryptoKind) -> list[TypedKeyPair]:
+    async def generate_key_pair(self, kind: CryptoKind) -> list[KeyPair]:
         assert isinstance(kind, CryptoKind)
 
         return list(
             map(
-                lambda x: TypedKeyPair(x),
+                lambda x: KeyPair(x),
                 raise_api_result(
                     await self.send_ndjson_request(Operation.GENERATE_KEY_PAIR, kind=kind)
                 ),
@@ -495,6 +533,17 @@ class _JsonVeilidAPI(VeilidAPI):
 
     async def default_veilid_config(self) -> str:
         return raise_api_result(await self.send_ndjson_request(Operation.DEFAULT_VEILID_CONFIG))
+
+    async def valid_crypto_kinds(self) -> list[CryptoKind]:
+        return list(
+            map(
+                lambda x: CryptoKind(x),
+                raise_api_result(
+                    await self.send_ndjson_request(Operation.VALID_CRYPTO_KINDS)
+                )
+            )
+        )
+
 
 
 ######################################################
@@ -603,8 +652,8 @@ class _JsonRoutingContext(RoutingContext):
                 )
             )
         )
-    async def app_call(self, target: TypedKey | RouteId, message: bytes) -> bytes:
-        assert isinstance(target, TypedKey) or isinstance(target, RouteId)
+    async def app_call(self, target: Target, message: bytes) -> bytes:
+        assert isinstance(target, Target)
         assert isinstance(message, bytes)
 
         return urlsafe_b64decode_no_pad(
@@ -620,8 +669,8 @@ class _JsonRoutingContext(RoutingContext):
             )
         )
 
-    async def app_message(self, target: TypedKey | RouteId, message: bytes):
-        assert isinstance(target, TypedKey) or isinstance(target, RouteId)
+    async def app_message(self, target: Target, message: bytes):
+        assert isinstance(target, Target)
         assert isinstance(message, bytes)
 
         raise_api_result(
@@ -636,11 +685,11 @@ class _JsonRoutingContext(RoutingContext):
         )
 
     async def create_dht_record(
-        self, schema: DHTSchema, owner: Optional[KeyPair] = None, kind: Optional[CryptoKind] = None
+        self, kind: CryptoKind, schema: DHTSchema, owner: Optional[KeyPair] = None
     ) -> DHTRecordDescriptor:
+        assert isinstance(kind, CryptoKind)
         assert isinstance(schema, DHTSchema)
         assert owner is None or isinstance(owner, KeyPair)
-        assert kind is None or isinstance(kind, CryptoKind)
 
         return DHTRecordDescriptor.from_json(
             raise_api_result(
@@ -657,9 +706,9 @@ class _JsonRoutingContext(RoutingContext):
         )
 
     async def open_dht_record(
-        self, key: TypedKey, writer: Optional[KeyPair] = None
+        self, key: RecordKey, writer: Optional[KeyPair] = None
     ) -> DHTRecordDescriptor:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert writer is None or isinstance(writer, KeyPair)
 
         return DHTRecordDescriptor.from_json(
@@ -675,8 +724,8 @@ class _JsonRoutingContext(RoutingContext):
             )
         )
 
-    async def close_dht_record(self, key: TypedKey):
-        assert isinstance(key, TypedKey)
+    async def close_dht_record(self, key: RecordKey):
+        assert isinstance(key, RecordKey)
 
         raise_api_result(
             await self.api.send_ndjson_request(
@@ -688,8 +737,8 @@ class _JsonRoutingContext(RoutingContext):
             )
         )
 
-    async def delete_dht_record(self, key: TypedKey):
-        assert isinstance(key, TypedKey)
+    async def delete_dht_record(self, key: RecordKey):
+        assert isinstance(key, RecordKey)
 
         raise_api_result(
             await self.api.send_ndjson_request(
@@ -702,9 +751,9 @@ class _JsonRoutingContext(RoutingContext):
         )
 
     async def get_dht_value(
-        self, key: TypedKey, subkey: ValueSubkey, force_refresh: bool = False
+        self, key: RecordKey, subkey: ValueSubkey, force_refresh: bool = False
     ) -> Optional[ValueData]:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert isinstance(subkey, ValueSubkey)
         assert isinstance(force_refresh, bool)
 
@@ -722,9 +771,9 @@ class _JsonRoutingContext(RoutingContext):
         return None if ret is None else ValueData.from_json(ret)
 
     async def set_dht_value(
-        self, key: TypedKey, subkey: ValueSubkey, data: bytes, options: Optional[SetDHTValueOptions] = None
+        self, key: RecordKey, subkey: ValueSubkey, data: bytes, options: Optional[SetDHTValueOptions] = None
     ) -> Optional[ValueData]:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert isinstance(subkey, ValueSubkey)
         assert isinstance(data, bytes)
         assert options is None or isinstance(options, SetDHTValueOptions)
@@ -745,12 +794,12 @@ class _JsonRoutingContext(RoutingContext):
 
     async def watch_dht_values(
         self,
-        key: TypedKey,
+        key: RecordKey,
         subkeys: list[tuple[ValueSubkey, ValueSubkey]] = [],
         expiration: Timestamp = Timestamp(0),
         count: int = 0xFFFFFFFF,
     ) -> bool:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert isinstance(subkeys, list)
         for s in subkeys:
             assert isinstance(s, tuple)
@@ -774,9 +823,9 @@ class _JsonRoutingContext(RoutingContext):
 
 
     async def cancel_dht_watch(
-        self, key: TypedKey, subkeys: list[tuple[ValueSubkey, ValueSubkey]] = []
+        self, key: RecordKey, subkeys: list[tuple[ValueSubkey, ValueSubkey]] = []
     ) -> bool:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert isinstance(subkeys, list)
         for s in subkeys:
             assert isinstance(s, tuple)
@@ -796,11 +845,11 @@ class _JsonRoutingContext(RoutingContext):
 
     async def inspect_dht_record(
         self,
-        key: TypedKey,
+        key: RecordKey,
         subkeys: list[tuple[ValueSubkey, ValueSubkey]],
         scope: DHTReportScope = DHTReportScope.LOCAL,
     ) -> DHTRecordReport:
-        assert isinstance(key, TypedKey)
+        assert isinstance(key, RecordKey)
         assert isinstance(subkeys, list)
         for s in subkeys:
             assert isinstance(s, tuple)
@@ -808,7 +857,7 @@ class _JsonRoutingContext(RoutingContext):
             assert isinstance(s[1], ValueSubkey)
         assert isinstance(scope, DHTReportScope)
 
-        return DHTRecordReport.from_json(            
+        return DHTRecordReport.from_json(
             raise_api_result(
                 await self.api.send_ndjson_request(
                     Operation.ROUTING_CONTEXT,
@@ -821,7 +870,7 @@ class _JsonRoutingContext(RoutingContext):
                 )
             )
         )
-        
+
 
 
 
@@ -914,6 +963,137 @@ class _JsonTableDbTransaction(TableDbTransaction):
             col=col,
             key=key,
         )
+
+
+
+######################################################
+
+
+def validate_dhttx_op(request: dict, response: dict):
+    if response["dhttx_op"] != request["dhttx_op"]:
+        raise ValueError(f"Response dhttx_op does not match request dhttx_op: {response['dhttx_op']} != {request['dhttx_op']}")
+
+
+class _JsonDHTTransaction(DHTTransaction):
+    api: _JsonVeilidAPI
+    dhttx_id: int
+    done: bool
+
+    def __init__(self, api: _JsonVeilidAPI, dhttx_id: int):
+        super().__init__()
+
+        self.api = api
+        self.dhttx_id = dhttx_id
+        self.done = False
+
+    def __del__(self):
+        if not self.done:
+            # attempt to clean up server-side anyway
+            self.api.send_one_way_ndjson_request(
+                Operation.DHT_TRANSACTION,
+                dhttx_id=self.dhttx_id,
+                dhttx_op=DhtTransactionOperation.ROLLBACK,
+            )
+
+            # complain
+            raise AssertionError(
+                "Should have committed or rolled back transaction before dropping object"
+            )
+
+    def is_done(self) -> bool:
+        return self.done
+
+    async def commit(self):
+        if self.done:
+            raise AssertionError("Transaction is already done")
+
+        raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.DHT_TRANSACTION,
+                validate=validate_dhttx_op,
+                dhttx_id=self.dhttx_id,
+                dhttx_op=DhtTransactionOperation.COMMIT,
+            )
+        )
+        self.done = True
+
+    async def rollback(self):
+        if self.done:
+            raise AssertionError("Transaction is already done")
+        await self.api.send_ndjson_request(
+            Operation.DHT_TRANSACTION,
+            validate=validate_dhttx_op,
+            dhttx_id=self.dhttx_id,
+            dhttx_op=DhtTransactionOperation.ROLLBACK,
+        )
+        self.done = True
+
+    async def get(self, key: RecordKey, subkey: ValueSubkey) -> Optional[ValueData]:
+        assert isinstance(key, RecordKey)
+        assert isinstance(subkey, ValueSubkey)
+
+        ret = raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.DHT_TRANSACTION,
+                validate=validate_dhttx_op,
+                dhttx_id=self.dhttx_id,
+                dhttx_op=DhtTransactionOperation.GET,
+                key=key,
+                subkey=subkey
+            )
+        )
+        return None if ret is None else ValueData.from_json(ret)
+
+    async def set(
+        self, key: RecordKey, subkey: ValueSubkey, data: bytes, options: Optional[DHTTransactionSetValueOptions] = None
+    ) -> Optional[ValueData]:
+        assert isinstance(key, RecordKey)
+        assert isinstance(subkey, ValueSubkey)
+        assert isinstance(data, bytes)
+        assert options is None or isinstance(options, DHTTransactionSetValueOptions)
+
+        ret = raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.DHT_TRANSACTION,
+                validate=validate_dhttx_op,
+                dhttx_id=self.dhttx_id,
+                dhttx_op=DhtTransactionOperation.SET,
+                key=key,
+                subkey=subkey,
+                data=data,
+                options=options,
+            )
+        )
+        return None if ret is None else ValueData.from_json(ret)
+
+    async def inspect(
+        self,
+        key: RecordKey,
+        subkeys: list[tuple[ValueSubkey, ValueSubkey]],
+        scope: DHTReportScope = DHTReportScope.LOCAL,
+    ) -> DHTRecordReport:
+        assert isinstance(key, RecordKey)
+        assert isinstance(subkeys, list)
+        for s in subkeys:
+            assert isinstance(s, tuple)
+            assert isinstance(s[0], ValueSubkey)
+            assert isinstance(s[1], ValueSubkey)
+        assert isinstance(scope, DHTReportScope)
+
+        return DHTRecordReport.from_json(
+            raise_api_result(
+                await self.api.send_ndjson_request(
+                    Operation.DHT_TRANSACTION,
+                    validate=validate_dhttx_op,
+                    dhttx_id=self.dhttx_id,
+                    dhttx_op=DhtTransactionOperation.INSPECT,
+                    key=key,
+                    subkeys=subkeys,
+                    scope=scope,
+                )
+            )
+        )
+
 
 
 ######################################################
@@ -1078,7 +1258,7 @@ class _JsonCryptoSystem(CryptoSystem):
 
             # complain
             raise AssertionError("Should have released crypto system before dropping object")
-    
+
     async def kind(self) -> CryptoKind:
         return CryptoKind(
             raise_api_result(
@@ -1173,6 +1353,66 @@ class _JsonCryptoSystem(CryptoSystem):
             )
         )
 
+    async def shared_secret_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.SHARED_SECRET_LENGTH,
+            )
+        )
+
+    async def nonce_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.NONCE_LENGTH,
+            )
+        )
+
+    async def hash_digest_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.HASH_DIGEST_LENGTH,
+            )
+        )
+
+    async def public_key_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.PUBLIC_KEY_LENGTH,
+            )
+        )
+
+    async def secret_key_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.SECRET_KEY_LENGTH,
+            )
+        )
+
+    async def signature_length(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.SIGNATURE_LENGTH,
+            )
+        )
+
     async def default_salt_length(self) -> int:
         return raise_api_result(
             await self.api.send_ndjson_request(
@@ -1180,6 +1420,94 @@ class _JsonCryptoSystem(CryptoSystem):
                 validate=validate_cs_op,
                 cs_id=self.cs_id,
                 cs_op=CryptoSystemOperation.DEFAULT_SALT_LENGTH,
+            )
+        )
+
+    async def aead_overhead(self) -> int:
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.AEAD_OVERHEAD,
+            )
+        )
+
+    async def check_shared_secret(self, secret: SharedSecret):
+        assert isinstance(secret, SharedSecret)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_SHARED_SECRET,
+                secret=secret,
+            )
+        )
+
+    async def check_nonce(self, nonce: Nonce):
+        assert isinstance(nonce, Nonce)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_NONCE,
+                nonce=nonce,
+            )
+        )
+
+    async def check_hash_digest(self, digest: HashDigest):
+        assert isinstance(digest, HashDigest)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_HASH_DIGEST,
+                digest=digest,
+            )
+        )
+
+    async def check_public_key(self, key: PublicKey):
+        assert isinstance(key, PublicKey)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_PUBLIC_KEY,
+                key=key,
+            )
+        )
+
+    async def check_secret_key(self, key: SecretKey):
+        assert isinstance(key, SecretKey)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_SECRET_KEY,
+                key=key,
+            )
+        )
+
+    async def check_signature(self, signature: Signature):
+        assert isinstance(signature, Signature)
+
+        return raise_api_result(
+            await self.api.send_ndjson_request(
+                Operation.CRYPTO_SYSTEM,
+                validate=validate_cs_op,
+                cs_id=self.cs_id,
+                cs_op=CryptoSystemOperation.CHECK_SIGNATURE,
+                signature=signature,
             )
         )
 
@@ -1311,23 +1639,6 @@ class _JsonCryptoSystem(CryptoSystem):
             )
         )
 
-    async def distance(self, key1: HashDigest, key2: HashDigest) -> HashDistance:
-        assert isinstance(key1, HashDigest)
-        assert isinstance(key2, HashDigest)
-
-        return HashDistance(
-            raise_api_result(
-                await self.api.send_ndjson_request(
-                    Operation.CRYPTO_SYSTEM,
-                    validate=validate_cs_op,
-                    cs_id=self.cs_id,
-                    cs_op=CryptoSystemOperation.DISTANCE,
-                    key1=key1,
-                    key2=key2,
-                )
-            )
-        )
-
     async def sign(self, key: PublicKey, secret: SecretKey, data: bytes) -> Signature:
         assert isinstance(key, PublicKey)
         assert isinstance(secret, SecretKey)
@@ -1361,16 +1672,6 @@ class _JsonCryptoSystem(CryptoSystem):
                 key=key,
                 data=data,
                 signature=signature,
-            )
-        )
-
-    async def aead_overhead(self) -> int:
-        return raise_api_result(
-            await self.api.send_ndjson_request(
-                Operation.CRYPTO_SYSTEM,
-                validate=validate_cs_op,
-                cs_id=self.cs_id,
-                cs_op=CryptoSystemOperation.AEAD_OVERHEAD,
             )
         )
 

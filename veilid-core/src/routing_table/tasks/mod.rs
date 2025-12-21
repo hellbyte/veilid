@@ -8,6 +8,8 @@ pub mod private_route_management;
 pub mod relay_management;
 pub mod update_statistics;
 
+use crate::attachment_manager::TickEvent;
+
 use super::*;
 
 impl_veilid_log_facility!("rtab");
@@ -15,10 +17,10 @@ impl_veilid_log_facility!("rtab");
 impl RoutingTable {
     pub fn setup_tasks(&self) {
         // Set flush tick task
-        impl_setup_task!(self, Self, flush_task, flush_task_routine);
+        impl_setup_task_async!(self, Self, flush_task, flush_task_routine);
 
         // Set rolling transfers tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             rolling_transfers_task,
@@ -26,7 +28,7 @@ impl RoutingTable {
         );
 
         // Set update state stats tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             update_state_stats_task,
@@ -34,7 +36,7 @@ impl RoutingTable {
         );
 
         // Set rolling answers tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             rolling_answers_task,
@@ -42,13 +44,13 @@ impl RoutingTable {
         );
 
         // Set kick buckets tick task
-        impl_setup_task!(self, Self, kick_buckets_task, kick_buckets_task_routine);
+        impl_setup_task_async!(self, Self, kick_buckets_task, kick_buckets_task_routine);
 
         // Set bootstrap tick task
-        impl_setup_task!(self, Self, bootstrap_task, bootstrap_task_routine);
+        impl_setup_task_async!(self, Self, bootstrap_task, bootstrap_task_routine);
 
         // Set peer minimum refresh tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             peer_minimum_refresh_task,
@@ -56,7 +58,7 @@ impl RoutingTable {
         );
 
         // Set closest peers refresh tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             closest_peers_refresh_task,
@@ -64,7 +66,7 @@ impl RoutingTable {
         );
 
         // Set ping validator PublicInternet tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             ping_validator_public_internet_task,
@@ -72,7 +74,7 @@ impl RoutingTable {
         );
 
         // Set ping validator LocalNetwork tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             ping_validator_local_network_task,
@@ -80,7 +82,7 @@ impl RoutingTable {
         );
 
         // Set ping validator PublicInternet Relay tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             ping_validator_public_internet_relay_task,
@@ -88,7 +90,7 @@ impl RoutingTable {
         );
 
         // Set ping validator Active Watch tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             ping_validator_active_watch_task,
@@ -96,7 +98,7 @@ impl RoutingTable {
         );
 
         // Set relay management tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             relay_management_task,
@@ -104,12 +106,18 @@ impl RoutingTable {
         );
 
         // Set private route management tick task
-        impl_setup_task!(
+        impl_setup_task_async!(
             self,
             Self,
             private_route_management_task,
             private_route_management_task_routine
         );
+    }
+
+    pub async fn tick_event_handler(&self, _evt: Arc<TickEvent>) {
+        if let Err(e) = self.tick().await {
+            error!("Error in routing table tick: {}", e);
+        }
     }
 
     /// Ticks about once per second
@@ -177,9 +185,7 @@ impl RoutingTable {
         // XXX: eventually this should probably be done per-routingdomain
         let mut needs_peer_minimum_refresh = false;
         if !needs_bootstrap {
-            let min_peer_count = self
-                .config()
-                .with(|c| c.network.dht.min_peer_count as usize);
+            let min_peer_count = self.config().network.dht.min_peer_count as usize;
 
             for ck in VALID_CRYPTO_KINDS {
                 let eckey = (RoutingDomain::PublicInternet, ck);

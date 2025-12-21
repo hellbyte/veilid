@@ -68,14 +68,14 @@ async def test_routing_context_app_message_loopback():
         rc = await api.new_routing_context()
         async with rc:
             # make a new local private route
-            prl, blob = await api.new_private_route()
+            route_blob = await api.new_private_route()
             try:
                 # import it as a remote route as well so we can send to it
-                prr = await api.import_remote_private_route(blob)
+                prr = await api.import_remote_private_route(route_blob.blob)
                 try:
                     # send an app message to our own private route
                     message = b"abcd1234"
-                    await rc.app_message(prr, message)
+                    await rc.app_message(veilid.TargetRouteId(prr), message)
 
                     # we should get the same message back
                     update: veilid.VeilidUpdate = await asyncio.wait_for(
@@ -91,7 +91,7 @@ async def test_routing_context_app_message_loopback():
                         await api.release_private_route(prr)
             finally:
                 # release local private route
-                await api.release_private_route(prl)
+                await api.release_private_route(route_blob.route_id)
 
 
 @pytest.mark.asyncio
@@ -115,15 +115,15 @@ async def test_routing_context_app_call_loopback():
         rc = await api.new_routing_context()
         async with rc:
             # make a new local private route
-            prl, blob = await api.new_private_route()
+            route_blob = await api.new_private_route()
             try:
                 # import it as a remote route as well so we can send to it
-                prr = await api.import_remote_private_route(blob)
+                prr = await api.import_remote_private_route(route_blob.blob)
                 try:
 
                     # send an app message to our own private route
                     request = b"abcd1234"
-                    app_call_task = asyncio.create_task(rc.app_call(prr, request), name="app call task")
+                    app_call_task = asyncio.create_task(rc.app_call(veilid.TargetRouteId(prr), request), name="app call task")
 
                     # we should get the same request back
                     update: veilid.VeilidUpdate = await asyncio.wait_for(app_call_queue.get(), timeout=10)
@@ -146,7 +146,7 @@ async def test_routing_context_app_call_loopback():
                     await api.release_private_route(prr)
             finally:
                 # release local private route
-                await api.release_private_route(prl)
+                await api.release_private_route(route_blob.route_id)
 
 @pytest.mark.asyncio
 async def test_routing_context_app_message_loopback_big_packets():
@@ -175,16 +175,16 @@ async def test_routing_context_app_message_loopback_big_packets():
         rc = await api.new_routing_context()
         async with rc:
             # make a new local private route
-            prl, blob = await api.new_private_route()
+            route_blob = await api.new_private_route()
             try:
                 # import it as a remote route as well so we can send to it
-                prr = await api.import_remote_private_route(blob)
+                prr = await api.import_remote_private_route(route_blob.blob)
                 try:
                     # do this test 5 times
                     for _ in range(5):
                         # send a random sized random app message to our own private route
                         message = random.randbytes(random.randint(0, 32768))
-                        await rc.app_message(prr, message)
+                        await rc.app_message(veilid.TargetRouteId(prr), message)
 
                         sent_messages.add(message)
 
@@ -203,7 +203,7 @@ async def test_routing_context_app_message_loopback_big_packets():
                     await api.release_private_route(prr)
             finally:
                 # release local private route
-                await api.release_private_route(prl)
+                await api.release_private_route(route_blob.route_id)
 
 
 @pytest.mark.asyncio
@@ -241,19 +241,19 @@ async def test_routing_context_app_call_loopback_big_packets():
             rc = await api.new_routing_context()
             async with rc:
                 # make a new local private route
-                prl, blob = await api.new_custom_private_route(
+                route_blob = await api.new_custom_private_route(
                     [veilid.CryptoKind.CRYPTO_KIND_VLD0], 
                     veilid.Stability.RELIABLE, 
                     veilid.Sequencing.ENSURE_ORDERED)
                 try:
                     # import it as a remote route as well so we can send to it
-                    prr = await api.import_remote_private_route(blob)
+                    prr = await api.import_remote_private_route(route_blob.blob)
                     try:
                         # do this test 5 times
                         for _ in range(5):
                             # send a random sized random app message to our own private route
                             message = random.randbytes(random.randint(0, 32768))
-                            out_message = await rc.app_call(prr, message)
+                            out_message = await rc.app_call(veilid.TargetRouteId(prr), message)
 
                             assert message == out_message
                     finally:
@@ -261,7 +261,7 @@ async def test_routing_context_app_call_loopback_big_packets():
                         await api.release_private_route(prr)
                 finally:
                     # release local private route
-                    await api.release_private_route(prl)
+                    await api.release_private_route(route_blob.route_id)
         finally:
             app_call_task.cancel()
 
@@ -288,16 +288,16 @@ async def test_routing_context_app_message_loopback_bandwidth():
         rc = await api.new_routing_context()
         async with rc:
             # make a new local private route
-            prl, blob = await api.new_private_route()
+            route_blob = await api.new_private_route()
             try:
                 # import it as a remote route as well so we can send to it
-                prr = await api.import_remote_private_route(blob)
+                prr = await api.import_remote_private_route(route_blob.blob)
                 try:
                     # do this test 10000 times
                     message = random.randbytes(16384)
                     for _ in range(10000):
                         # send a random sized random app message to our own private route
-                        await rc.app_message(prr, message)
+                        await rc.app_message(veilid.TargetRouteId(prr), message)
 
                     # we should get the same number of messages back (not storing all that data)
                     for _ in range(10000):
@@ -307,4 +307,4 @@ async def test_routing_context_app_message_loopback_bandwidth():
                     await api.release_private_route(prr)
             finally:
                 # release local private route
-                await api.release_private_route(prl)
+                await api.release_private_route(route_blob.route_id)

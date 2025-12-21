@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "moduleResolution": "node",
-    "module": "ESNext",
+    "module": "esnext",
     "target": "es2022",
     "types": [
       "node",
@@ -10,7 +10,6 @@
       "@wdio/mocha-framework",
       "@wdio/browser-runner"
     ],
-    "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
@@ -18,7 +17,13 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "allowJs": true,
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "wdio.conf.ts",
+    "eslint.config.mjs"
+  ]
 }

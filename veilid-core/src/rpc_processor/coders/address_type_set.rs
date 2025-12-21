@@ -1,24 +1,41 @@
 use super::*;
 
-pub fn encode_address_type_set(
-    address_type_set: &AddressTypeSet,
-    builder: &mut veilid_capnp::address_type_set::Builder,
-) -> Result<(), RPCError> {
-    builder.set_ipv4(address_type_set.contains(AddressType::IPV4));
-    builder.set_ipv6(address_type_set.contains(AddressType::IPV6));
-
-    Ok(())
-}
+pub const FOURCC_ADDRESS_TYPE_IPV6: u32 = u32::from_be_bytes(*b"ipV6");
+pub const FOURCC_ADDRESS_TYPE_IPV4: u32 = u32::from_be_bytes(*b"ipV4");
 
 pub fn decode_address_type_set(
-    reader: &veilid_capnp::address_type_set::Reader,
-) -> Result<AddressTypeSet, RPCError> {
+    reader: &::capnp::primitive_list::Reader<'_, u32>,
+) -> AddressTypeSet {
     let mut out = AddressTypeSet::new();
-    if reader.reborrow().get_ipv4() {
-        out.insert(AddressType::IPV4);
+
+    for at in reader.iter() {
+        match at {
+            FOURCC_ADDRESS_TYPE_IPV6 => {
+                out.insert(AddressType::IPV6);
+            }
+            FOURCC_ADDRESS_TYPE_IPV4 => {
+                out.insert(AddressType::IPV4);
+            }
+            _ => {
+                // skip unknown address types
+                continue;
+            }
+        }
     }
-    if reader.reborrow().get_ipv6() {
-        out.insert(AddressType::IPV6);
+    out
+}
+
+pub fn encode_address_type_set(
+    address_type_set: &AddressTypeSet,
+    builder: &mut ::capnp::primitive_list::Builder<'_, u32>,
+) {
+    for (n, x) in address_type_set.iter().enumerate() {
+        builder.set(
+            n as u32,
+            match x {
+                AddressType::IPV6 => FOURCC_ADDRESS_TYPE_IPV6,
+                AddressType::IPV4 => FOURCC_ADDRESS_TYPE_IPV4,
+            },
+        );
     }
-    Ok(out)
 }

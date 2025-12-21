@@ -13,9 +13,7 @@ impl RoutingTable {
         _last_ts: Timestamp,
         _cur_ts: Timestamp,
     ) -> EyreResult<()> {
-        let bootstraps = self
-            .config()
-            .with(|c| c.network.routing_table.bootstrap.clone());
+        let bootstraps = self.config().network.routing_table.bootstrap.clone();
 
         // Don't bother if bootstraps aren't configured
         if bootstraps.is_empty() {
@@ -62,7 +60,7 @@ impl RoutingTable {
             }));
         }
 
-        let mut bootstrapped_peer_id_set = HashSet::<TypedNodeId>::new();
+        let mut bootstrapped_peer_id_set = HashSet::<NodeId>::new();
         let mut bootstrapped_peers = vec![];
         loop {
             match unord.next().timeout_at(stop_token.clone()).await {
@@ -77,7 +75,7 @@ impl RoutingTable {
                                 if self.matches_own_node_id(peer_node_ids) {
                                     veilid_log!(self debug "Ignoring own node in bootstrap response");
                                 } else {
-                                    for nid in peer.node_ids().iter().copied() {
+                                    for nid in peer.node_ids().iter().cloned() {
                                         bootstrapped_peer_id_set.insert(nid);
                                     }
                                     bootstrapped_peers.push(peer);
@@ -116,7 +114,7 @@ impl RoutingTable {
         // We do not use these stored bootstrap peers for anything right now but keeping track of them
         // will be useful for eventual tasks like configuration distribution and automatic updates.
         for rd in routing_domains {
-            self.inner.read().with_routing_domain(rd, |rdd| {
+            self.inner.read().with_routing_domain(rd, |_rti, rdd| {
                 rdd.clear_bootstrap_peers();
             });
         }
@@ -134,17 +132,17 @@ impl RoutingTable {
                 let mut rd_peer_ids = BTreeSet::new();
                 for peer in bootstrapped_peers.iter() {
                     if peer.routing_domain() == rd {
-                        for nid in peer.node_ids().iter().copied() {
+                        for nid in peer.node_ids().iter().cloned() {
                             rd_peer_ids.insert(nid);
                         }
                     }
                 }
 
                 // Add valid bootstrap peers to routing domain
-                self.inner.read().with_routing_domain(rd, |rdd| {
+                self.inner.read().with_routing_domain(rd, |rti, rdd| {
                     for bootstrap_peer in valid_bootstraps.iter().cloned() {
                         let mut add = false;
-                        if let Some(pi) = bootstrap_peer.get_peer_info(rd) {
+                        if let Some(pi) = bootstrap_peer.locked(rti).get_peer_info(rd) {
                             for nid in pi.node_ids().iter() {
                                 if rd_peer_ids.contains(nid) {
                                     add = true;

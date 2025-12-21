@@ -1,4 +1,4 @@
-import { veilidClient, VeilidRoutingContext, TypedKey } from 'veilid-wasm';
+import { veilidClient, VeilidRoutingContext, RecordKey } from 'veilid-wasm';
 
 export const waitForMs = (milliseconds: number) => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -22,9 +22,9 @@ export const asyncCallWithTimeout = async<T>(asyncPromise: Promise<T>, timeLimit
 
 export const waitForPublicAttachment = async () => {
   while (true) {
-    let state = await veilidClient.getState();
-    if (state.attachment.public_internet_ready) {
-      var attached = false
+    const state = await veilidClient.getState();
+    if (state.attachment.publicInternetReady) {
+      let attached = false
       switch (state.attachment.state) {
         case "Detached":
         case "Detaching":
@@ -44,8 +44,8 @@ export const waitForPublicAttachment = async () => {
 
 export const waitForDetached = async () => {
   while (true) {
-    let state = await veilidClient.getState();
-    var detached = false
+    const state = await veilidClient.getState();
+    let detached = false
     switch (state.attachment.state) {
       case "Detached":
         detached = true;
@@ -62,7 +62,7 @@ export const waitForDetached = async () => {
 
 export const waitForShutdown = async () => {
   while (true) {
-    let isShutdown = veilidClient.isShutdown();
+    const isShutdown = veilidClient.isShutdown();
     if (isShutdown) {
       break;
     }
@@ -70,8 +70,8 @@ export const waitForShutdown = async () => {
   }
 }
 
-export const waitForOfflineSubkeyWrite = async (routingContext: VeilidRoutingContext, key: TypedKey) => {
-  while ((await routingContext.inspectDhtRecord(key)).offline_subkeys.length != 0) {
+export const waitForOfflineSubkeyWrite = async (routingContext: VeilidRoutingContext, key: RecordKey) => {
+  while ((await routingContext.inspectDHTRecord(key)).offlineSubkeys.length != 0) {
     await waitForMs(200);
   }
 }

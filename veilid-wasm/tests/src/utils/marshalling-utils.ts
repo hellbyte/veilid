@@ -46,10 +46,10 @@ function addBase64Padding(b64: string) {
   return b64;
 }
 
-function stringToBytes(binString: string) {
-  return Uint8Array.from(binString as any, (m) => (m as any).codePointAt(0));
+function stringToBytes(binString: string): Uint8Array {
+  return Uint8Array.from(binString, (m) => m.codePointAt(0)!);
 }
 
-function bytesToString(bytes: Uint8Array) {
+function bytesToString(bytes: Uint8Array): string {
   return Array.from(bytes, (x: number) => String.fromCodePoint(x)).join('');
 }

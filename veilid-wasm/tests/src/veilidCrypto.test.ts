@@ -1,6 +1,7 @@
 import { expect } from '@wdio/globals';
 
 import {
+  DEBUGGING,
   veilidCoreInitConfig,
   veilidCoreStartupConfig,
 } from './utils/veilid-config';
@@ -10,11 +11,13 @@ import { textEncoder, unmarshallBytes } from './utils/marshalling-utils';
 
 describe('veilidCrypto', () => {
   before('veilid startup', async () => {
-    veilidClient.initializeCore(veilidCoreInitConfig);
+    await veilidClient.initializeCore(veilidCoreInitConfig);
     await veilidClient.startupCore((_update) => {
-      // if (_update.kind === 'Log') {
-      //   console.log(_update.message);
-      // }
+      if (DEBUGGING) {
+        if (_update.kind === 'Log') {
+          console.log(_update.message);
+        }
+      }
     }, veilidCoreStartupConfig);
   });
 
@@ -22,174 +25,135 @@ describe('veilidCrypto', () => {
     await veilidClient.shutdownCore();
   });
 
-  it('should list crypto kinds', () => {
-    const kinds = veilidCrypto.validCryptoKinds();
-    const bestKind = veilidCrypto.bestCryptoKind();
-
-    expect(typeof bestKind).toBe('string');
-    expect(kinds.includes(bestKind)).toBe(true);
+  it('should list crypto kinds', async () => {
+    const kinds = veilidCrypto.VALID_CRYPTO_KINDS;
+    await expect(kinds.length).toBeGreaterThan(0)
   });
 
-  it('should generate key pair', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-    const keypair = veilidCrypto.generateKeyPair(bestKind);
-    expect(typeof keypair).toBe('string');
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should generate key pair for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+      const keypair = vcrypto.generateKeyPair();
+      await expect(typeof keypair).toBe('object');
 
-    const [publicKey, secretKey] = keypair.split(':');
-    expect(unmarshallBytes(publicKey).length).toBe(32);
-    expect(unmarshallBytes(secretKey).length).toBe(32);
+      const keyPairKind = keypair.kind;
+      const barePublicKey = keypair.value.key
+      const bareSecretKey = keypair.value.secret
+      await expect(keyPairKind).toEqual(cryptoKind);
+      await expect(unmarshallBytes(barePublicKey.toString()).length).toBe(vcrypto.publicKeyLength());
+      await expect(unmarshallBytes(bareSecretKey.toString()).length).toBe(vcrypto.secretKeyLength());
 
-    const isValid = veilidCrypto.validateKeyPair(
-      bestKind,
-      publicKey,
-      secretKey
-    );
-    expect(isValid).toBe(true);
-  });
+      const isValid = vcrypto.validateKeyPair(
+        keypair.key,
+        keypair.secret,
+      );
+      await expect(isValid).toBe(true);
 
-  it('should generate random bytes', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-    const bytes = veilidCrypto.randomBytes(bestKind, 64);
-    expect(bytes instanceof Uint8Array).toBe(true);
-    expect(bytes.length).toBe(64);
-  });
-
-  it('should hash data and validate hash', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-    const data = textEncoder.encode('this is my data🚀');
-    const hash = veilidCrypto.generateHash(bestKind, data);
-
-    expect(hash).toBeDefined();
-    expect(typeof hash).toBe('string');
-
-    const isValid = veilidCrypto.validateHash(bestKind, data, hash);
-    expect(isValid).toBe(true);
-  });
-
-  it('should hash and validate password', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-
-    const password = textEncoder.encode('this is my data🚀');
-    const saltLength = veilidCrypto.defaultSaltLength(bestKind);
-    expect(saltLength).toBeGreaterThan(0);
-
-    const salt = veilidCrypto.randomBytes(bestKind, saltLength);
-    expect(salt instanceof Uint8Array).toBe(true);
-    expect(salt.length).toBe(saltLength);
-
-    const hash = veilidCrypto.hashPassword(bestKind, password, salt);
-    expect(hash).toBeDefined();
-    expect(typeof hash).toBe('string');
-
-    const isValid = veilidCrypto.verifyPassword(bestKind, password, hash);
-    expect(isValid).toBe(true);
-  });
-
-  it('should aead encrypt and decrypt', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-    const body = textEncoder.encode(
-      'This is an encoded body with my secret data in it🔥'
-    );
-    const ad = textEncoder.encode(
-      'This is data associated with my secret data👋'
-    );
-
-    const nonce = veilidCrypto.randomNonce(bestKind);
-    expect(typeof nonce).toBe('string');
-
-    const sharedSecred = veilidCrypto.randomSharedSecret(bestKind);
-    expect(typeof sharedSecred).toBe('string');
-
-    const encBody = veilidCrypto.encryptAead(
-      bestKind,
-      body,
-      nonce,
-      sharedSecred,
-      ad
-    );
-    expect(encBody instanceof Uint8Array).toBe(true);
-
-    const overhead = veilidCrypto.aeadOverhead(bestKind);
-    expect(encBody.length - body.length).toBe(overhead);
-
-    const decBody = veilidCrypto.decryptAead(
-      bestKind,
-      encBody,
-      nonce,
-      sharedSecred,
-      ad
-    );
-    expect(decBody instanceof Uint8Array).toBe(true);
-    expect(body).toEqual(decBody);
-  });
-
-  it('should sign and verify', () => {
-    const bestKind = veilidCrypto.bestCryptoKind();
-    const keypair = veilidCrypto.generateKeyPair(bestKind);
-    const data = textEncoder.encode(
-      'This is some data I am signing with my key 🔑'
-    );
-    expect(typeof keypair).toBe('string');
-
-    const [publicKey, secretKey] = keypair.split(':');
-
-    const sig = veilidCrypto.sign(bestKind, publicKey, secretKey, data);
-    expect(typeof sig).toBe('string');
-
-    expect(() => {
-      const res = veilidCrypto.verify(bestKind, publicKey, data, sig);
-      expect(res).toBe(true);
-    }).not.toThrow();
-  });
-
-  describe('constants', () => {
-    it('CRYPTO_KEY_LENGTH', () => {
-      expect(typeof veilidCrypto.CRYPTO_KEY_LENGTH).toBe('number');
     });
-    it('CRYPTO_KEY_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.CRYPTO_KEY_LENGTH_ENCODED).toBe('number');
+  }
+
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should generate random bytes for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+      const bytes = vcrypto.randomBytes(64);
+      await expect(bytes instanceof Uint8Array).toBe(true);
+      await expect(bytes.length).toBe(64);
+
     });
-    it('HASH_DIGEST_LENGTH', () => {
-      expect(typeof veilidCrypto.HASH_DIGEST_LENGTH).toBe('number');
+  }
+
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should hash data and validate hash for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+      const data = textEncoder.encode('this is my data🚀');
+      const hash = vcrypto.generateHash(data);
+
+      await expect(hash).toBeDefined();
+      await expect(typeof hash).toBe('object');
+
+      const isValid = vcrypto.validateHash(data, hash);
+      await expect(isValid).toBe(true);
     });
-    it('HASH_DIGEST_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.HASH_DIGEST_LENGTH_ENCODED).toBe('number');
+  }
+
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should hash and validate password for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+
+      const password = textEncoder.encode('this is my data🚀');
+      const saltLength = vcrypto.defaultSaltLength();
+      await expect(saltLength).toBeGreaterThan(0);
+
+      const salt = vcrypto.randomBytes(saltLength);
+      await expect(salt instanceof Uint8Array).toBe(true);
+      await expect(salt.length).toBe(saltLength);
+
+      const hash = vcrypto.hashPassword(password, salt);
+      await expect(hash).toBeDefined();
+      await expect(typeof hash).toBe('string');
+
+      const isValid = vcrypto.verifyPassword(password, hash);
+      await expect(isValid).toBe(true);
     });
-    it('NONCE_LENGTH', () => {
-      expect(typeof veilidCrypto.NONCE_LENGTH).toBe('number');
+  }
+
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should aead encrypt and decrypt for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+      const body = textEncoder.encode(
+        'This is an encoded body with my secret data in it🔥'
+      );
+      const ad = textEncoder.encode(
+        'This is data associated with my secret data👋'
+      );
+
+      const nonce = vcrypto.randomNonce();
+      await expect(typeof nonce).toBe('object');
+
+      const sharedSecred = vcrypto.randomSharedSecret();
+      await expect(typeof sharedSecred).toBe('object');
+
+      const encBody = vcrypto.encryptAead(
+        body,
+        nonce,
+        sharedSecred,
+        ad
+      );
+      await expect(encBody instanceof Uint8Array).toBe(true);
+
+      const overhead = vcrypto.aeadOverhead();
+      await expect(encBody.length - body.length).toBe(overhead);
+
+      const decBody = vcrypto.decryptAead(
+        encBody,
+        nonce,
+        sharedSecred,
+        ad
+      );
+      await expect(decBody instanceof Uint8Array).toBe(true);
+      await expect(body).toEqual(decBody);
     });
-    it('NONCE_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.NONCE_LENGTH_ENCODED).toBe('number');
+  }
+  for (const cryptoKind of veilidCrypto.VALID_CRYPTO_KINDS) {
+    it(`should sign and verify for ${cryptoKind}`, async () => {
+      const vcrypto = veilidClient.getCrypto(cryptoKind)
+      const keypair = vcrypto.generateKeyPair();
+      const data = textEncoder.encode(
+        'This is some data I am signing with my key 🔑'
+      );
+      await expect(typeof keypair).toBe('object');
+
+      const publicKey = keypair.key;
+      const secretKey = keypair.secret;
+
+      const sig = vcrypto.sign(publicKey, secretKey, data);
+      await expect(typeof sig).toBe('object');
+
+      await expect(async () => {
+        const res = vcrypto.verify(publicKey, data, sig);
+        await expect(res).toBe(true);
+      }).not.toThrow();
     });
-    it('PUBLIC_KEY_LENGTH', () => {
-      expect(typeof veilidCrypto.PUBLIC_KEY_LENGTH).toBe('number');
-    });
-    it('PUBLIC_KEY_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.PUBLIC_KEY_LENGTH_ENCODED).toBe('number');
-    });
-    it('ROUTE_ID_LENGTH', () => {
-      expect(typeof veilidCrypto.ROUTE_ID_LENGTH).toBe('number');
-    });
-    it('ROUTE_ID_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.ROUTE_ID_LENGTH_ENCODED).toBe('number');
-    });
-    it('SECRET_KEY_LENGTH', () => {
-      expect(typeof veilidCrypto.SECRET_KEY_LENGTH).toBe('number');
-    });
-    it('SECRET_KEY_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.SECRET_KEY_LENGTH_ENCODED).toBe('number');
-    });
-    it('SHARED_SECRET_LENGTH', () => {
-      expect(typeof veilidCrypto.SHARED_SECRET_LENGTH).toBe('number');
-    });
-    it('SHARED_SECRET_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.SHARED_SECRET_LENGTH_ENCODED).toBe('number');
-    });
-    it('SIGNATURE_LENGTH', () => {
-      expect(typeof veilidCrypto.SIGNATURE_LENGTH).toBe('number');
-    });
-    it('SIGNATURE_LENGTH_ENCODED', () => {
-      expect(typeof veilidCrypto.SIGNATURE_LENGTH_ENCODED).toBe('number');
-    });
-  });
+  }
+
 });

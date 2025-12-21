@@ -6,22 +6,22 @@ const MAX_FIND_BLOCK_A_PEERS_LEN: usize = 10;
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationFindBlockQ {
-    block_id: TypedPublicKey,
+    block_id: PublicKey,
 }
 
 impl RPCOperationFindBlockQ {
-    pub fn new(block_id: TypedPublicKey) -> Self {
+    pub fn new(block_id: PublicKey) -> Self {
         Self { block_id }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
-    pub fn block_id(&self) -> TypedPublicKey {
+    pub fn block_id(&self) -> PublicKey {
         self.block_id
     }
 
-    pub fn destructure(self) -> TypedPublicKey {
+    pub fn destructure(self) -> PublicKey {
         self.block_id
     }
 
@@ -29,10 +29,13 @@ impl RPCOperationFindBlockQ {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_find_block_q::Reader,
     ) -> Result<RPCOperationFindBlockQ, RPCError> {
-        let bi_reader = reader.get_block_id().map_err(RPCError::protocol)?;
+        if !reader.has_block_id() {
+            return Err(RPCError::ignore);
+        }
+        let bi_reader = reader.get_block_id()?;
         let block_id = decode_typed_key(&bi_reader)?;
 
-        Ok(Self { block_id })
+        Ok(Self::new(block_id))
     }
     pub fn encode(
         &self,
@@ -61,13 +64,13 @@ impl RPCOperationFindBlockA {
         peers: Vec<PeerInfo>,
     ) -> Result<Self, RPCError> {
         if data.len() > MAX_FIND_BLOCK_A_DATA_LEN {
-            return Err(RPCError::protocol("find block data length too long"));
+            return Err(RPCError::internal("find block data length too long"));
         }
         if suppliers.len() > MAX_FIND_BLOCK_A_SUPPLIERS_LEN {
-            return Err(RPCError::protocol("find block suppliers length too long"));
+            return Err(RPCError::internal("find block suppliers length too long"));
         }
         if peers.len() > MAX_FIND_BLOCK_A_PEERS_LEN {
-            return Err(RPCError::protocol("find block peers length too long"));
+            return Err(RPCError::internal("find block peers length too long"));
         }
 
         Ok(Self {
@@ -76,9 +79,7 @@ impl RPCOperationFindBlockA {
             peers,
         })
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
-        PeerInfo::validate_vec(&mut self.suppliers, validate_context.crypto.clone());
-        PeerInfo::validate_vec(&mut self.peers, validate_context.crypto.clone());
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -95,49 +96,39 @@ impl RPCOperationFindBlockA {
     pub fn destructure(self) -> (Vec<u8>, Vec<PeerInfo>, Vec<PeerInfo>) {
         (self.data, self.suppliers, self.peers)
     }
-    pub fn decode(reader: &veilid_capnp::operation_find_block_a::Reader) -> Result<Self, RPCError> {
-        let data = reader.get_data().map_err(RPCError::protocol)?;
-        if data.len() > MAX_FIND_BLOCK_A_DATA_LEN {
-            return Err(RPCError::protocol("find block data length too long"));
-        }
+    pub fn decode(
+        decode_context: &RPCDecodeContext,
+        reader: &veilid_capnp::operation_find_block_a::Reader,
+    ) -> Result<Self, RPCError> {
+        rpc_ignore_missing_property!(reader, data);
+        let data = reader.get_data()?;
+        rpc_ignore_max_len!(data, MAX_FIND_BLOCK_A_DATA_LEN);
 
-        let suppliers_reader = reader.get_suppliers().map_err(RPCError::protocol)?;
-        if suppliers_reader.len() as usize > MAX_FIND_BLOCK_A_SUPPLIERS_LEN {
-            return Err(RPCError::protocol("find block suppliers length too long"));
-        }
+        rpc_ignore_missing_property!(reader, suppliers);
+        let suppliers_reader = reader.get_suppliers()?;
+        let suppliers_len = rpc_ignore_max_len!(suppliers_reader, MAX_FIND_BLOCK_A_SUPPLIERS_LEN);
 
-        let peers_reader = reader.get_peers().map_err(RPCError::protocol)?;
-        if peers_reader.len() as usize > MAX_FIND_BLOCK_A_PEERS_LEN {
-            return Err(RPCError::protocol("find block peers length too long"));
-        }
+        rpc_ignore_missing_property!(reader, peers);
+        let peers_reader = reader.get_peers()?;
+        let peers_len = rpc_ignore_max_len!(peers_reader, MAX_FIND_BLOCK_A_PEERS_LEN);
 
-        let mut suppliers = Vec::<PeerInfo>::with_capacity(
-            suppliers_reader
-                .len()
-                .try_into()
-                .map_err(RPCError::map_internal("too many suppliers"))?,
-        );
+        let mut suppliers = Vec::<PeerInfo>::with_capacity(suppliers_len);
         for s in suppliers_reader.iter() {
-            let peer_info = decode_peer_info(&s)?;
+            let Some(peer_info) = decode_peer_info(decode_context, &s).ignore_ok()? else {
+                continue;
+            };
             suppliers.push(peer_info);
         }
 
-        let mut peers = Vec::<PeerInfo>::with_capacity(
-            peers_reader
-                .len()
-                .try_into()
-                .map_err(RPCError::map_internal("too many peers"))?,
-        );
+        let mut peers = Vec::<PeerInfo>::with_capacity(peers_len);
         for p in peers_reader.iter() {
-            let peer_info = decode_peer_info(&p)?;
+            let Some(peer_info) = decode_peer_info(decode_context, &p).ignore_ok()? else {
+                continue;
+            };
             peers.push(peer_info);
         }
 
-        Ok(Self {
-            data: data.to_vec(),
-            suppliers,
-            peers,
-        })
+        Ok(Self::new(data.to_vec(), suppliers, peers))
     }
 
     pub fn encode(

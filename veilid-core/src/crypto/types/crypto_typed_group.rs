@@ -1,306 +1,274 @@
-use super::*;
+#[macro_export]
+macro_rules! impl_crypto_typed_group {
+    ($visibility:vis $name:ident) => {
+        paste::paste! {
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash, Default)]
-#[serde(from = "Vec<CryptoTyped<K>>", into = "Vec<CryptoTyped<K>>")]
-pub struct CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    items: Vec<CryptoTyped<K>>,
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
-        #[wasm_bindgen(typescript_custom_section)]
-        const CRYPOTYPEDGROUP_TYPE: &'static str = r#"
-export type CryptoTypedGroup<TCryptoKey extends string> = Array<CryptoTyped<TCryptoKey>>;
-"#;
-    }
-}
-
-impl<K> CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    #[must_use]
-    pub fn new() -> Self {
-        Self { items: Vec::new() }
-    }
-    #[must_use]
-    pub fn with_capacity(cap: usize) -> Self {
-        Self {
-            items: Vec::with_capacity(cap),
-        }
-    }
-    pub fn kinds(&self) -> Vec<CryptoKind> {
-        let mut out = Vec::new();
-        for tk in &self.items {
-            out.push(tk.kind);
-        }
-        out.sort_by(compare_crypto_kind);
-        out
-    }
-    #[must_use]
-    pub fn keys(&self) -> Vec<K> {
-        let mut out = Vec::new();
-        for tk in &self.items {
-            out.push(tk.value);
-        }
-        out
-    }
-    #[must_use]
-    pub fn get(&self, kind: CryptoKind) -> Option<CryptoTyped<K>> {
-        self.items.iter().find(|x| x.kind == kind).copied()
-    }
-    pub fn add(&mut self, typed_key: CryptoTyped<K>) {
-        for x in &mut self.items {
-            if x.kind == typed_key.kind {
-                *x = typed_key;
-                return;
+            #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(wasm_bindgen_derive::TryFromJsValue))]
+            #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen)]
+            #[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash, Default, GetSize)]
+            #[serde(from = "Vec<_>", into = "Vec<_>")]
+            pub struct [<$name Group>]
+            {
+                items: Vec<$name>,
             }
-        }
-        self.items.push(typed_key);
-        self.items.sort()
-    }
-    pub fn add_all(&mut self, typed_keys: &[CryptoTyped<K>]) {
-        'outer: for typed_key in typed_keys {
-            for x in &mut self.items {
-                if x.kind == typed_key.kind {
-                    *x = *typed_key;
-                    continue 'outer;
+
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            make_wasm_bindgen_stubs!([<$name Group>]);
+
+            impl [<$name Group>]
+            {
+                #[must_use]
+                pub fn new() -> Self {
+                    Self { items: Vec::new() }
+                }
+                #[must_use]
+                pub fn with_capacity(cap: usize) -> Self {
+                    Self {
+                        items: Vec::with_capacity(cap),
+                    }
+                }
+
+                pub fn iter(&self) -> core::slice::Iter<'_, $name> {
+                    self.items.iter()
+                }
+
+                pub fn add_all_from_slice(&mut self, typed_keys: &[$name]) {
+                    'outer: for typed_key in typed_keys {
+                        for x in &mut self.items {
+                            if x.kind() == typed_key.kind() {
+                                *x = typed_key.clone();
+                                continue 'outer;
+                            }
+                        }
+                        self.items.push(typed_key.clone());
+                    }
+                    self.items.sort()
+                }
+
+                pub fn contains_any_from_slice(&self, typed_keys: &[$name]) -> bool {
+                    typed_keys.iter().any(|typed_key| self.items.contains(typed_key))
+                }
+
+            }
+
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            #[wasm_bindgen]
+            impl [<$name Group>]
+            {
+                #[must_use]
+                pub fn get(&self,
+                    #[wasm_bindgen(unchecked_param_type = "CryptoKind")]
+                    kind: CryptoKind) -> Option<$name> {
+                    self.items.iter().find(|x| x.kind() == kind).cloned()
+                }
+
+                pub fn remove(&mut self,
+                    #[wasm_bindgen(unchecked_param_type = "CryptoKind")]
+                    kind: CryptoKind) -> Option<$name> {
+                    if let Some(idx) = self.items.iter().position(|x| x.kind() == kind) {
+                        return Some(self.items.remove(idx));
+                    }
+                    None
+                }
+
+                #[wasm_bindgen(js_name = "removeAll")]
+                pub fn remove_all(&mut self,
+                    #[wasm_bindgen(unchecked_param_type = "CryptoKind[]")]
+                    kinds: Vec<CryptoKind>) {
+                    for k in kinds {
+                        self.remove(k);
+                    }
                 }
             }
-            self.items.push(*typed_key);
-        }
-        self.items.sort()
-    }
-    pub fn remove(&mut self, kind: CryptoKind) -> Option<CryptoTyped<K>> {
-        if let Some(idx) = self.items.iter().position(|x| x.kind == kind) {
-            return Some(self.items.remove(idx));
-        }
-        None
-    }
-    pub fn remove_all(&mut self, kinds: &[CryptoKind]) {
-        for k in kinds {
-            self.remove(*k);
-        }
-    }
-    /// Return preferred typed key of our supported crypto kinds
-    #[must_use]
-    pub fn best(&self) -> Option<CryptoTyped<K>> {
-        self.items
-            .iter()
-            .find(|k| VALID_CRYPTO_KINDS.contains(&k.kind))
-            .copied()
-    }
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-    pub fn iter(&self) -> core::slice::Iter<'_, CryptoTyped<K>> {
-        self.items.iter()
-    }
-    pub fn contains(&self, typed_key: &CryptoTyped<K>) -> bool {
-        self.items.contains(typed_key)
-    }
-    pub fn contains_any(&self, typed_keys: &[CryptoTyped<K>]) -> bool {
-        for typed_key in typed_keys {
-            if self.items.contains(typed_key) {
-                return true;
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            impl [<$name Group>]
+            {
+                #[must_use]
+                pub fn get(&self, kind: CryptoKind) -> Option<$name> {
+                    self.items.iter().find(|x| x.kind() == kind).cloned()
+                }
+
+                pub fn remove(&mut self, kind: CryptoKind) -> Option<$name> {
+                    if let Some(idx) = self.items.iter().position(|x| x.kind() == kind) {
+                        return Some(self.items.remove(idx));
+                    }
+                    None
+                }
+
+                pub fn remove_all(&mut self, kinds: Vec<CryptoKind>) {
+                    for k in kinds {
+                        self.remove(k);
+                    }
+                }
+            }
+
+
+            #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen)]
+            impl [<$name Group>] {
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(getter, unchecked_return_type = "CryptoKind[]"))]
+                pub fn kinds(&self) -> Vec<CryptoKind> {
+                    let mut out = self.items.iter().map(|tk| tk.kind()).collect::<Vec<_>>();
+                    out.sort_by(compare_crypto_kind);
+                    out
+                }
+
+                #[must_use]
+                pub fn keys(&self) -> Vec<[<Bare $name>]> {
+                    self.items.iter().map(|tk| tk.value()).collect()
+                }
+                #[must_use]
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(js_name = "isEmpty"))]
+                pub fn is_empty(&self) -> bool {
+                    self.items.is_empty()
+                }
+                #[must_use]
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(getter, js_name = length))]
+                pub fn len(&self) -> usize {
+                    self.items.len()
+                }
+                pub fn contains(&self, typed_key: &$name) -> bool {
+                    self.items.contains(typed_key)
+                }
+
+                #[must_use]
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(js_name = containsAny))]
+                pub fn contains_any(&self, typed_keys: Vec<$name>) -> bool {
+                    self.contains_any_from_slice(&typed_keys)
+                }
+
+                #[must_use]
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(js_name = toArray))]
+                pub fn to_vec(&self) -> Vec<$name> {
+                    self.items.clone()
+                }
+
+                pub fn add(&mut self, typed_key: $name) {
+                    for x in &mut self.items {
+                        if x.kind() == typed_key.kind() {
+                            *x = typed_key;
+                            return;
+                        }
+                    }
+                    self.items.push(typed_key);
+                    self.items.sort()
+                }
+
+                #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen(js_name = "addAll"))]
+                pub fn add_all(&mut self, typed_keys: Vec<$name>) {
+                    self.add_all_from_slice(&typed_keys)
+                }
+
+                pub fn clear(&mut self) {
+                    self.items.clear();
+                }
+
+
+            }
+
+            impl core::ops::Deref for [<$name Group>]
+            {
+                type Target = [$name];
+
+                #[inline]
+                fn deref(&self) -> &[$name] {
+                    &self.items
+                }
+            }
+
+            impl fmt::Display for [<$name Group>]
+            {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+                    write!(f, "[")?;
+                    let mut first = true;
+                    for x in &self.items {
+                        if first {
+                            first = false;
+                        } else {
+                            write!(f, ",")?;
+                        }
+                        write!(f, "{}", x)?;
+                    }
+                    write!(f, "]")
+                }
+            }
+            impl FromStr for [<$name Group>]
+            {
+                type Err = VeilidAPIError;
+                fn from_str(s: &str) -> Result<Self, Self::Err> {
+                    let mut items = Vec::new();
+                    if s.len() < 2 {
+                        apibail_parse_error!("invalid length", s);
+                    }
+                    if &s[0..1] != "[" || &s[(s.len() - 1)..] != "]" {
+                        apibail_parse_error!("invalid format", s);
+                    }
+                    for x in s[1..s.len() - 1].split(',') {
+                        let tk = $name::from_str(x.trim())?;
+                        items.push(tk);
+                    }
+
+                    Ok(Self { items })
+                }
+            }
+            impl From<$name> for [<$name Group>]
+            {
+                fn from(x: $name) -> Self {
+                    let mut tks = [<$name Group>]::with_capacity(1);
+                    tks.add(x);
+                    tks
+                }
+            }
+            impl From<Vec<$name>> for [<$name Group>]
+            {
+                fn from(x: Vec<$name>) -> Self {
+                    let mut tks = [<$name Group>]::with_capacity(x.len());
+                    tks.add_all_from_slice(&x);
+                    tks
+                }
+            }
+            impl From<&[$name]> for [<$name Group>]
+            {
+                fn from(x: &[$name]) -> Self {
+                    let mut tks = [<$name Group>]::with_capacity(x.len());
+                    tks.add_all_from_slice(x);
+                    tks
+                }
+            }
+            impl From<[<$name Group>]> for Vec<$name>
+            {
+                fn from(val: [<$name Group>]) -> Self {
+                    val.items
+                }
+            }
+
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            #[wasm_bindgen]
+            impl [<$name Group>] {
+                #[wasm_bindgen(constructor)]
+                #[must_use]
+                pub fn js_new() -> Self {
+                    Self::new()
+                }
+
+                #[wasm_bindgen(js_name = parse)]
+                pub fn js_parse(s: String) -> VeilidAPIResult<Self> {
+                    Self::from_str(&s)
+                }
+
+                #[wasm_bindgen(js_name = toString)]
+                #[must_use]
+                pub fn js_to_string(&self) -> String {
+                    self.to_string()
+                }
+
+                #[wasm_bindgen(js_name = isEqual)]
+                #[must_use]
+                pub fn js_is_equal(&self, other: &Self) -> bool {
+                    self == other
+                }
+
+                // TODO: add more typescript-only operations here
             }
         }
-        false
-    }
-    pub fn contains_value(&self, value: &K) -> bool {
-        for tk in &self.items {
-            if tk.value == *value {
-                return true;
-            }
-        }
-        false
-    }
-}
-
-impl<K> core::ops::Deref for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    type Target = [CryptoTyped<K>];
-
-    #[inline]
-    fn deref(&self) -> &[CryptoTyped<K>] {
-        &self.items
-    }
-}
-
-impl<K> fmt::Display for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "[")?;
-        let mut first = true;
-        for x in &self.items {
-            if first {
-                first = false;
-            } else {
-                write!(f, ",")?;
-            }
-            write!(f, "{}", x)?;
-        }
-        write!(f, "]")
-    }
-}
-impl<K> FromStr for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    type Err = VeilidAPIError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut items = Vec::new();
-        if s.len() < 2 {
-            apibail_parse_error!("invalid length", s);
-        }
-        if &s[0..1] != "[" || &s[(s.len() - 1)..] != "]" {
-            apibail_parse_error!("invalid format", s);
-        }
-        for x in s[1..s.len() - 1].split(',') {
-            let tk = CryptoTyped::<K>::from_str(x.trim())?;
-            items.push(tk);
-        }
-
-        Ok(Self { items })
-    }
-}
-impl<K> From<CryptoTyped<K>> for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    fn from(x: CryptoTyped<K>) -> Self {
-        let mut tks = CryptoTypedGroup::<K>::with_capacity(1);
-        tks.add(x);
-        tks
-    }
-}
-impl<K> From<Vec<CryptoTyped<K>>> for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    fn from(x: Vec<CryptoTyped<K>>) -> Self {
-        let mut tks = CryptoTypedGroup::<K>::with_capacity(x.len());
-        tks.add_all(&x);
-        tks
-    }
-}
-impl<K> From<&[CryptoTyped<K>]> for CryptoTypedGroup<K>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    fn from(x: &[CryptoTyped<K>]) -> Self {
-        let mut tks = CryptoTypedGroup::<K>::with_capacity(x.len());
-        tks.add_all(x);
-        tks
-    }
-}
-impl<K> From<CryptoTypedGroup<K>> for Vec<CryptoTyped<K>>
-where
-    K: Clone
-        + Copy
-        + fmt::Debug
-        + fmt::Display
-        + FromStr
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Encodable,
-{
-    fn from(val: CryptoTypedGroup<K>) -> Self {
-        val.items
-    }
+    };
 }

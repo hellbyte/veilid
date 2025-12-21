@@ -1,30 +1,22 @@
 use super::*;
-use crate::storage_manager::{MAX_RECORD_DATA_SIZE, MAX_SUBKEY_SIZE};
+use crate::storage_manager::MEMBER_ID_LENGTH;
 
 /// Simple DHT Schema (SMPL) Member
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi)
-)]
 #[must_use]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 pub struct DHTSchemaSMPLMember {
     /// Member key
     #[schemars(with = "String")]
-    pub m_key: PublicKey,
+    pub m_key: BareMemberId,
     /// Member subkey count
     pub m_cnt: u16,
 }
 
 /// Simple DHT Schema (SMPL)
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi)
-)]
 #[must_use]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 pub struct DHTSchemaSMPL {
     /// Owner subkey count
     o_cnt: u16,
@@ -35,6 +27,7 @@ pub struct DHTSchemaSMPL {
 impl DHTSchemaSMPL {
     pub const FCC: [u8; 4] = *b"SMPL";
     pub const FIXED_SIZE: usize = 6;
+    pub const MAX_MEMBER_COUNT: usize = 256;
 
     /// Make a schema
     pub fn new(o_cnt: u16, members: Vec<DHTSchemaSMPLMember>) -> VeilidAPIResult<Self> {
@@ -45,16 +38,46 @@ impl DHTSchemaSMPL {
 
     /// Validate the data representation
     pub fn validate(&self) -> VeilidAPIResult<()> {
-        let keycount = self
-            .members
-            .iter()
-            .fold(self.o_cnt as usize, |acc, x| acc + (x.m_cnt as usize));
-
-        if keycount == 0 {
-            apibail_invalid_argument!("must have at least one subkey", "keycount", keycount);
+        let mut subkey_count = self.o_cnt as usize;
+        let mut writer_count = 0;
+        if self.o_cnt > 0 {
+            writer_count += 1;
         }
-        if keycount > 65535 {
-            apibail_invalid_argument!("too many subkeys", "keycount", keycount);
+
+        let mut writers = HashSet::<BareMemberId>::new();
+        for m in &self.members {
+            if m.m_key.len() != MEMBER_ID_LENGTH {
+                apibail_invalid_argument!(
+                    "member hash digest is wrong size",
+                    "m_key.len()",
+                    m.m_key.len()
+                );
+            }
+            if m.m_cnt > 0 {
+                writers.insert(m.m_key.clone());
+            }
+            subkey_count += m.m_cnt as usize;
+        }
+
+        let member_count = self.members.len();
+        if member_count > Self::MAX_MEMBER_COUNT {
+            apibail_invalid_argument!("too many members", "member_count", member_count);
+        }
+
+        writer_count += writers.len();
+        if writer_count > DHTSchema::MAX_WRITER_COUNT {
+            apibail_invalid_argument!("too many writers", "writer_count", writer_count);
+        }
+
+        if subkey_count == 0 {
+            apibail_invalid_argument!(
+                "must have at least one subkey",
+                "subkey_count",
+                subkey_count
+            );
+        }
+        if subkey_count > DHTSchema::MAX_SUBKEY_COUNT {
+            apibail_invalid_argument!("too many subkeys", "subkey_count", subkey_count);
         }
         Ok(())
     }
@@ -74,7 +97,7 @@ impl DHTSchemaSMPL {
     #[must_use]
     pub fn compile(&self) -> Vec<u8> {
         let mut out = Vec::<u8>::with_capacity(
-            Self::FIXED_SIZE + (self.members.len() * (PUBLIC_KEY_LENGTH + 2)),
+            Self::FIXED_SIZE + (self.members.len() * (MEMBER_ID_LENGTH + 2)),
         );
         // kind
         out.extend_from_slice(&Self::FCC);
@@ -83,7 +106,7 @@ impl DHTSchemaSMPL {
         // members
         for m in &self.members {
             // m_key
-            out.extend_from_slice(&m.m_key.bytes);
+            out.extend_from_slice(&m.m_key);
             // m_cnt
             out.extend_from_slice(&m.m_cnt.to_le_bytes());
         }
@@ -100,88 +123,23 @@ impl DHTSchemaSMPL {
         (subkey_count - 1) as ValueSubkey
     }
 
+    /// Get the subkey count for this schema
+    #[must_use]
+    pub fn subkey_count(&self) -> usize {
+        self.max_subkey() as usize + 1
+    }
+
     /// Get the data size of this schema beyond the size of the structure itself
     #[must_use]
     pub fn data_size(&self) -> usize {
         self.members.len() * mem::size_of::<DHTSchemaSMPLMember>()
     }
 
-    /// Check a subkey value data against the schema
-    pub fn check_subkey_value_data(
-        &self,
-        owner: &PublicKey,
-        subkey: ValueSubkey,
-        value_data: &ValueData,
-    ) -> VeilidAPIResult<()> {
-        let mut cur_subkey = subkey as usize;
-
-        let max_value_len = usize::min(
-            MAX_SUBKEY_SIZE,
-            MAX_RECORD_DATA_SIZE / (self.max_subkey() + 1) as usize,
-        );
-
-        // Check if subkey is in owner range
-        if cur_subkey < (self.o_cnt as usize) {
-            // Check value data has valid writer
-            if value_data.writer() == owner {
-                // Ensure value size is within additional limit
-                if value_data.data_size() <= max_value_len {
-                    return Ok(());
-                }
-
-                // Value too big
-                apibail_invalid_argument!(
-                    "value too big",
-                    "data",
-                    format!("{:?}", value_data.data())
-                );
-            }
-            // Wrong writer
-            apibail_invalid_argument!(
-                "wrong writer",
-                "writer",
-                format!("{:?}", value_data.writer())
-            );
-        }
-        cur_subkey -= self.o_cnt as usize;
-
-        // Check all member ranges
-        for m in &self.members {
-            // Check if subkey is in member range
-            if cur_subkey < (m.m_cnt as usize) {
-                // Check value data has valid writer
-                if value_data.writer() == &m.m_key {
-                    // Ensure value size is in allowed range
-                    if value_data.data_size() <= max_value_len {
-                        return Ok(());
-                    }
-
-                    // Value too big
-                    apibail_invalid_argument!(
-                        "value too big",
-                        "data",
-                        format!("{:?}", value_data.data())
-                    );
-                }
-                // Wrong writer
-                apibail_invalid_argument!(
-                    "wrong writer",
-                    "writer",
-                    format!("{:?}", value_data.writer())
-                );
-            }
-            cur_subkey -= m.m_cnt as usize;
-        }
-
-        // Subkey out of range
-        apibail_invalid_argument!("subkey out of range", "subkey", subkey);
-    }
-
-    /// Check if a key is a schema member
+    /// Check if a hash is a schema member
     #[must_use]
-    pub fn is_member(&self, key: &PublicKey) -> bool {
+    pub fn is_member(&self, member_id: &BareMemberId) -> bool {
         for m in &self.members {
-            if m.m_key == *key {
+            if &m.m_key == member_id {
                 return true;
             }
         }
@@ -198,20 +156,19 @@ impl TryFrom<&[u8]> for DHTSchemaSMPL {
         if b[0..4] != Self::FCC {
             apibail_generic!("wrong fourcc");
         }
-        if (b.len() - Self::FIXED_SIZE) % (PUBLIC_KEY_LENGTH + 2) != 0 {
+        if (b.len() - Self::FIXED_SIZE) % (MEMBER_ID_LENGTH + 2) != 0 {
             apibail_generic!("invalid member length");
         }
 
         let o_cnt = u16::from_le_bytes(b[4..6].try_into().map_err(VeilidAPIError::internal)?);
 
-        let members_len = (b.len() - Self::FIXED_SIZE) / (PUBLIC_KEY_LENGTH + 2);
+        let members_len = (b.len() - Self::FIXED_SIZE) / (MEMBER_ID_LENGTH + 2);
         let mut members: Vec<DHTSchemaSMPLMember> = Vec::with_capacity(members_len);
         for n in 0..members_len {
-            let mstart = Self::FIXED_SIZE + n * (PUBLIC_KEY_LENGTH + 2);
-            let m_key = PublicKey::try_from(&b[mstart..mstart + PUBLIC_KEY_LENGTH])
-                .map_err(VeilidAPIError::internal)?;
+            let mstart = Self::FIXED_SIZE + n * (MEMBER_ID_LENGTH + 2);
+            let m_key = BareMemberId::new(&b[mstart..mstart + MEMBER_ID_LENGTH]);
             let m_cnt = u16::from_le_bytes(
-                b[mstart + PUBLIC_KEY_LENGTH..mstart + PUBLIC_KEY_LENGTH + 2]
+                b[mstart + MEMBER_ID_LENGTH..mstart + MEMBER_ID_LENGTH + 2]
                     .try_into()
                     .map_err(VeilidAPIError::internal)?,
             );

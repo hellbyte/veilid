@@ -59,14 +59,15 @@ impl RPCProcessor {
         while unord.next().await.is_some() {}
     }
 
+    #[instrument(level = "trace", target = "rpc", skip_all)]
     async fn rpc_worker(&self, stop_token: StopToken, receiver: flume::Receiver<RPCWorkerRequest>) {
         while let Ok(Ok(request)) = receiver.recv_async().timeout_at(stop_token.clone()).await {
             let rpc_request_span = tracing::trace_span!("rpc request");
             rpc_request_span.follows_from(request.span);
 
             // Measure dequeue time
-            let dequeue_ts = Timestamp::now();
-            let dequeue_latency = dequeue_ts.saturating_sub(request.enqueued_ts);
+            let dequeue_ts = Timestamp::now_non_decreasing();
+            let dequeue_latency = dequeue_ts.duration_since(request.enqueued_ts);
 
             // Process request kind
             match request.kind {
@@ -88,8 +89,8 @@ impl RPCProcessor {
             }
 
             // Measure process time
-            let process_ts = Timestamp::now();
-            let process_latency = process_ts.saturating_sub(dequeue_ts);
+            let process_ts = Timestamp::now_non_decreasing();
+            let process_latency = process_ts.duration_since(dequeue_ts);
 
             // Accounting
             let mut inner = self.inner.lock();
@@ -128,7 +129,7 @@ impl RPCProcessor {
                 flow,
                 routing_domain,
             }),
-            timestamp: Timestamp::now(),
+            timestamp: Timestamp::now_non_decreasing(),
             body_len: ByteCount::new(body.len() as u64),
         };
 
@@ -146,7 +147,7 @@ impl RPCProcessor {
         };
         send_channel
             .try_send(RPCWorkerRequest {
-                enqueued_ts: Timestamp::now(),
+                enqueued_ts: Timestamp::now_non_decreasing(),
                 span: Span::current(),
                 kind: RPCWorkerRequestKind::Message { message_encoded },
             })
@@ -160,6 +161,7 @@ impl RPCProcessor {
         direct: RPCMessageHeaderDetailDirect,
         remote_safety_route: PublicKey,
         sequencing: Sequencing,
+        route_op_id: OperationId,
         body: Vec<u8>,
     ) -> EyreResult<()> {
         let _guard = self
@@ -173,8 +175,9 @@ impl RPCProcessor {
                 direct,
                 remote_safety_route,
                 sequencing,
+                route_op_id,
             }),
-            timestamp: Timestamp::now(),
+            timestamp: Timestamp::now_non_decreasing(),
             body_len: (body.len() as u64).into(),
         };
 
@@ -191,7 +194,7 @@ impl RPCProcessor {
         };
         send_channel
             .try_send(RPCWorkerRequest {
-                enqueued_ts: Timestamp::now(),
+                enqueued_ts: Timestamp::now_non_decreasing(),
                 span: Span::current(),
                 kind: RPCWorkerRequestKind::Message { message_encoded },
             })
@@ -206,6 +209,7 @@ impl RPCProcessor {
         remote_safety_route: PublicKey,
         private_route: PublicKey,
         safety_spec: SafetySpec,
+        route_op_id: OperationId,
         body: Vec<u8>,
     ) -> EyreResult<()> {
         let _guard = self
@@ -220,8 +224,9 @@ impl RPCProcessor {
                 remote_safety_route,
                 private_route,
                 safety_spec,
+                route_op_id,
             }),
-            timestamp: Timestamp::now(),
+            timestamp: Timestamp::now_non_decreasing(),
             body_len: (body.len() as u64).into(),
         };
 
@@ -239,7 +244,7 @@ impl RPCProcessor {
         };
         send_channel
             .try_send(RPCWorkerRequest {
-                enqueued_ts: Timestamp::now(),
+                enqueued_ts: Timestamp::now_non_decreasing(),
                 span: Span::current(),
                 kind: RPCWorkerRequestKind::Message { message_encoded },
             })

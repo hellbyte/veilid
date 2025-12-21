@@ -7,26 +7,27 @@ use super::*;
     derive(Tsify),
     tsify(from_wasm_abi, into_wasm_abi)
 )]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct DHTRecordReport {
     /// The actual subkey range within the schema being reported on
     /// This may be a subset of the requested range if it exceeds the schema limits
-    /// or has more than 512 subkeys
+    /// or has more than `DHTSchema::MAX_SUBKEY_COUNT` (1024) subkeys
     subkeys: ValueSubkeyRangeSet,
     /// The subkeys that have been writen offline that still need to be flushed
     offline_subkeys: ValueSubkeyRangeSet,
     /// The sequence numbers of each subkey requested from a locally stored DHT Record
-    local_seqs: Vec<Option<ValueSeqNum>>,
+    local_seqs: Vec<ValueSeqNum>,
     /// The sequence numbers of each subkey requested from the DHT over the network
-    network_seqs: Vec<Option<ValueSeqNum>>,
+    network_seqs: Vec<ValueSeqNum>,
 }
 
 impl DHTRecordReport {
     pub(crate) fn new(
         subkeys: ValueSubkeyRangeSet,
         offline_subkeys: ValueSubkeyRangeSet,
-        local_seqs: Vec<Option<ValueSeqNum>>,
-        network_seqs: Vec<Option<ValueSeqNum>>,
+        local_seqs: Vec<ValueSeqNum>,
+        network_seqs: Vec<ValueSeqNum>,
     ) -> VeilidAPIResult<Self> {
         if subkeys.is_full() {
             apibail_invalid_argument!("subkeys range should be exact", "subkeys", subkeys);
@@ -34,7 +35,7 @@ impl DHTRecordReport {
         if subkeys.is_empty() {
             apibail_invalid_argument!("subkeys range should not be empty", "subkeys", subkeys);
         }
-        if subkeys.len() > MAX_INSPECT_VALUE_A_SEQS_LEN as u64 {
+        if subkeys.len() > DHTSchema::MAX_SUBKEY_COUNT as u64 {
             apibail_invalid_argument!("subkeys range is too large", "subkeys", subkeys);
         }
         if subkeys.len() != local_seqs.len() as u64 {
@@ -74,11 +75,11 @@ impl DHTRecordReport {
         &self.offline_subkeys
     }
     #[must_use]
-    pub fn local_seqs(&self) -> &[Option<ValueSeqNum>] {
+    pub fn local_seqs(&self) -> &[ValueSeqNum] {
         &self.local_seqs
     }
     #[must_use]
-    pub fn network_seqs(&self) -> &[Option<ValueSeqNum>] {
+    pub fn network_seqs(&self) -> &[ValueSeqNum] {
         &self.network_seqs
     }
     pub fn newer_online_subkeys(&self) -> ValueSubkeyRangeSet {
@@ -89,8 +90,8 @@ impl DHTRecordReport {
             .zip(self.local_seqs.iter())
             .zip(self.network_seqs.iter())
         {
-            if let Some(nseq) = nseq {
-                if lseq.is_none() || *nseq > lseq.unwrap() {
+            if let Some(nseq) = nseq.to_option() {
+                if lseq.is_none() || nseq > lseq.to_option().unwrap() {
                     newer_online.insert(sk);
                 }
             }
@@ -103,11 +104,11 @@ impl fmt::Debug for DHTRecordReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "DHTRecordReport {{\n  subkeys: {:?}\n  offline_subkeys: {:?}\n  local_seqs:\n{}\n  remote_seqs:\n{}\n}}\n",
+            "DHTRecordReport {{\n  subkeys: {:?}\n  offline_subkeys: {:?}\n  local_seqs: {}\n  remote_seqs: {}\n}}\n",
             &self.subkeys,
             &self.offline_subkeys,
-            &debug_seqs(&self.local_seqs),
-            &debug_seqs(&self.network_seqs)
+            self.local_seqs.to_table_string(),
+            self.network_seqs.to_table_string(),
         )
     }
 }

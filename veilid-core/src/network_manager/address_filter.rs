@@ -7,9 +7,11 @@ const PUNISHMENT_DURATION_MIN: usize = 60;
 const MAX_PUNISHMENTS_BY_NODE_ID: usize = 65536;
 const DIAL_INFO_FAILURE_DURATION_MIN: usize = 10;
 const MAX_DIAL_INFO_FAILURES: usize = 65536;
+const MAX_ENVELOPE_INFO_BY_NODE_ID: usize = 16384;
+const DEFAULT_OLDEST_TIMESTAMP_DURATION: TimestampDuration = TimestampDuration::new_secs(10);
 
 #[derive(ThisError, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AddressFilterError {
+pub(crate) enum AddConnectionError {
     #[error("Count exceeded")]
     CountExceeded,
     #[error("Rate exceeded")]
@@ -19,10 +21,35 @@ pub(crate) enum AddressFilterError {
 }
 
 #[derive(ThisError, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TimestampError {
+    #[error("Timestamp too far behind")]
+    TooFarBehind {
+        local_timestamp: Timestamp,
+        remote_timestamp: Timestamp,
+        adjusted_remote_timestamp: Timestamp,
+        timestamp_offset: TimestampOffset,
+    },
+    #[error("Timestamp too far ahead")]
+    TooFarAhead {
+        local_timestamp: Timestamp,
+        remote_timestamp: Timestamp,
+        adjusted_remote_timestamp: Timestamp,
+        timestamp_offset: TimestampOffset,
+    },
+    #[error("Duplicate timestamp")]
+    Duplicate {
+        local_timestamp: Timestamp,
+        last_local_timestamp: Timestamp,
+        remote_timestamp: Timestamp,
+        adjusted_remote_timestamp: Timestamp,
+        timestamp_offset: TimestampOffset,
+    },
+}
+
+#[derive(ThisError, Debug, Clone, Copy, PartialEq, Eq)]
 #[error("Address not in table")]
 pub struct AddressNotInTableError {}
 
-#[derive(Debug)]
 struct AddressFilterInner {
     conn_count_by_ip4: BTreeMap<Ipv4Addr, usize>,
     conn_count_by_ip6_prefix: BTreeMap<Ipv6Addr, usize>,
@@ -30,8 +57,48 @@ struct AddressFilterInner {
     conn_timestamps_by_ip6_prefix: BTreeMap<Ipv6Addr, Vec<Timestamp>>,
     punishments_by_ip4: BTreeMap<Ipv4Addr, Punishment>,
     punishments_by_ip6_prefix: BTreeMap<Ipv6Addr, Punishment>,
-    punishments_by_node_id: BTreeMap<TypedNodeId, Punishment>,
+    punishments_by_node_id: BTreeMap<NodeId, Punishment>,
+    envelope_info_by_node_id: LruCache<NodeId, EnvelopeInfo>,
     dial_info_failures: BTreeMap<DialInfo, Timestamp>,
+}
+
+impl fmt::Debug for AddressFilterInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut envelope_by_node_id = LruCache::<NodeId, EnvelopeInfo>::new(64);
+        for entry in self.envelope_info_by_node_id.iter().skip(
+            if f.sign_plus() || self.envelope_info_by_node_id.len() <= 64 {
+                0
+            } else {
+                self.envelope_info_by_node_id.len() - 64
+            },
+        ) {
+            envelope_by_node_id.insert(entry.0.clone(), entry.1.clone());
+        }
+        let envelope_info_by_node_id_name =
+            if envelope_by_node_id.len() < self.envelope_info_by_node_id.len() {
+                format!(
+                    "envelope_info_by_node_id(truncated from {})",
+                    self.envelope_info_by_node_id.len()
+                )
+            } else {
+                "envelope_info_by_node_id".to_string()
+            };
+
+        f.debug_struct("AddressFilterInner")
+            .field("conn_count_by_ip4", &self.conn_count_by_ip4)
+            .field("conn_count_by_ip6_prefix", &self.conn_count_by_ip6_prefix)
+            .field("conn_timestamps_by_ip4", &self.conn_timestamps_by_ip4)
+            .field(
+                "conn_timestamps_by_ip6_prefix",
+                &self.conn_timestamps_by_ip6_prefix,
+            )
+            .field("punishments_by_ip4", &self.punishments_by_ip4)
+            .field("punishments_by_ip6_prefix", &self.punishments_by_ip6_prefix)
+            .field("punishments_by_node_id", &self.punishments_by_node_id)
+            .field(&envelope_info_by_node_id_name, &envelope_by_node_id)
+            .field("dial_info_failures", &self.dial_info_failures)
+            .finish()
+    }
 }
 
 pub(crate) struct AddressFilter {
@@ -43,6 +110,8 @@ pub(crate) struct AddressFilter {
     max_connection_frequency_per_min: usize,
     punishment_duration_min: usize,
     dial_info_failure_duration_min: usize,
+    opt_max_timestamp_ahead: Option<TimestampDuration>,
+    opt_max_timestamp_behind: Option<TimestampDuration>,
 }
 
 impl fmt::Debug for AddressFilter {
@@ -68,16 +137,31 @@ impl fmt::Debug for AddressFilter {
                 "dial_info_failure_duration_min",
                 &self.dial_info_failure_duration_min,
             )
+            .field("opt_max_timestamp_ahead", &self.opt_max_timestamp_ahead)
+            .field("opt_max_timestamp_behind", &self.opt_max_timestamp_behind)
             .finish()
     }
 }
 
-impl_veilid_component_registry_accessor!(AddressFilter);
+impl_veilid_component_accessors!(AddressFilter);
 
 impl AddressFilter {
     pub fn new(registry: VeilidComponentRegistry) -> Self {
         let config = registry.config();
-        let c = config.get();
+
+        let opt_max_timestamp_behind = config
+            .network
+            .rpc
+            .max_timestamp_behind_ms
+            .map(ms_to_us)
+            .map(TimestampDuration::new);
+        let opt_max_timestamp_ahead = config
+            .network
+            .rpc
+            .max_timestamp_ahead_ms
+            .map(ms_to_us)
+            .map(TimestampDuration::new);
+
         Self {
             registry,
             inner: Mutex::new(AddressFilterInner {
@@ -88,15 +172,19 @@ impl AddressFilter {
                 punishments_by_ip4: BTreeMap::new(),
                 punishments_by_ip6_prefix: BTreeMap::new(),
                 punishments_by_node_id: BTreeMap::new(),
+                envelope_info_by_node_id: LruCache::new(MAX_ENVELOPE_INFO_BY_NODE_ID),
                 dial_info_failures: BTreeMap::new(),
             }),
-            max_connections_per_ip4: c.network.max_connections_per_ip4 as usize,
-            max_connections_per_ip6_prefix: c.network.max_connections_per_ip6_prefix as usize,
-            max_connections_per_ip6_prefix_size: c.network.max_connections_per_ip6_prefix_size
+            max_connections_per_ip4: config.network.max_connections_per_ip4 as usize,
+            max_connections_per_ip6_prefix: config.network.max_connections_per_ip6_prefix as usize,
+            max_connections_per_ip6_prefix_size: config.network.max_connections_per_ip6_prefix_size
                 as usize,
-            max_connection_frequency_per_min: c.network.max_connection_frequency_per_min as usize,
+            max_connection_frequency_per_min: config.network.max_connection_frequency_per_min
+                as usize,
             punishment_duration_min: PUNISHMENT_DURATION_MIN,
             dial_info_failure_duration_min: DIAL_INFO_FAILURE_DURATION_MIN,
+            opt_max_timestamp_ahead,
+            opt_max_timestamp_behind,
         }
     }
 
@@ -108,14 +196,18 @@ impl AddressFilter {
         inner.dial_info_failures.clear();
     }
 
-    fn purge_old_timestamps_inner(&self, inner: &mut AddressFilterInner, cur_ts: Timestamp) {
+    fn purge_old_connection_timestamps_inner(
+        &self,
+        inner: &mut AddressFilterInner,
+        cur_ts: Timestamp,
+    ) {
         // v4
         {
             let mut dead_keys = Vec::<Ipv4Addr>::new();
             for (key, value) in &mut inner.conn_timestamps_by_ip4 {
                 value.retain(|v| {
                     // keep timestamps that are less than a minute away
-                    cur_ts.saturating_sub(*v) < TimestampDuration::new(60_000_000u64)
+                    cur_ts.duration_since(*v) < TimestampDuration::new_secs(60)
                 });
                 if value.is_empty() {
                     dead_keys.push(*key);
@@ -131,7 +223,7 @@ impl AddressFilter {
             for (key, value) in &mut inner.conn_timestamps_by_ip6_prefix {
                 value.retain(|v| {
                     // keep timestamps that are less than a minute away
-                    cur_ts.saturating_sub(*v) < TimestampDuration::new(60_000_000u64)
+                    cur_ts.duration_since(*v) < TimestampDuration::new_secs(60)
                 });
                 if value.is_empty() {
                     dead_keys.push(*key);
@@ -156,8 +248,7 @@ impl AddressFilter {
                 }
             }
             for key in dead_keys {
-                veilid_log!(self warn "Forgiving: {}", key);
-                inner.punishments_by_ip4.remove(&key);
+                self.forgive_ip_addr_inner(inner, IpAddr::V4(key));
             }
         }
         // v6
@@ -172,28 +263,22 @@ impl AddressFilter {
                 }
             }
             for key in dead_keys {
-                veilid_log!(self warn "Forgiving: {}", key);
-                inner.punishments_by_ip6_prefix.remove(&key);
+                self.forgive_ip_addr_inner(inner, IpAddr::V6(key));
             }
         }
         // node id
         {
-            let mut dead_keys = Vec::<TypedNodeId>::new();
+            let mut dead_keys = Vec::<NodeId>::new();
             for (key, value) in &mut inner.punishments_by_node_id {
                 // Drop punishments older than the punishment duration
                 if cur_ts.as_u64().saturating_sub(value.timestamp.as_u64())
                     > self.punishment_duration_min as u64 * 60_000_000u64
                 {
-                    dead_keys.push(*key);
+                    dead_keys.push(key.clone());
                 }
             }
             for key in dead_keys {
-                veilid_log!(self warn "Forgiving: {}", key);
-                inner.punishments_by_node_id.remove(&key);
-                // make the entry alive again if it's still here
-                if let Ok(Some(nr)) = self.routing_table().lookup_node_ref(key) {
-                    nr.operate_mut(|_rti, e| e.set_punished(None));
-                }
+                self.forgive_node_id_inner(inner, key);
             }
         }
         // dial info
@@ -297,20 +382,34 @@ impl AddressFilter {
         };
     }
 
-    fn is_node_id_punished_inner(&self, inner: &AddressFilterInner, node_id: TypedNodeId) -> bool {
+    pub fn forgive_ip_addr(&self, addr: IpAddr) {
+        let mut inner = self.inner.lock();
+        self.forgive_ip_addr_inner(&mut inner, addr);
+    }
+
+    fn forgive_ip_addr_inner(&self, inner: &mut AddressFilterInner, addr: IpAddr) {
+        veilid_log!(self warn "Forgiving: {}", addr);
+        let ipblock = ip_to_ipblock(self.max_connections_per_ip6_prefix_size, addr);
+        match ipblock {
+            IpAddr::V4(v4) => inner.punishments_by_ip4.remove(&v4),
+            IpAddr::V6(v6) => inner.punishments_by_ip6_prefix.remove(&v6),
+        };
+    }
+
+    fn is_node_id_punished_inner(&self, inner: &AddressFilterInner, node_id: NodeId) -> bool {
         if inner.punishments_by_node_id.contains_key(&node_id) {
             return true;
         }
         false
     }
 
-    pub fn is_node_id_punished(&self, node_id: TypedNodeId) -> bool {
+    pub fn is_node_id_punished(&self, node_id: NodeId) -> bool {
         let inner = self.inner.lock();
         self.is_node_id_punished_inner(&inner, node_id)
     }
 
-    pub fn punish_node_id(&self, node_id: TypedNodeId, reason: PunishmentReason) {
-        if let Ok(Some(nr)) = self.routing_table().lookup_node_ref(node_id) {
+    pub fn punish_node_id(&self, node_id: NodeId, reason: PunishmentReason) {
+        if let Ok(Some(nr)) = self.routing_table().lookup_node_ref(node_id.clone()) {
             // make the entry dead if it's punished
             nr.operate_mut(|_rti, e| e.set_punished(Some(reason)));
         }
@@ -331,6 +430,20 @@ impl AddressFilter {
             .or_insert(punishment);
     }
 
+    pub fn forgive_node_id(&self, node_id: NodeId) {
+        let mut inner = self.inner.lock();
+        self.forgive_node_id_inner(&mut inner, node_id)
+    }
+
+    fn forgive_node_id_inner(&self, inner: &mut AddressFilterInner, node_id: NodeId) {
+        veilid_log!(self warn "Forgiving: {}", node_id);
+        inner.punishments_by_node_id.remove(&node_id);
+        // make the entry alive again if it's still here
+        if let Ok(Some(nr)) = self.routing_table().lookup_node_ref(node_id) {
+            nr.operate_mut(|_rti, e| e.set_punished(None));
+        }
+    }
+
     #[instrument(parent = None, level = "trace", skip_all, err)]
     pub async fn address_filter_task_routine(
         &self,
@@ -340,22 +453,22 @@ impl AddressFilter {
     ) -> EyreResult<()> {
         //
         let mut inner = self.inner.lock();
-        self.purge_old_timestamps_inner(&mut inner, cur_ts);
+        self.purge_old_connection_timestamps_inner(&mut inner, cur_ts);
         self.purge_old_punishments(&mut inner, cur_ts);
 
         Ok(())
     }
 
-    pub fn add_connection(&self, addr: IpAddr) -> Result<(), AddressFilterError> {
+    pub fn add_connection(&self, addr: IpAddr) -> Result<(), AddConnectionError> {
         let inner = &mut *self.inner.lock();
 
         let ipblock = ip_to_ipblock(self.max_connections_per_ip6_prefix_size, addr);
         if self.is_ip_addr_punished_inner(inner, ipblock) {
-            return Err(AddressFilterError::Punished);
+            return Err(AddConnectionError::Punished);
         }
 
-        let ts = Timestamp::now();
-        self.purge_old_timestamps_inner(inner, ts);
+        let ts = Timestamp::now_non_decreasing();
+        self.purge_old_connection_timestamps_inner(inner, ts);
 
         match ipblock {
             IpAddr::V4(v4) => {
@@ -364,18 +477,18 @@ impl AddressFilter {
                 assert!(*cnt <= self.max_connections_per_ip4);
                 if *cnt == self.max_connections_per_ip4 {
                     veilid_log!(self warn "Address filter count exceeded: {:?}", v4);
-                    return Err(AddressFilterError::CountExceeded);
+                    return Err(AddConnectionError::CountExceeded);
                 }
                 // See if this ip block has connected too frequently
                 let tstamps = inner.conn_timestamps_by_ip4.entry(v4).or_default();
                 tstamps.retain(|v| {
                     // keep timestamps that are less than a minute away
-                    ts.saturating_sub(*v) < TimestampDuration::new(60_000_000u64)
+                    ts.duration_since(*v) < TimestampDuration::new_secs(60)
                 });
                 assert!(tstamps.len() <= self.max_connection_frequency_per_min);
                 if tstamps.len() == self.max_connection_frequency_per_min {
                     veilid_log!(self warn "Address filter rate exceeded: {:?}", v4);
-                    return Err(AddressFilterError::RateExceeded);
+                    return Err(AddConnectionError::RateExceeded);
                 }
 
                 // If it's okay, add the counts and timestamps
@@ -388,14 +501,14 @@ impl AddressFilter {
                 assert!(*cnt <= self.max_connections_per_ip6_prefix);
                 if *cnt == self.max_connections_per_ip6_prefix {
                     veilid_log!(self warn "Address filter count exceeded: {:?}", v6);
-                    return Err(AddressFilterError::CountExceeded);
+                    return Err(AddConnectionError::CountExceeded);
                 }
                 // See if this ip block has connected too frequently
                 let tstamps = inner.conn_timestamps_by_ip6_prefix.entry(v6).or_default();
                 assert!(tstamps.len() <= self.max_connection_frequency_per_min);
                 if tstamps.len() == self.max_connection_frequency_per_min {
                     veilid_log!(self warn "Address filter rate exceeded: {:?}", v6);
-                    return Err(AddressFilterError::RateExceeded);
+                    return Err(AddConnectionError::RateExceeded);
                 }
 
                 // If it's okay, add the counts and timestamps
@@ -412,7 +525,7 @@ impl AddressFilter {
         let ipblock = ip_to_ipblock(self.max_connections_per_ip6_prefix_size, addr);
 
         let ts = Timestamp::now();
-        self.purge_old_timestamps_inner(&mut inner, ts);
+        self.purge_old_connection_timestamps_inner(&mut inner, ts);
 
         match ipblock {
             IpAddr::V4(v4) => {
@@ -448,6 +561,79 @@ impl AddressFilter {
                 };
             }
         }
+        Ok(())
+    }
+
+    pub fn check_envelope_timestamp(
+        &self,
+        node_id: NodeId,
+        local_timestamp: Timestamp,
+        remote_timestamp: Timestamp,
+    ) -> Result<(), TimestampError> {
+        let mut inner = self.inner.lock();
+        let Some(pi) = inner.envelope_info_by_node_id.get_mut(&node_id) else {
+            inner.envelope_info_by_node_id.insert(
+                node_id,
+                EnvelopeInfo::new(local_timestamp, remote_timestamp),
+            );
+            return Ok(());
+        };
+
+        // Adjust received envelope timestamp to local offset
+        let adjusted_remote_timestamp = pi.timestamp_offset.adjust_remote(remote_timestamp);
+
+        // Drop duplicated remote timestamps
+        if let Some(last_local_timestamp) =
+            pi.envelope_timestamp_log.get(&remote_timestamp).copied()
+        {
+            return Err(TimestampError::Duplicate {
+                local_timestamp,
+                last_local_timestamp,
+                remote_timestamp,
+                adjusted_remote_timestamp,
+                timestamp_offset: pi.timestamp_offset,
+            });
+        };
+
+        // Get oldest timestamp we want to keep
+        let oldest_timestamp_duration = self
+            .opt_max_timestamp_behind
+            .unwrap_or(DEFAULT_OLDEST_TIMESTAMP_DURATION);
+        let oldest_local_timestamp = local_timestamp.earlier(oldest_timestamp_duration);
+
+        // Add to the log
+        pi.add_timestamp(local_timestamp, remote_timestamp, oldest_local_timestamp);
+
+        // Drop envelopes that are too old or too new
+        if let Some(max_timestamp_behind) = self.opt_max_timestamp_behind {
+            if max_timestamp_behind.as_u64() != 0
+                && (local_timestamp > adjusted_remote_timestamp
+                    && local_timestamp.duration_since(adjusted_remote_timestamp)
+                        > max_timestamp_behind)
+            {
+                return Err(TimestampError::TooFarBehind {
+                    local_timestamp,
+                    remote_timestamp,
+                    adjusted_remote_timestamp,
+                    timestamp_offset: pi.timestamp_offset,
+                });
+            }
+        }
+        if let Some(max_timestamp_ahead) = self.opt_max_timestamp_ahead {
+            if max_timestamp_ahead.as_u64() != 0
+                && (local_timestamp < adjusted_remote_timestamp
+                    && adjusted_remote_timestamp.duration_since(local_timestamp)
+                        > max_timestamp_ahead)
+            {
+                return Err(TimestampError::TooFarAhead {
+                    local_timestamp,
+                    remote_timestamp,
+                    adjusted_remote_timestamp,
+                    timestamp_offset: pi.timestamp_offset,
+                });
+            }
+        }
+
         Ok(())
     }
 }

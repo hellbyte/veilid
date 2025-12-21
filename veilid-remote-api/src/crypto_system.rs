@@ -43,7 +43,38 @@ pub enum CryptoSystemRequestOp {
     RandomBytes {
         len: u32,
     },
+    SharedSecretLength,
+    NonceLength,
+    HashDigestLength,
+    PublicKeyLength,
+    SecretKeyLength,
+    SignatureLength,
     DefaultSaltLength,
+    AeadOverhead,
+    CheckSharedSecret {
+        #[schemars(with = "String")]
+        secret: SharedSecret,
+    },
+    CheckNonce {
+        #[schemars(with = "String")]
+        nonce: Nonce,
+    },
+    CheckHashDigest {
+        #[schemars(with = "String")]
+        digest: HashDigest,
+    },
+    CheckPublicKey {
+        #[schemars(with = "String")]
+        key: PublicKey,
+    },
+    CheckSecretKey {
+        #[schemars(with = "String")]
+        key: SecretKey,
+    },
+    CheckSignature {
+        #[schemars(with = "String")]
+        signature: Signature,
+    },
     HashPassword {
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
@@ -87,12 +118,6 @@ pub enum CryptoSystemRequestOp {
         #[schemars(with = "String")]
         hash_digest: HashDigest,
     },
-    Distance {
-        #[schemars(with = "String")]
-        key1: HashDigest,
-        #[schemars(with = "String")]
-        key2: HashDigest,
-    },
     Sign {
         #[schemars(with = "String")]
         key: PublicKey,
@@ -111,7 +136,6 @@ pub enum CryptoSystemRequestOp {
         #[schemars(with = "String")]
         signature: Signature,
     },
-    AeadOverhead,
     DecryptAead {
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
@@ -175,8 +199,53 @@ pub enum CryptoSystemResponseOp {
         #[schemars(with = "String")]
         value: Vec<u8>,
     },
+    SharedSecretLength {
+        value: u32,
+    },
+    NonceLength {
+        value: u32,
+    },
+    HashDigestLength {
+        value: u32,
+    },
+    PublicKeyLength {
+        value: u32,
+    },
+    SecretKeyLength {
+        value: u32,
+    },
+    SignatureLength {
+        value: u32,
+    },
     DefaultSaltLength {
         value: u32,
+    },
+    AeadOverhead {
+        value: u32,
+    },
+    CheckSharedSecret {
+        #[serde(flatten)]
+        result: ApiResult<()>,
+    },
+    CheckNonce {
+        #[serde(flatten)]
+        result: ApiResult<()>,
+    },
+    CheckHashDigest {
+        #[serde(flatten)]
+        result: ApiResult<()>,
+    },
+    CheckPublicKey {
+        #[serde(flatten)]
+        result: ApiResult<()>,
+    },
+    CheckSecretKey {
+        #[serde(flatten)]
+        result: ApiResult<()>,
+    },
+    CheckSignature {
+        #[serde(flatten)]
+        result: ApiResult<()>,
     },
     HashPassword {
         #[serde(flatten)]
@@ -208,14 +277,12 @@ pub enum CryptoSystemResponseOp {
         value: HashDigest,
     },
     ValidateKeyPair {
-        value: bool,
+        #[serde(flatten)]
+        result: ApiResult<bool>,
     },
     ValidateHash {
-        value: bool,
-    },
-    Distance {
-        #[schemars(with = "String")]
-        value: HashDistance,
+        #[serde(flatten)]
+        result: ApiResult<bool>,
     },
     Sign {
         #[serde(flatten)]
@@ -225,9 +292,6 @@ pub enum CryptoSystemResponseOp {
     Verify {
         #[serde(flatten)]
         result: ApiResult<bool>,
-    },
-    AeadOverhead {
-        value: u32,
     },
     DecryptAead {
         #[serde(flatten)]
@@ -240,8 +304,8 @@ pub enum CryptoSystemResponseOp {
         result: ApiResultWithVecU8,
     },
     CryptNoAuth {
-        #[serde(with = "as_human_base64")]
-        #[schemars(with = "String")]
-        value: Vec<u8>,
+        #[serde(flatten)]
+        #[schemars(with = "ApiResult<String>")]
+        result: ApiResultWithVecU8,
     },
 }

@@ -5,22 +5,23 @@ impl_veilid_log_facility!("rtab");
 
 /// Routing Table Bucket
 /// Stores map of public keys to entries, which may be in multiple routing tables per crypto kind
-/// Keeps entries at a particular 'dht distance' from this cryptokind's node id
+/// Keeps entries at a particular 'hash coordinate distance' from this cryptokind's node id
 /// Helps to keep managed lists at particular distances so we can evict nodes by priority
 /// where the priority comes from liveness and age of the entry (older is better)
 pub struct Bucket {
     /// Component registryo accessor
     registry: VeilidComponentRegistry,
     /// Map of keys to entries for this bucket
-    entries: BTreeMap<NodeId, Arc<BucketEntry>>,
+    entries: BTreeMap<BareNodeId, Arc<BucketEntry>>,
     /// The crypto kind in use for the public keys in this bucket
     kind: CryptoKind,
 }
-pub(super) type EntriesIter<'a> = alloc::collections::btree_map::Iter<'a, NodeId, Arc<BucketEntry>>;
+pub(super) type EntriesIter<'a> =
+    alloc::collections::btree_map::Iter<'a, BareNodeId, Arc<BucketEntry>>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SerializedBucketEntryData {
-    key: NodeId,
+    key: BareNodeId,
     value: u32, // index into serialized entries list
 }
 
@@ -29,7 +30,7 @@ struct SerializedBucketData {
     entries: Vec<SerializedBucketEntryData>,
 }
 
-impl_veilid_component_registry_accessor!(Bucket);
+impl_veilid_component_accessors!(Bucket);
 
 impl Bucket {
     pub fn new(registry: VeilidComponentRegistry, kind: CryptoKind) -> Self {
@@ -68,7 +69,7 @@ impl Bucket {
                 entry_index as u32
             });
             entries.push(SerializedBucketEntryData {
-                key: *k,
+                key: k.clone(),
                 value: *entry_index,
             });
         }
@@ -78,11 +79,14 @@ impl Bucket {
     }
 
     /// Create a new entry with a node_id of this crypto kind and return it
-    pub(super) fn add_new_entry(&mut self, node_id_key: NodeId) -> Arc<BucketEntry> {
+    pub(super) fn add_new_entry(&mut self, node_id_key: BareNodeId) -> Arc<BucketEntry> {
         veilid_log!(self trace "Node added: {}:{}", self.kind, node_id_key);
 
         // Add new entry
-        let entry = Arc::new(BucketEntry::new(TypedNodeId::new(self.kind, node_id_key)));
+        let entry = Arc::new(BucketEntry::new(NodeId::new(
+            self.kind,
+            node_id_key.clone(),
+        )));
         self.entries.insert(node_id_key, entry.clone());
 
         // Return the new entry
@@ -90,7 +94,7 @@ impl Bucket {
     }
 
     /// Add an existing entry with a new node_id for this crypto kind
-    pub(super) fn add_existing_entry(&mut self, node_id_key: NodeId, entry: Arc<BucketEntry>) {
+    pub(super) fn add_existing_entry(&mut self, node_id_key: BareNodeId, entry: Arc<BucketEntry>) {
         veilid_log!(self trace "Existing node added: {}:{}", self.kind, node_id_key);
 
         // Add existing entry
@@ -98,26 +102,26 @@ impl Bucket {
     }
 
     /// Remove an entry with a node_id for this crypto kind from the bucket
-    pub(super) fn remove_entry(&mut self, node_id_key: &NodeId) {
+    pub(super) fn remove_entry(&mut self, node_id_key: &BareNodeId) {
         veilid_log!(self trace "Node removed: {}:{}", self.kind, node_id_key);
 
         // Remove the entry
         self.entries.remove(node_id_key);
     }
 
-    pub(super) fn entry(&self, key: &NodeId) -> Option<Arc<BucketEntry>> {
+    pub(super) fn entry(&self, key: &BareNodeId) -> Option<Arc<BucketEntry>> {
         self.entries.get(key).cloned()
     }
 
-    pub(super) fn entries(&self) -> EntriesIter {
+    pub(super) fn entries(&self) -> EntriesIter<'_> {
         self.entries.iter()
     }
 
     pub(super) fn kick(
         &mut self,
         bucket_depth: usize,
-        exempt_peers: &BTreeSet<NodeId>,
-    ) -> Option<BTreeSet<NodeId>> {
+        exempt_peers: &BTreeSet<BareNodeId>,
+    ) -> Option<BTreeSet<BareNodeId>> {
         // Get number of entries to attempt to purge from bucket
         let bucket_len = self.entries.len();
 
@@ -127,12 +131,15 @@ impl Bucket {
         }
 
         // Try to purge the newest entries that overflow the bucket
-        let mut dead_node_ids: BTreeSet<NodeId> = BTreeSet::new();
+        let mut dead_node_ids: BTreeSet<BareNodeId> = BTreeSet::new();
         let mut extra_entries = bucket_len - bucket_depth;
 
         // Get the sorted list of entries by their kick order
-        let mut sorted_entries: Vec<(NodeId, Arc<BucketEntry>)> =
-            self.entries.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let mut sorted_entries: Vec<(BareNodeId, Arc<BucketEntry>)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let cur_ts = Timestamp::now();
         sorted_entries.sort_by(|a, b| -> core::cmp::Ordering {
             if a.0 == b.0 {

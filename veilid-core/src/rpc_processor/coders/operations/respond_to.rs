@@ -7,11 +7,19 @@ pub(in crate::rpc_processor) enum RespondTo {
 }
 
 impl RespondTo {
-    pub fn validate(&mut self, crypto: &Crypto) -> Result<(), RPCError> {
-        match self {
-            RespondTo::Sender => Ok(()),
-            RespondTo::PrivateRoute(pr) => pr.validate(crypto).map_err(RPCError::protocol),
-        }
+    pub fn decode(
+        decode_context: &RPCDecodeContext,
+        reader: &veilid_capnp::question::respond_to::Reader,
+    ) -> Result<Self, RPCError> {
+        let respond_to = match reader.which()? {
+            veilid_capnp::question::respond_to::Sender(()) => RespondTo::Sender,
+            veilid_capnp::question::respond_to::PrivateRoute(pr_reader) => {
+                let pr_reader = pr_reader?;
+                let pr = decode_private_route(decode_context, &pr_reader)?;
+                RespondTo::PrivateRoute(pr)
+            }
+        };
+        Ok(respond_to)
     }
 
     pub fn encode(
@@ -28,20 +36,5 @@ impl RespondTo {
             }
         };
         Ok(())
-    }
-
-    pub fn decode(
-        decode_context: &RPCDecodeContext,
-        reader: &veilid_capnp::question::respond_to::Reader,
-    ) -> Result<Self, RPCError> {
-        let respond_to = match reader.which().map_err(RPCError::protocol)? {
-            veilid_capnp::question::respond_to::Sender(()) => RespondTo::Sender,
-            veilid_capnp::question::respond_to::PrivateRoute(pr_reader) => {
-                let pr_reader = pr_reader.map_err(RPCError::protocol)?;
-                let pr = decode_private_route(decode_context, &pr_reader)?;
-                RespondTo::PrivateRoute(pr)
-            }
-        };
-        Ok(respond_to)
     }
 }

@@ -51,18 +51,18 @@ class VeilidLogLevel(StrEnum):
 class CryptoKind(StrEnum):
     CRYPTO_KIND_NONE = "NONE"
     CRYPTO_KIND_VLD0 = "VLD0"
+    CRYPTO_KIND_VLD1 = "VLD1"
 
 
 class VeilidCapability(StrEnum):
-    CAP_ROUTE = "ROUT"
-    CAP_TUNNEL = "TUNL"
-    CAP_SIGNAL = "SGNL"
-    CAP_RELAY = "RLAY"
-    CAP_VALIDATE_DIAL_INFO = "DIAL"
-    CAP_DHT = "DHTV"
-    CAP_DHT_WATCH = "DHTW"
-    CAP_APPMESSAGE = "APPM"
-    CAP_BLOCKSTORE = "BLOC"
+    VEILID_CAPABILITY_ROUTE = "ROUT"
+    VEILID_CAPABILITY_TUNNEL = "TUNL"
+    VEILID_CAPABILITY_SIGNAL = "SGNL"
+    VEILID_CAPABILITY_RELAY = "RLAY"
+    VEILID_CAPABILITY_VALIDATE_DIAL_INFO = "DIAL"
+    VEILID_CAPABILITY_DHT = "DHTV"
+    VEILID_CAPABILITY_APPMESSAGE = "APPM"
+    VEILID_CAPABILITY_BLOCKSTORE = "BLOC"
 
 
 class Stability(StrEnum):
@@ -85,6 +85,9 @@ class SafetySelectionKind(StrEnum):
     UNSAFE = "Unsafe"
     SAFE = "Safe"
 
+class TargetKind(StrEnum):
+    ROUTE_ID= "RouteId"
+    NODE_ID = "NodeId"
 
 class DHTReportScope(StrEnum):
     LOCAL = "Local"
@@ -112,11 +115,6 @@ class ByteCount(int):
 class OperationId(str):
     pass
 
-
-class RouteId(str):
-    pass
-
-
 class EncodedString(str):
     def to_bytes(self) -> bytes:
         return urlsafe_b64decode_no_pad(self)
@@ -126,52 +124,67 @@ class EncodedString(str):
         assert isinstance(b, bytes)
         return cls(urlsafe_b64encode_no_pad(b))
 
-
-class HashDistance(EncodedString):
+class BarePublicKey(EncodedString):
     pass
 
-
-class PublicKey(EncodedString):
+class BareSecretKey(EncodedString):
     pass
 
-
-class SecretKey(EncodedString):
+class BareSharedSecret(EncodedString):
     pass
 
-
-class SharedSecret(EncodedString):
+class BareHashDigest(EncodedString):
     pass
 
-
-class HashDigest(EncodedString):
+class BareSignature(EncodedString):
     pass
-
-
-class Signature(EncodedString):
-    pass
-
 
 class Nonce(EncodedString):
     pass
 
+class BareRouteId(EncodedString):
+    pass
 
-class KeyPair(str):
+class BareNodeId(EncodedString):
+    pass
+
+class BareMemberId(EncodedString):
+    pass
+
+class BareOpaqueRecordKey(EncodedString):
+    pass
+
+class BareRecordKey(str):
     @classmethod
-    def from_parts(cls, key: PublicKey, secret: SecretKey) -> Self:
-        assert isinstance(key, PublicKey)
-        assert isinstance(secret, SecretKey)
+    def from_parts(cls, key: BareOpaqueRecordKey, encryption_key: Optional[BareSharedSecret]) -> Self:
+        assert isinstance(key, BareOpaqueRecordKey)
+        if encryption_key is not None:
+            assert isinstance(encryption_key, BareSharedSecret)
+            return cls(f"{key}:{encryption_key}")
+        return cls(f"{key}")
+
+    def key(self) -> BareOpaqueRecordKey:
+        parts = self.split(":", 1)
+        return BareOpaqueRecordKey(parts[0])
+
+    def encryption_key(self) -> Optional[BareSharedSecret]:
+        parts = self.split(":", 1)
+        if len(parts) == 2:
+            return BareSharedSecret(self.split(":", 1)[1])
+        return None
+
+class BareKeyPair(str):
+    @classmethod
+    def from_parts(cls, key: BarePublicKey, secret: BareSecretKey) -> Self:
+        assert isinstance(key, BarePublicKey)
+        assert isinstance(secret, BareSecretKey)
         return cls(f"{key}:{secret}")
 
-    def key(self) -> PublicKey:
-        return PublicKey(self.split(":", 1)[0])
+    def key(self) -> BarePublicKey:
+        return BarePublicKey(self.split(":", 1)[0])
 
-    def secret(self) -> SecretKey:
-        return SecretKey(self.split(":", 1)[1])
-
-    def to_parts(self) -> tuple[PublicKey, SecretKey]:
-        public, secret = self.split(":", 1)
-        return (PublicKey(public), SecretKey(secret))
-
+    def secret(self) -> BareSecretKey:
+        return BareSecretKey(self.split(":", 1)[1])
 
 class CryptoTyped(str):
     def kind(self) -> CryptoKind:
@@ -184,50 +197,117 @@ class CryptoTyped(str):
             raise ValueError("Not CryptoTyped")
         return self[5:]
 
-
-class TypedKey(CryptoTyped):
+class SharedSecret(CryptoTyped):
     @classmethod
-    def from_value(cls, kind: CryptoKind, value: PublicKey) -> Self:
+    def from_value(cls, kind: CryptoKind, value: BareSharedSecret) -> Self:
         assert isinstance(kind, CryptoKind)
-        assert isinstance(value, PublicKey)
+        assert isinstance(value, BareSharedSecret)
         return cls(f"{kind}:{value}")
 
-    def value(self) -> PublicKey:
-        return PublicKey(self._value())
+    def value(self) -> BareSharedSecret:
+        return BareSharedSecret(self._value())
 
-
-class TypedSecret(CryptoTyped):
+class RecordKey(CryptoTyped):
     @classmethod
-    def from_value(cls, kind: CryptoKind, value: SecretKey) -> Self:
+    def from_value(cls, kind: CryptoKind, value: BareRecordKey) -> Self:
         assert isinstance(kind, CryptoKind)
-        assert isinstance(value, SecretKey)
+        assert isinstance(value, BareRecordKey)
         return cls(f"{kind}:{value}")
 
-    def value(self) -> SecretKey:
-        return SecretKey(self._value())
+    def value(self) -> BareRecordKey:
+        return BareRecordKey(self._value())
 
+    def encryption_key(self) -> Optional[SharedSecret]:
+        ek = self.value().encryption_key()
+        return None if ek == None else SharedSecret.from_value(self.kind(), ek)
 
-class TypedKeyPair(CryptoTyped):
+class HashDigest(CryptoTyped):
     @classmethod
-    def from_value(cls, kind: CryptoKind, value: KeyPair) -> Self:
+    def from_value(cls, kind: CryptoKind, value: BareHashDigest) -> Self:
         assert isinstance(kind, CryptoKind)
-        assert isinstance(value, KeyPair)
+        assert isinstance(value, BareHashDigest)
         return cls(f"{kind}:{value}")
 
-    def value(self) -> KeyPair:
-        return KeyPair(self._value())
+    def value(self) -> BareHashDigest:
+        return BareHashDigest(self._value())
 
-
-class TypedSignature(CryptoTyped):
+class PublicKey(CryptoTyped):
     @classmethod
-    def from_value(cls, kind: CryptoKind, value: Signature) -> Self:
+    def from_value(cls, kind: CryptoKind, value: BarePublicKey) -> Self:
         assert isinstance(kind, CryptoKind)
-        assert isinstance(value, Signature)
+        assert isinstance(value, BarePublicKey)
         return cls(f"{kind}:{value}")
 
-    def value(self) -> Signature:
-        return Signature(self._value())
+    def value(self) -> BarePublicKey:
+        return BarePublicKey(self._value())
 
+
+class SecretKey(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareSecretKey) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareSecretKey)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareSecretKey:
+        return BareSecretKey(self._value())
+
+
+class KeyPair(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareKeyPair) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareKeyPair)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareKeyPair:
+        return BareKeyPair(self._value())
+
+    def key(self) -> PublicKey:
+        return PublicKey.from_value(kind=self.kind(), value=self.value().key())
+
+    def secret(self) -> SecretKey:
+        return SecretKey.from_value(kind=self.kind(), value=self.value().secret())
+
+class Signature(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareSignature) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareSignature)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareSignature:
+        return BareSignature(self._value())
+
+class RouteId(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareRouteId) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareRouteId)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareRouteId:
+        return BareRouteId(self._value())
+
+class NodeId(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareNodeId) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareNodeId)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareNodeId:
+        return BareNodeId(self._value())
+
+class MemberId(CryptoTyped):
+    @classmethod
+    def from_value(cls, kind: CryptoKind, value: BareMemberId) -> Self:
+        assert isinstance(kind, CryptoKind)
+        assert isinstance(value, BareMemberId)
+        return cls(f"{kind}:{value}")
+
+    def value(self) -> BareMemberId:
+        return BareMemberId(self._value())
 
 class ValueSubkey(int):
     pass
@@ -286,7 +366,7 @@ class VeilidVersion:
         return self._patch
 
 
-class NewPrivateRouteResult:
+class RouteBlob:
     route_id: RouteId
     blob: bytes
 
@@ -297,20 +377,20 @@ class NewPrivateRouteResult:
         self.route_id = route_id
         self.blob = blob
 
-    def to_tuple(self) -> tuple[RouteId, bytes]:
-        return (self.route_id, self.blob)
-
     @classmethod
     def from_json(cls, j: dict) -> Self:
         return cls(RouteId(j["route_id"]), urlsafe_b64decode_no_pad(j["blob"]))
 
+    def to_json(self) -> dict:
+        return self.__dict__
+
 
 class DHTSchemaSMPLMember:
-    m_key: PublicKey
+    m_key: BareMemberId
     m_cnt: int
 
-    def __init__(self, m_key: PublicKey, m_cnt: int):
-        assert isinstance(m_key, PublicKey)
+    def __init__(self, m_key: BareMemberId, m_cnt: int):
+        assert isinstance(m_key, BareMemberId)
         assert isinstance(m_cnt, int)
 
         self.m_key = m_key
@@ -318,7 +398,7 @@ class DHTSchemaSMPLMember:
 
     @classmethod
     def from_json(cls, j: dict) -> Self:
-        return cls(PublicKey(j["m_key"]), j["m_cnt"])
+        return cls(BareMemberId(j["m_key"]), j["m_cnt"])
 
     def to_json(self) -> dict:
         return self.__dict__
@@ -401,14 +481,14 @@ class DHTSchemaSMPL(DHTSchema):
         raise Exception("Invalid DHTSchemaSMPL")
 
 class DHTRecordDescriptor:
-    key: TypedKey
+    key: RecordKey
     owner: PublicKey
     owner_secret: Optional[SecretKey]
     schema: DHTSchema
 
     def __init__(
         self,
-        key: TypedKey,
+        key: RecordKey,
         owner: PublicKey,
         owner_secret: Optional[SecretKey],
         schema: DHTSchema,
@@ -421,15 +501,20 @@ class DHTRecordDescriptor:
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}(key={self.key!r}, owner={self.owner!r}, owner_secret={self.owner_secret!r}, schema={self.schema!r})>"
 
+    def owner_bare_key_pair(self) -> Optional[BareKeyPair]:
+        if self.owner_secret is None:
+            return None
+        return BareKeyPair.from_parts(self.owner.value(), self.owner_secret.value())
+
     def owner_key_pair(self) -> Optional[KeyPair]:
         if self.owner_secret is None:
             return None
-        return KeyPair.from_parts(self.owner, self.owner_secret)
+        return KeyPair.from_value(self.owner.kind(), BareKeyPair.from_parts(self.owner.value(), self.owner_secret.value()))
 
     @classmethod
     def from_json(cls, j: dict) -> Self:
         return cls(
-            TypedKey(j["key"]),
+            RecordKey(j["key"]),
             PublicKey(j["owner"]),
             None if j["owner_secret"] is None else SecretKey(j["owner_secret"]),
             DHTSchema.from_json(j["schema"]),
@@ -491,9 +576,48 @@ class SetDHTValueOptions:
             KeyPair(j["writer"]) if "writer" in j else None,
             j["allow_offline"] if "allow_offline" in j else None,
         )
-    
+
     def to_json(self) -> dict:
         return self.__dict__
+
+
+class DHTTransactionSetValueOptions:
+    writer: Optional[KeyPair]
+
+    def __init__(self, writer: Optional[KeyPair] = None):
+        self.writer = writer
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(writer={self.writer!r})>"
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        return cls(
+            KeyPair(j["writer"]) if "writer" in j else None,
+        )
+
+    def to_json(self) -> dict:
+        return self.__dict__
+
+
+class TransactDHTRecordsOptions:
+    default_signing_keypair: Optional[KeyPair]
+
+    def __init__(self, default_signing_keypair: Optional[KeyPair] = None):
+        self.default_signing_keypair = default_signing_keypair
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(default_signing_keypair={self.default_signing_keypair!r})>"
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        return cls(
+            KeyPair(j["default_signing_keypair"]) if "default_signing_keypair" in j else None,
+        )
+
+    def to_json(self) -> dict:
+        return self.__dict__
+
 
 @total_ordering
 class ValueData:
@@ -645,3 +769,74 @@ class SafetySelectionSafe(SafetySelection):
 
     def to_json(self) -> dict:
         return {"Safe": self.safety_spec.to_json()}
+
+
+
+class Target(ABC):
+
+    @property
+    @abstractmethod
+    def kind(self) -> TargetKind:
+        pass
+
+    @classmethod
+    def node_id(cls, node_id: NodeId) -> Self:
+        return TargetNodeId(node_id=node_id) # type: ignore
+
+    @classmethod
+    def route_id(cls, route_id: RouteId) -> Self:
+        return TargetRouteId(route_id=route_id) # type: ignore
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if "NodeId" in j:
+            return cls.node_id(NodeId(j["NodeId"]))
+        elif "RouteId" in j:
+            return cls.route_id(RouteId(j["Unsafe"]))
+        raise Exception("Invalid Target")
+
+    @abstractmethod
+    def to_json(self) -> dict:
+        pass
+
+@final
+class TargetNodeId(Target):
+    id: NodeId
+
+    def __init__(self, node_id: NodeId):
+        assert isinstance(node_id, NodeId)
+        self.id = node_id
+
+    @property
+    def kind(self):
+        return TargetKind.NODE_ID
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if "NodeId" in j:
+            return cls(NodeId(j["NodeId"]))
+        raise Exception("Invalid TargetNodeId")
+
+    def to_json(self) -> dict:
+        return {"NodeId": self.id}
+
+@final
+class TargetRouteId(Target):
+    id: RouteId
+
+    def __init__(self, route_id: RouteId):
+        assert isinstance(route_id, RouteId)
+        self.id = route_id
+
+    @property
+    def kind(self):
+        return TargetKind.ROUTE_ID
+
+    @classmethod
+    def from_json(cls, j: dict) -> Self:
+        if "RouteId" in j:
+            return cls(RouteId(j["RouteId"]))
+        raise Exception("Invalid TargetRouteId")
+
+    def to_json(self) -> dict:
+        return {"RouteId": self.id}

@@ -3,26 +3,16 @@ use crate::storage_manager::{SignedValueData, SignedValueDescriptor};
 
 const MAX_SET_VALUE_A_PEERS_LEN: usize = 20;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct ValidateSetValueContext {
+    pub opaque_record_key: OpaqueRecordKey,
     pub descriptor: SignedValueDescriptor,
     pub subkey: ValueSubkey,
-    pub crypto_kind: CryptoKind,
-}
-
-impl fmt::Debug for ValidateSetValueContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ValidateSetValueContext")
-            .field("descriptor", &self.descriptor)
-            .field("subkey", &self.subkey)
-            .field("crypto_kind", &self.crypto_kind)
-            .finish()
-    }
 }
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationSetValueQ {
-    key: TypedRecordKey,
+    key: OpaqueRecordKey,
     subkey: ValueSubkey,
     value: SignedValueData,
     descriptor: Option<SignedValueDescriptor>,
@@ -30,7 +20,7 @@ pub(in crate::rpc_processor) struct RPCOperationSetValueQ {
 
 impl RPCOperationSetValueQ {
     pub fn new(
-        key: TypedRecordKey,
+        key: OpaqueRecordKey,
         subkey: ValueSubkey,
         value: SignedValueData,
         descriptor: Option<SignedValueDescriptor>,
@@ -42,29 +32,15 @@ impl RPCOperationSetValueQ {
             descriptor,
         }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+        // Validation is performed by StorageManager because descriptor is not always available here
         Ok(())
     }
 
-    // pub fn key(&self) -> &TypedKey {
-    //     &self.key
-    // }
-
-    // pub fn subkey(&self) -> ValueSubkey {
-    //     self.subkey
-    // }
-
-    // pub fn value(&self) -> &SignedValueData {
-    //     &self.value
-    // }
-
-    // pub fn descriptor(&self) -> Option<&SignedValueDescriptor> {
-    //     self.descriptor.as_ref()
-    // }
     pub fn destructure(
         self,
     ) -> (
-        TypedRecordKey,
+        OpaqueRecordKey,
         ValueSubkey,
         SignedValueData,
         Option<SignedValueDescriptor>,
@@ -76,31 +52,31 @@ impl RPCOperationSetValueQ {
         _decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_set_value_q::Reader,
     ) -> Result<Self, RPCError> {
-        let k_reader = reader.get_key().map_err(RPCError::protocol)?;
-        let key = decode_typed_record_key(&k_reader)?;
+        rpc_ignore_missing_property!(reader, key);
+        let k_reader = reader.get_key()?;
+        let key = decode_opaque_record_key(&k_reader)?;
+
         let subkey = reader.get_subkey();
-        let v_reader = reader.get_value().map_err(RPCError::protocol)?;
+
+        rpc_ignore_missing_property!(reader, value);
+        let v_reader = reader.get_value()?;
         let value = decode_signed_value_data(&v_reader)?;
+
         let descriptor = if reader.has_descriptor() {
-            let d_reader = reader.get_descriptor().map_err(RPCError::protocol)?;
+            let d_reader = reader.get_descriptor()?;
             let descriptor = decode_signed_value_descriptor(&d_reader)?;
             Some(descriptor)
         } else {
             None
         };
-        Ok(Self {
-            key,
-            subkey,
-            value,
-            descriptor,
-        })
+        Ok(Self::new(key, subkey, value, descriptor))
     }
     pub fn encode(
         &self,
         builder: &mut veilid_capnp::operation_set_value_q::Builder,
     ) -> Result<(), RPCError> {
         let mut k_builder = builder.reborrow().init_key();
-        encode_typed_record_key(&self.key, &mut k_builder);
+        encode_opaque_record_key(&self.key, &mut k_builder);
         builder.set_subkey(self.subkey);
         let mut v_builder = builder.reborrow().init_value();
         encode_signed_value_data(&self.value, &mut v_builder)?;
@@ -116,26 +92,33 @@ impl RPCOperationSetValueQ {
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationSetValueA {
-    set: bool,
+    accepted: bool,
+    need_descriptor: bool,
     value: Option<SignedValueData>,
     peers: Vec<Arc<PeerInfo>>,
 }
 
 impl RPCOperationSetValueA {
     pub fn new(
-        set: bool,
+        accepted: bool,
+        need_descriptor: bool,
         value: Option<SignedValueData>,
         peers: Vec<Arc<PeerInfo>>,
     ) -> Result<Self, RPCError> {
         if peers.len() > MAX_SET_VALUE_A_PEERS_LEN {
-            return Err(RPCError::protocol(
+            return Err(RPCError::internal(
                 "encoded SetValueA peers length too long",
             ));
         }
-        Ok(Self { set, value, peers })
+        Ok(Self {
+            accepted,
+            need_descriptor,
+            value,
+            peers,
+        })
     }
 
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         let question_context = validate_context
             .question_context
             .as_ref()
@@ -145,21 +128,21 @@ impl RPCOperationSetValueA {
         };
 
         let crypto = validate_context.crypto();
-        let Some(vcrypto) = crypto.get(set_value_context.crypto_kind) else {
+        let Some(vcrypto) = crypto.get(set_value_context.opaque_record_key.kind()) else {
             return Err(RPCError::protocol("unsupported cryptosystem"));
         };
 
         // Ensure the descriptor itself validates
         set_value_context
             .descriptor
-            .validate(&vcrypto)
+            .validate(&vcrypto, &set_value_context.opaque_record_key)
             .map_err(RPCError::protocol)?;
 
         if let Some(value) = &self.value {
             // And the signed value data
             if !value
                 .validate(
-                    set_value_context.descriptor.owner(),
+                    set_value_context.descriptor.ref_owner(),
                     set_value_context.subkey,
                     &vcrypto,
                 )
@@ -169,59 +152,44 @@ impl RPCOperationSetValueA {
             }
         }
 
-        PeerInfo::validate_vec(&mut self.peers, &crypto);
         Ok(())
     }
 
-    // pub fn set(&self) -> bool {
-    //     self.set
-    // }
-    // pub fn value(&self) -> Option<&SignedValueData> {
-    //     self.value.as_ref()
-    // }
-    // pub fn peers(&self) -> &[PeerInfo] {
-    //     &self.peers
-    // }
-    pub fn destructure(self) -> (bool, Option<SignedValueData>, Vec<Arc<PeerInfo>>) {
-        (self.set, self.value, self.peers)
+    pub fn destructure(self) -> (bool, bool, Option<SignedValueData>, Vec<Arc<PeerInfo>>) {
+        (self.accepted, self.need_descriptor, self.value, self.peers)
     }
 
     pub fn decode(
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_set_value_a::Reader,
     ) -> Result<Self, RPCError> {
-        let set = reader.get_set();
+        let accepted = reader.get_accepted();
+        let need_descriptor = reader.get_need_descriptor();
         let value = if reader.has_value() {
-            let v_reader = reader.get_value().map_err(RPCError::protocol)?;
+            let v_reader = reader.get_value()?;
             let value = decode_signed_value_data(&v_reader)?;
             Some(value)
         } else {
             None
         };
-        let peers_reader = reader.get_peers().map_err(RPCError::protocol)?;
-        if peers_reader.len() as usize > MAX_SET_VALUE_A_PEERS_LEN {
-            return Err(RPCError::protocol(
-                "decoded SetValueA peers length too long",
-            ));
-        }
-        let mut peers = Vec::<Arc<PeerInfo>>::with_capacity(
-            peers_reader
-                .len()
-                .try_into()
-                .map_err(RPCError::map_internal("too many peers"))?,
-        );
+        let peers_reader = reader.get_peers()?;
+        let peers_len = rpc_ignore_max_len!(peers_reader, MAX_SET_VALUE_A_PEERS_LEN);
+        let mut peers = Vec::<Arc<PeerInfo>>::with_capacity(peers_len);
         for p in peers_reader.iter() {
-            let peer_info = Arc::new(decode_peer_info(decode_context, &p)?);
-            peers.push(peer_info);
+            let Some(peer_info) = decode_peer_info(decode_context, &p).ignore_ok()? else {
+                continue;
+            };
+            peers.push(Arc::new(peer_info));
         }
 
-        Ok(Self { set, value, peers })
+        Self::new(accepted, need_descriptor, value, peers)
     }
     pub fn encode(
         &self,
         builder: &mut veilid_capnp::operation_set_value_a::Builder,
     ) -> Result<(), RPCError> {
-        builder.set_set(self.set);
+        builder.set_accepted(self.accepted);
+        builder.set_need_descriptor(self.need_descriptor);
 
         if let Some(value) = &self.value {
             let mut v_builder = builder.reborrow().init_value();

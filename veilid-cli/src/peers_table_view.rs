@@ -14,7 +14,7 @@ pub enum PeerTableColumn {
 // impl PeerTableColumn {
 //     fn as_str(&self) -> &str {
 //         match self {
-//             PeerTableColumn::NodeId => "Node Id",
+//             PeerTableColumn::BareNodeId => "Node Id",
 //             PeerTableColumn::Address => "Address",
 //             PeerTableColumn::LatencyAvg => "Latency",
 //             PeerTableColumn::TransferDownAvg => "Down",
@@ -28,11 +28,11 @@ fn format_ts(ts: &json::JsonValue) -> String {
         return "---".to_owned();
     }
     let ts = json_str_u64(ts);
-    let secs = timestamp_to_secs(ts);
+    let secs = timestamp_duration_to_secs(ts);
     if secs >= 1.0 {
-        format!("{:.2}s", timestamp_to_secs(ts))
+        format!("{:.2}s", secs)
     } else {
-        format!("{:.2}ms", timestamp_to_secs(ts) * 1000.0)
+        format!("{:.2}ms", secs * 1000.0)
     }
 }
 

@@ -84,7 +84,7 @@ pub struct ConnectionManager {
     arc: Arc<ConnectionManagerArc>,
 }
 
-impl_veilid_component_registry_accessor!(ConnectionManager);
+impl_veilid_component_accessors!(ConnectionManager);
 
 impl ConnectionManager {
     fn new_inner(
@@ -102,13 +102,8 @@ impl ConnectionManager {
     }
     fn new_arc(registry: VeilidComponentRegistry) -> ConnectionManagerArc {
         let config = registry.config();
-        let (connection_initial_timeout_ms, connection_inactivity_timeout_ms) = {
-            let c = config.get();
-            (
-                c.network.connection_initial_timeout_ms,
-                c.network.connection_inactivity_timeout_ms,
-            )
-        };
+        let connection_initial_timeout_ms = config.network.connection_initial_timeout_ms;
+        let connection_inactivity_timeout_ms = config.network.connection_inactivity_timeout_ms;
 
         ConnectionManagerArc {
             reconnection_processor: DeferredStreamProcessor::new(),
@@ -232,29 +227,28 @@ impl ConnectionManager {
             .cloned()
             .collect::<HashSet<_>>();
         for routing_domain in RoutingDomainSet::all() {
-            let Some(relay_node) = self
+            for relay in self
                 .network_manager()
                 .routing_table()
-                .relay_node(routing_domain)
-            else {
-                continue;
-            };
-            for did in relay_node.dial_info_details() {
-                // SocketAddress are distinct per routing domain, so they should not collide
-                // and two nodes should never have the same SocketAddress
-                let protected_address = did.dial_info.socket_address();
+                .relays(routing_domain)
+            {
+                for did in relay.relay_node.dial_info_details() {
+                    // SocketAddress are distinct per routing domain, so they should not collide
+                    // and two nodes should never have the same SocketAddress
+                    let protected_address = did.dial_info.socket_address();
 
-                // Update the protection, note the protected address is not dead
-                dead_addresses.remove(&protected_address);
-                inner
-                    .protected_addresses
-                    .entry(protected_address)
-                    .and_modify(|pa| pa.node_ref = relay_node.unfiltered())
-                    .or_insert_with(|| ProtectedAddress {
-                        node_ref: relay_node.unfiltered(),
-                        span_start_ts: Timestamp::now(),
-                        drops_in_span: 0usize,
-                    });
+                    // Update the protection, note the protected address is not dead
+                    dead_addresses.remove(&protected_address);
+                    inner
+                        .protected_addresses
+                        .entry(protected_address)
+                        .and_modify(|pa| pa.node_ref = relay.relay_node.unfiltered())
+                        .or_insert_with(|| ProtectedAddress {
+                            node_ref: relay.relay_node.unfiltered(),
+                            span_start_ts: Timestamp::now_non_decreasing(),
+                            drops_in_span: 0usize,
+                        });
+                }
             }
         }
 
@@ -337,9 +331,7 @@ impl ConnectionManager {
             Err(ConnectionTableAddError::AddressFilter(conn, e)) => {
                 // Connection filtered
                 let desc = conn.flow();
-                let _ = inner
-                    .sender
-                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
+                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection filtered: {:?} ({})",
                     desc, e
@@ -349,9 +341,7 @@ impl ConnectionManager {
                 // Connection already exists
                 let desc = conn.flow();
                 veilid_log!(self debug "== Connection already exists: {:?}", conn.debug_print(Timestamp::now()));
-                let _ = inner
-                    .sender
-                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
+                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection already exists: {:?}",
                     desc
@@ -361,9 +351,7 @@ impl ConnectionManager {
                 // Connection table is full
                 let desc = conn.flow();
                 veilid_log!(self debug "== Connection table full: {:?}", conn.debug_print(Timestamp::now()));
-                let _ = inner
-                    .sender
-                    .send(ConnectionManagerEvent::Dead(Box::new(conn)));
+                let _ = inner.sender.send(ConnectionManagerEvent::Dead(conn));
                 return Ok(NetworkResult::no_connection_other(format!(
                     "connection table is full: {:?}",
                     desc
@@ -655,8 +643,8 @@ impl ConnectionManager {
                     for pa in inner.protected_addresses.values_mut() {
                         if pa.node_ref.same_entry(&protect_nr) {
                             // See if we've had more than the threshold number of drops in the last span
-                            let cur_ts = Timestamp::now();
-                            let duration = cur_ts.saturating_sub(pa.span_start_ts);
+                            let cur_ts = Timestamp::now_non_decreasing();
+                            let duration = cur_ts.duration_since(pa.span_start_ts);
 
                             let mut reconnect = true;
 

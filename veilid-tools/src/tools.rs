@@ -160,12 +160,19 @@ pub fn prepend_slash(s: String) -> String {
 }
 
 #[must_use]
-pub fn timestamp_to_secs(ts: u64) -> f64 {
-    ts as f64 / 1000000.0f64
+pub fn timestamp_duration_to_secs(dur: u64) -> f64 {
+    // Downshift precision until it fits, lose least significant bits
+    let mut mul: f64 = 1.0f64 / 1_000_000.0f64;
+    let mut usec = dur;
+    while usec > (u32::MAX as u64) {
+        usec >>= 1;
+        mul *= 2.0f64;
+    }
+    f64::from(usec as u32) * mul
 }
 
 #[must_use]
-pub fn secs_to_timestamp(secs: f64) -> u64 {
+pub fn secs_to_timestamp_duration(secs: f64) -> u64 {
     (secs * 1000000.0f64) as u64
 }
 
@@ -196,7 +203,10 @@ pub fn retry_falloff_log(
         true
     } else {
         // Exponential falloff between 'interval_start_us' and 'interval_max_us' microseconds
-        last_us <= secs_to_timestamp(timestamp_to_secs(cur_us) / interval_multiplier_us)
+        last_us
+            <= secs_to_timestamp_duration(
+                timestamp_duration_to_secs(cur_us) / interval_multiplier_us,
+            )
     }
 }
 
@@ -339,16 +349,27 @@ pub trait RemoveDuplicates<T: PartialEq + Clone> {
     fn remove_duplicates(&mut self);
 }
 
-impl<T: PartialEq + Clone> RemoveDuplicates<T> for Vec<T> {
+impl<T: PartialEq + Ord + Clone> RemoveDuplicates<T> for Vec<T> {
     fn remove_duplicates(&mut self) {
-        let mut already_seen = Vec::new();
-        self.retain(|item| match already_seen.contains(item) {
-            true => false,
-            _ => {
-                already_seen.push(item.clone());
-                true
+        let mut already_seen = BTreeSet::new();
+        self.retain(move |item| already_seen.insert(item.clone()))
+    }
+}
+
+/// Check for duplicates but doesn't require a sorted vec
+pub trait HasDuplicates<T: PartialEq + Clone> {
+    fn has_duplicates(&self) -> bool;
+}
+
+impl<T: PartialEq + Ord + Clone> HasDuplicates<T> for Vec<T> {
+    fn has_duplicates(&self) -> bool {
+        let mut already_seen = BTreeSet::new();
+        for item in self.iter() {
+            if !already_seen.insert(item) {
+                return true;
             }
-        })
+        }
+        false
     }
 }
 
@@ -510,38 +531,6 @@ pub fn is_debug_backtrace_enabled() -> bool {
         } else {
             false
         }
-    }
-}
-
-#[track_caller]
-pub fn debug_duration<R, F: Future<Output = R>, T: FnOnce() -> F>(
-    f: T,
-    opt_timeout_us: Option<u64>,
-) -> impl Future<Output = R> {
-    let location = core::panic::Location::caller();
-    async move {
-        let t1 = get_timestamp();
-        let out = f().await;
-        let t2 = get_timestamp();
-        let duration_us = t2 - t1;
-        if let Some(timeout_us) = opt_timeout_us {
-            if duration_us > timeout_us {
-                #[cfg(not(feature = "debug-duration-timeout"))]
-                debug!(
-                    "Excessive duration: {}\n{:?}",
-                    display_duration(duration_us),
-                    backtrace::Backtrace::new()
-                );
-                #[cfg(feature = "debug-duration-timeout")]
-                panic!(format!(
-                    "Duration panic timeout exceeded: {}",
-                    display_duration(duration_us)
-                ));
-            }
-        } else {
-            debug!("Duration: {} = {}", location, display_duration(duration_us),);
-        }
-        out
     }
 }
 

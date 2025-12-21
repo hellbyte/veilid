@@ -12,10 +12,10 @@ pub fn test_log() {
     info!("testing log");
 }
 
-pub fn test_get_timestamp() {
+pub fn test_get_raw_timestamp() {
     info!("testing get_timestamp");
-    let t1 = get_timestamp();
-    let t2 = get_timestamp();
+    let t1 = get_raw_timestamp();
+    let t2 = get_raw_timestamp();
     assert!(t2 >= t1);
 }
 
@@ -460,12 +460,12 @@ pub fn test_split_url() {
 
 pub fn test_get_random_u64() {
     info!("testing random number generator for u64");
-    let t1 = get_timestamp();
+    let t1 = get_raw_timestamp();
     let count = 10000;
     for _ in 0..count {
         let _ = get_random_u64();
     }
-    let t2 = get_timestamp();
+    let t2 = get_raw_timestamp();
     let tdiff = ((t2 - t1) as f64) / 1000000.0f64;
     info!(
         "running get_random_u64 with {} iterations took {} seconds",
@@ -475,12 +475,12 @@ pub fn test_get_random_u64() {
 
 pub fn test_get_random_u32() {
     info!("testing random number generator for u32");
-    let t1 = get_timestamp();
+    let t1 = get_raw_timestamp();
     let count = 10000;
     for _ in 0..count {
         let _ = get_random_u32();
     }
-    let t2 = get_timestamp();
+    let t2 = get_raw_timestamp();
     let tdiff = ((t2 - t1) as f64) / 1000000.0f64;
     info!(
         "running get_random_u32 with {} iterations took {} seconds",
@@ -493,7 +493,7 @@ pub async fn test_must_join_single_future() {
     let sf = MustJoinSingleFuture::<u32>::new();
     assert_eq!(sf.check().await, Ok(None));
     assert_eq!(
-        sf.single_spawn("t1", async {
+        sf.single_spawn("t1", || async {
             sleep(2000).await;
             69
         })
@@ -502,12 +502,12 @@ pub async fn test_must_join_single_future() {
     );
     assert_eq!(sf.check().await, Ok(None));
     assert_eq!(
-        sf.single_spawn("t2", async { panic!() }).await,
+        sf.single_spawn("t2", || async { panic!() }).await,
         Ok((None, false))
     );
     assert_eq!(sf.join().await, Ok(Some(69)));
     assert_eq!(
-        sf.single_spawn("t3", async {
+        sf.single_spawn("t3", || async {
             sleep(1000).await;
             37
         })
@@ -516,7 +516,7 @@ pub async fn test_must_join_single_future() {
     );
     sleep(2000).await;
     assert_eq!(
-        sf.single_spawn("t4", async {
+        sf.single_spawn("t4", || async {
             sleep(1000).await;
             27
         })
@@ -534,7 +534,7 @@ pub fn test_tools() {
     for x in 0..1024 {
         let cur_us = x as u64 * 1000000u64;
         if retry_falloff_log(last_us, cur_us, 10_000_000u64, 6_000_000_000u64, 2.0f64) {
-            info!("   retry at {} secs", timestamp_to_secs(cur_us));
+            info!("   retry at {} secs", timestamp_duration_to_secs(cur_us));
             last_us = cur_us;
         }
     }
@@ -542,7 +542,7 @@ pub fn test_tools() {
 
 pub async fn test_all() {
     test_log();
-    test_get_timestamp();
+    test_get_raw_timestamp();
     test_tools();
     test_split_url();
     test_get_random_u64();

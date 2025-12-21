@@ -1,5 +1,35 @@
 use super::*;
 
+pub fn decode_signal_info(
+    decode_context: &RPCDecodeContext,
+    reader: &veilid_capnp::operation_signal::Reader,
+) -> Result<SignalInfo, RPCError> {
+    Ok(match reader.which()? {
+        veilid_capnp::operation_signal::HolePunch(r) => {
+            // Extract hole punch reader
+            let r = r?;
+            rpc_ignore_missing_property!(r, receipt);
+            let receipt = r.get_receipt()?.to_vec();
+            rpc_ignore_missing_property!(r, peer_info);
+            let pi_reader = r.get_peer_info()?;
+            let peer_info = Arc::new(decode_peer_info(decode_context, &pi_reader)?);
+
+            SignalInfo::HolePunch { receipt, peer_info }
+        }
+        veilid_capnp::operation_signal::ReverseConnect(r) => {
+            // Extract reverse connect reader
+            let r = r?;
+            rpc_ignore_missing_property!(r, receipt);
+            let receipt = r.get_receipt()?.to_vec();
+            rpc_ignore_missing_property!(r, peer_info);
+            let pi_reader = r.get_peer_info()?;
+            let peer_info = Arc::new(decode_peer_info(decode_context, &pi_reader)?);
+
+            SignalInfo::ReverseConnect { receipt, peer_info }
+        }
+    })
+}
+
 pub fn encode_signal_info(
     signal_info: &SignalInfo,
     builder: &mut veilid_capnp::operation_signal::Builder,
@@ -30,49 +60,4 @@ pub fn encode_signal_info(
     }
 
     Ok(())
-}
-
-pub fn decode_signal_info(
-    decode_context: &RPCDecodeContext,
-    reader: &veilid_capnp::operation_signal::Reader,
-) -> Result<SignalInfo, RPCError> {
-    Ok(
-        match reader
-            .which()
-            .map_err(RPCError::map_internal("invalid signal operation"))?
-        {
-            veilid_capnp::operation_signal::HolePunch(r) => {
-                // Extract hole punch reader
-                let r = r.map_err(RPCError::protocol)?;
-                let receipt = r
-                    .get_receipt()
-                    .map_err(RPCError::map_protocol(
-                        "invalid receipt in hole punch signal info",
-                    ))?
-                    .to_vec();
-                let pi_reader = r.get_peer_info().map_err(RPCError::map_protocol(
-                    "invalid peer info in hole punch signal info",
-                ))?;
-                let peer_info = Arc::new(decode_peer_info(decode_context, &pi_reader)?);
-
-                SignalInfo::HolePunch { receipt, peer_info }
-            }
-            veilid_capnp::operation_signal::ReverseConnect(r) => {
-                // Extract reverse connect reader
-                let r = r.map_err(RPCError::protocol)?;
-                let receipt = r
-                    .get_receipt()
-                    .map_err(RPCError::map_protocol(
-                        "invalid receipt in hole punch signal info",
-                    ))?
-                    .to_vec();
-                let pi_reader = r.get_peer_info().map_err(RPCError::map_protocol(
-                    "invalid peer info in reverse connect signal info",
-                ))?;
-                let peer_info = Arc::new(decode_peer_info(decode_context, &pi_reader)?);
-
-                SignalInfo::ReverseConnect { receipt, peer_info }
-            }
-        },
-    )
 }

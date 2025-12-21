@@ -168,10 +168,10 @@ impl<T> MustJoinSingleFuture<T>
 where
     T: 'static + Send,
 {
-    pub async fn single_spawn(
+    pub async fn single_spawn<F: Future<Output = T> + Send + 'static, C: FnOnce() -> F>(
         &self,
         name: &str,
-        future: impl Future<Output = T> + Send + 'static,
+        future_callback: C,
     ) -> Result<(Option<T>, bool), ()> {
         let mut out: Option<T> = None;
         // See if we have a result we can return
@@ -196,7 +196,7 @@ where
         }
         // Run if we should do that
         if run {
-            self.unlock(Some(spawn(name, future)));
+            self.unlock(Some(spawn(name, future_callback())));
         }
         // Return the prior result if we have one
         Ok((out, run))

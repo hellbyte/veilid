@@ -81,6 +81,7 @@ impl TryFrom<&str> for AttachmentState {
 /// Describe the attachment state of the Veilid node
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidStateAttachment {
     /// The overall quality of the routing table if attached, or the current state the attachment state machine.
@@ -99,6 +100,7 @@ pub struct VeilidStateAttachment {
 /// Describe a recently accessed peer
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct PeerTableData {
     /// The node ids used by this peer
@@ -107,7 +109,7 @@ pub struct PeerTableData {
         all(target_arch = "wasm32", target_os = "unknown"),
         tsify(type = "string[]")
     )]
-    pub node_ids: Vec<TypedNodeId>,
+    pub node_ids: Vec<NodeId>,
     /// The peer's human readable address.
     pub peer_address: String,
     /// Statistics we have collected on this peer.
@@ -117,6 +119,7 @@ pub struct PeerTableData {
 /// Describe the current network state of the Veilid node
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidStateNetwork {
     /// If the network has been started or not.
@@ -128,11 +131,19 @@ pub struct VeilidStateNetwork {
     /// The list of most recently accessed peers.
     /// This is not an active connection table, nor is representative of the entire routing table.
     pub peers: Vec<PeerTableData>,
+    /// The list of node ids for this node
+    #[schemars(with = "Vec<String>")]
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        tsify(type = "string[]")
+    )]
+    pub node_ids: Vec<NodeId>,
 }
 
 /// Describe a private route change that has happened
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidRouteChange {
     /// If a private route that was allocated has died, it is listed here.
@@ -149,6 +160,7 @@ pub struct VeilidRouteChange {
 /// itself during runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidStateConfig {
     /// If the Veilid node configuration has changed the full new config will be here.
@@ -158,11 +170,12 @@ pub struct VeilidStateConfig {
 /// Describe when DHT records have subkey values changed
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidValueChange {
     /// The DHT Record key that changed
     #[schemars(with = "String")]
-    pub key: TypedRecordKey,
+    pub key: RecordKey,
     /// The portion of the DHT Record's subkeys that have changed
     /// If the subkey range is empty, any watch present on the value has died.
     pub subkeys: ValueSubkeyRangeSet,
@@ -205,6 +218,7 @@ pub enum VeilidUpdate {
     derive(Tsify),
     tsify(into_wasm_abi)
 )]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidState {
     pub attachment: Box<VeilidStateAttachment>,

@@ -596,7 +596,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanity() {
+    fn validate() {
         let text_view = CachedTextView::new(ContentType::default(), 5, None);
         assert_eq!(text_view.get_content().data.len(), 0);
     }

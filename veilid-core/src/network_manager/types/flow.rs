@@ -29,7 +29,12 @@ impl fmt::Display for Flow {
 
 impl Flow {
     pub fn new(remote: PeerAddress, local: SocketAddress) -> Self {
-        assert!(!remote.protocol_type().is_ordered() || !local.address().is_unspecified());
+        assert!(
+            !matches!(
+                remote.protocol_type().sequence_ordering(),
+                SequenceOrdering::Ordered
+            ) || !local.address().is_unspecified()
+        );
 
         Self {
             remote,

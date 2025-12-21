@@ -1,151 +1,114 @@
 use super::*;
 
-fourcc_type!(VeilidCapability);
-pub const CAP_ROUTE: VeilidCapability = VeilidCapability(*b"ROUT");
-#[cfg(feature = "unstable-tunnels")]
-pub const CAP_TUNNEL: VeilidCapability = VeilidCapability(*b"TUNL");
-pub const CAP_SIGNAL: VeilidCapability = VeilidCapability(*b"SGNL");
-pub const CAP_RELAY: VeilidCapability = VeilidCapability(*b"RLAY");
-pub const CAP_VALIDATE_DIAL_INFO: VeilidCapability = VeilidCapability(*b"DIAL");
-pub const CAP_DHT: VeilidCapability = VeilidCapability(*b"DHTV");
-pub const CAP_DHT_WATCH: VeilidCapability = VeilidCapability(*b"DHTW");
-pub const CAP_APPMESSAGE: VeilidCapability = VeilidCapability(*b"APPM");
-#[cfg(feature = "unstable-blockstore")]
-pub const CAP_BLOCKSTORE: VeilidCapability = VeilidCapability(*b"BLOC");
-
-pub const DISTANCE_METRIC_CAPABILITIES: &[VeilidCapability] = &[CAP_DHT, CAP_DHT_WATCH];
-pub const CONNECTIVITY_CAPABILITIES: &[VeilidCapability] =
-    &[CAP_RELAY, CAP_SIGNAL, CAP_ROUTE, CAP_VALIDATE_DIAL_INFO];
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeInfo {
-    network_class: NetworkClass,
+    timestamp: Timestamp,
+    envelope_support: Vec<EnvelopeVersion>,
+    crypto_info_list: Vec<CryptoInfo>,
+    capabilities: Vec<VeilidCapability>,
     outbound_protocols: ProtocolTypeSet,
     address_types: AddressTypeSet,
-    envelope_support: Vec<u8>,
-    crypto_support: Vec<CryptoKind>,
-    capabilities: Vec<VeilidCapability>,
     dial_info_detail_list: Vec<DialInfoDetail>,
+    relay_info_list: Vec<RelayInfo>,
 }
 
 impl fmt::Display for NodeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "network_class:      {:?}", self.network_class)?;
+        writeln!(f, "timestamp:          {}", self.timestamp)?;
+        writeln!(f, "envelope_support:   {:?}", self.envelope_support)?;
+        writeln!(f, "crypto_info_list:   {:?}", self.crypto_info_list)?;
+        writeln!(f, "capabilities:       {:?}", self.capabilities)?;
         writeln!(f, "outbound_protocols: {:?}", self.outbound_protocols)?;
         writeln!(f, "address_types:      {:?}", self.address_types)?;
-        writeln!(f, "envelope_support:   {:?}", self.envelope_support)?;
-        writeln!(f, "crypto_support:     {:?}", self.crypto_support)?;
-        writeln!(f, "capabilities:       {:?}", self.capabilities)?;
-        writeln!(f, "dial_info_detail_list:")?;
-        for did in &self.dial_info_detail_list {
-            writeln!(f, "    {}", did)?;
-        }
+        writeln!(
+            f,
+            "dial_info_detail_list:\n{}",
+            indent_all_string(&self.dial_info_detail_list.to_multiline_indexed_string())
+        )?;
+
+        writeln!(
+            f,
+            "relay_info_list:\n{}",
+            indent_all_string(&self.relay_info_list.to_multiline_indexed_string())
+        )?;
+
         Ok(())
     }
 }
 
 impl NodeInfo {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        network_class: NetworkClass,
+        timestamp: Timestamp,
+        mut envelope_support: Vec<EnvelopeVersion>,
+        mut crypto_info_list: Vec<CryptoInfo>,
+        mut capabilities: Vec<VeilidCapability>,
         outbound_protocols: ProtocolTypeSet,
         address_types: AddressTypeSet,
-        envelope_support: Vec<u8>,
-        crypto_support: Vec<CryptoKind>,
-        capabilities: Vec<VeilidCapability>,
-        dial_info_detail_list: Vec<DialInfoDetail>,
+        mut dial_info_detail_list: Vec<DialInfoDetail>,
+        mut relay_info_list: Vec<RelayInfo>,
     ) -> Self {
+        envelope_support.sort();
+        crypto_info_list.sort();
+        capabilities.sort();
+        dial_info_detail_list.sort();
+        relay_info_list.sort();
         Self {
-            network_class,
+            timestamp,
+            envelope_support,
+            crypto_info_list,
+            capabilities,
             outbound_protocols,
             address_types,
-            envelope_support,
-            crypto_support,
-            capabilities,
             dial_info_detail_list,
+            relay_info_list,
         }
     }
 
-    pub fn network_class(&self) -> NetworkClass {
-        self.network_class
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
     }
-    pub fn outbound_protocols(&self) -> ProtocolTypeSet {
-        self.outbound_protocols
-    }
-    pub fn address_types(&self) -> AddressTypeSet {
-        self.address_types
-    }
-    pub fn envelope_support(&self) -> &[u8] {
+    pub fn envelope_support(&self) -> &[EnvelopeVersion] {
         &self.envelope_support
     }
-    pub fn crypto_support(&self) -> &[CryptoKind] {
-        &self.crypto_support
+    pub fn crypto_info_list(&self) -> &[CryptoInfo] {
+        &self.crypto_info_list
     }
     pub fn capabilities(&self) -> &[VeilidCapability] {
         &self.capabilities
     }
-    pub fn dial_info_detail_list(&self) -> &[DialInfoDetail] {
-        &self.dial_info_detail_list
+    pub fn outbound_protocols(&self) -> ProtocolTypeSet {
+        self.outbound_protocols
     }
 
-    pub fn first_filtered_dial_info_detail<'a, S, F>(
-        &self,
-        sort: Option<&'a S>,
-        filter: &'a F,
-    ) -> Option<DialInfoDetail>
-    where
-        S: Fn(&DialInfoDetail, &DialInfoDetail) -> std::cmp::Ordering,
-        F: Fn(&DialInfoDetail) -> bool,
-    {
-        if let Some(sort) = sort {
-            let mut dids = self.dial_info_detail_list.clone();
-            dids.sort_by(sort);
-            for did in dids {
-                if filter(&did) {
-                    return Some(did);
-                }
-            }
-        } else {
-            for did in &self.dial_info_detail_list {
-                if filter(did) {
-                    return Some(did.clone());
-                }
-            }
-        };
-        None
+    pub fn address_types(&self) -> AddressTypeSet {
+        self.address_types
+    }
+    pub fn relay_info_list(&self) -> &[RelayInfo] {
+        &self.relay_info_list
     }
 
-    pub fn filtered_dial_info_details<S, F>(
-        &self,
-        sort: Option<&S>,
-        filter: &F,
-    ) -> Vec<DialInfoDetail>
-    where
-        S: Fn(&DialInfoDetail, &DialInfoDetail) -> std::cmp::Ordering,
-        F: Fn(&DialInfoDetail) -> bool,
-    {
-        let mut dial_info_detail_list = Vec::new();
-
-        if let Some(sort) = sort {
-            let mut dids = self.dial_info_detail_list.clone();
-            dids.sort_by(sort);
-            for did in dids {
-                if filter(&did) {
-                    dial_info_detail_list.push(did);
+    pub fn public_keys(&self) -> PublicKeyGroup {
+        let mut pubkeys = PublicKeyGroup::new();
+        for x in self.crypto_info_list.iter() {
+            match x {
+                #[cfg(feature = "enable-crypto-none")]
+                CryptoInfo::NONE { public_key } => {
+                    pubkeys.add(PublicKey::new(CRYPTO_KIND_NONE, public_key.clone()));
                 }
+                #[cfg(feature = "enable-crypto-vld0")]
+                CryptoInfo::VLD0 { public_key } => {
+                    pubkeys.add(PublicKey::new(CRYPTO_KIND_VLD0, public_key.clone()));
+                } // #[cfg(feature = "enable-crypto-vld1")]
+                  // CryptoInfo::VLD1 {
+                  //     encapsulation_key,
+                  //     signing_key,
+                  // } => {
+                  //     pubkeys.add(PublicKey::new(CRYPTO_KIND_VLD1, signing_key.clone()));
+                  // }
             }
-        } else {
-            for did in &self.dial_info_detail_list {
-                if filter(did) {
-                    dial_info_detail_list.push(did.clone());
-                }
-            }
-        };
-        dial_info_detail_list
-    }
-
-    /// Does this node has some dial info
-    pub fn has_dial_info(&self) -> bool {
-        !self.dial_info_detail_list.is_empty()
+        }
+        pubkeys
     }
 
     pub fn has_capability(&self, cap: VeilidCapability) -> bool {
@@ -171,40 +134,157 @@ impl NodeInfo {
         false
     }
 
-    /// Can direct connections be made
-    pub fn is_fully_direct_inbound(&self) -> bool {
-        // Must be inbound capable
-        if !matches!(self.network_class, NetworkClass::InboundCapable) {
-            return false;
-        }
-        // Do any of our dial info require signalling? if so, we can't offer signalling
-        for did in &self.dial_info_detail_list {
-            if did.class.requires_signal() {
-                return false;
+    pub fn relay_ids(&self) -> Vec<NodeId> {
+        let mut nids = vec![];
+        for r in &self.relay_info_list {
+            for nid in r.node_ids().iter() {
+                nids.push(nid.clone());
             }
         }
-        true
+        nids
     }
 
-    /// Does this appear on the same network within the routing domain?
-    /// The notion of 'ipblock' is a single external IP address for ipv4, and a fixed prefix for ipv6.
-    /// If a NAT is present, this detects if two public peerinfo would share the same router and be
-    /// subject to hairpin NAT (for ipv4 typically). This is also overloaded for the concept
-    /// of rate-limiting the number of nodes coming from the same ip 'block' within a specific amount of
-    /// time for the address filter.
-    pub fn node_is_on_same_ipblock(&self, node_b: &NodeInfo, ip6_prefix_size: usize) -> bool {
-        let our_ip_blocks = self
-            .dial_info_detail_list()
-            .iter()
-            .map(|did| ip_to_ipblock(ip6_prefix_size, did.dial_info.to_socket_addr().ip()))
-            .collect::<HashSet<_>>();
+    pub fn has_any_dial_info(&self) -> bool {
+        self.has_dial_info()
+            || self
+                .relay_info_list
+                .iter()
+                .find_map(|x| {
+                    if !x.dial_info_detail_list().is_empty() {
+                        Some(true)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+    }
 
-        for did in node_b.dial_info_detail_list() {
-            let ipblock = ip_to_ipblock(ip6_prefix_size, did.dial_info.to_socket_addr().ip());
-            if our_ip_blocks.contains(&ipblock) {
+    /// Does this or any relay appear on the same ipblock?
+    pub fn is_any_node_on_same_ipblock(&self, other: &NodeInfo, ip6_prefix_size: usize) -> bool {
+        // our node vs their node
+        if self.is_on_same_ipblock(other, ip6_prefix_size) {
+            return true;
+        }
+
+        for other_relay_info in other.relay_info_list() {
+            // our node vs their relay
+            if self.is_on_same_ipblock(other_relay_info, ip6_prefix_size) {
+                return true;
+            }
+
+            for our_relay_info in self.relay_info_list() {
+                // our relay vs their relay
+                if our_relay_info.is_on_same_ipblock(other_relay_info, ip6_prefix_size) {
+                    return true;
+                }
+            }
+        }
+
+        for our_relay_info in self.relay_info_list() {
+            // our relay vs their node
+            if our_relay_info.is_on_same_ipblock(other, ip6_prefix_size) {
                 return true;
             }
         }
+
         false
+    }
+
+    /// Build a map of protocols to low level ports
+    /// This way we can get the set of protocols required to keep our NAT mapping alive for keepalive pings
+    /// Only one protocol per low level protocol/port combination is required
+    /// For example, if WS/WSS and TCP protocols are on the same low-level TCP port, only TCP keepalives will be required
+    /// and we do not need to do WS/WSS keepalive as well. If they are on different ports, then we will need WS/WSS keepalives too.
+    pub fn get_low_level_port_info(&self) -> LowLevelPortInfo {
+        let mut low_level_protocol_ports =
+            BTreeSet::<(LowLevelProtocolType, AddressType, u16)>::new();
+        let mut protocol_to_port =
+            BTreeMap::<(ProtocolType, AddressType), (LowLevelProtocolType, u16)>::new();
+
+        for did in self.dial_info_detail_list() {
+            low_level_protocol_ports.insert((
+                did.dial_info.protocol_type().low_level_protocol_type(),
+                did.dial_info.address_type(),
+                did.dial_info.socket_address().port(),
+            ));
+            protocol_to_port.insert(
+                (did.dial_info.protocol_type(), did.dial_info.address_type()),
+                (
+                    did.dial_info.protocol_type().low_level_protocol_type(),
+                    did.dial_info.socket_address().port(),
+                ),
+            );
+        }
+        LowLevelPortInfo {
+            low_level_protocol_ports,
+            protocol_to_port,
+        }
+    }
+
+    /// Compare this NodeInfo to another one
+    /// Exclude the signature and timestamp and any other fields that are not
+    /// semantically valuable
+    pub fn equivalent(&self, other: &NodeInfo) -> bool {
+        // Ignore
+        //self.timestamp != other.timestamp ||
+        if self.envelope_support != other.envelope_support
+            || self.crypto_info_list != other.crypto_info_list
+            || self.capabilities != other.capabilities
+            || self.outbound_protocols != other.outbound_protocols
+            || self.address_types != other.address_types
+            || self.dial_info_detail_list != other.dial_info_detail_list
+            || self.relay_info_list.len() != other.relay_info_list.len()
+        {
+            return false;
+        }
+
+        for x in 0..self.relay_info_list.len() {
+            if !self.relay_info_list[x].equivalent(&other.relay_info_list[x]) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[cfg(feature = "geolocation")]
+    pub fn get_geolocation_info(&self, routing_domain: RoutingDomain) -> GeolocationInfo {
+        if routing_domain != RoutingDomain::PublicInternet {
+            // Country code is irrelevant for local network
+            return GeolocationInfo::new(None, vec![]);
+        }
+
+        let relay_country_codes: Vec<Option<CountryCode>> = self
+            .relay_info_list
+            .iter()
+            .map(|x| x.get_country_code())
+            .collect();
+
+        GeolocationInfo::new(self.get_country_code(), relay_country_codes)
+    }
+}
+
+impl HasDialInfoDetailList for NodeInfo {
+    fn dial_info_detail_list(&self) -> &[DialInfoDetail] {
+        &self.dial_info_detail_list
+    }
+
+    fn has_sequencing_matched_dial_info(&self, sequencing: Sequencing) -> bool {
+        // Check our dial info
+        for did in self.dial_info_detail_list() {
+            if sequencing.matches_ordering(did.dial_info.protocol_type().sequence_ordering()) {
+                return true;
+            }
+        }
+        // Check our relays
+        self.relay_info_list
+            .iter()
+            .find_map(|relay_info| {
+                if relay_info.has_sequencing_matched_dial_info(sequencing) {
+                    return Some(true);
+                }
+                None
+            })
+            .unwrap_or_default()
     }
 }

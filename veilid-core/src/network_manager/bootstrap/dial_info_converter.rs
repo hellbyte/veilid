@@ -47,6 +47,7 @@ where
             "W" => {
                 format!("ws://{}:{}", hostname, &short[1..])
             }
+            #[cfg(feature = "enable-protocol-wss")]
             "S" => {
                 format!("wss://{}:{}", hostname, &short[1..])
             }
@@ -66,6 +67,7 @@ where
                 .port
                 .ok_or_else(|| VeilidAPIError::parse_error("Missing port in udp url", url))?,
             "ws" => split_url.port.unwrap_or(80u16),
+            #[cfg(feature = "enable-protocol-wss")]
             "wss" => split_url.port.unwrap_or(443u16),
             _ => {
                 apibail_parse_error!("Invalid dial info url scheme", split_url.scheme);
@@ -92,6 +94,7 @@ where
                     SocketAddress::from_socket_addr(sa).canonical(),
                     url.to_string(),
                 )?,
+                #[cfg(feature = "enable-protocol-wss")]
                 "wss" => DialInfo::try_wss(
                     SocketAddress::from_socket_addr(sa).canonical(),
                     url.to_string(),
@@ -141,6 +144,7 @@ where
                         hostname: split_url.host.to_string(),
                     }
                 }
+                #[cfg(feature = "enable-protocol-wss")]
                 DialInfo::WSS(di) => {
                     let mut split_url =
                         SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap();
@@ -188,6 +192,7 @@ where
                     }
                     split_url.to_string()
                 }
+                #[cfg(feature = "enable-protocol-wss")]
                 DialInfo::WSS(di) => {
                     let mut split_url =
                         SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap();

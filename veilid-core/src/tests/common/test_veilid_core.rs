@@ -1,10 +1,10 @@
-use super::test_veilid_config::*;
+use crate::tests::fixtures::*;
 use crate::*;
 
 pub async fn test_startup_shutdown() {
     trace!("test_startup_shutdown: starting");
-    let (update_callback, config_callback) = setup_veilid_core();
-    let api = api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
 
@@ -48,7 +48,7 @@ pub async fn test_startup_shutdown_from_config() {
         },
         ..Default::default()
     };
-    let api = api_startup_config(Arc::new(|_: VeilidUpdate| {}), config)
+    let api = api_startup(Arc::new(|_: VeilidUpdate| {}), config)
         .await
         .expect("startup failed");
     trace!("test_startup_from_config: shutting down");
@@ -58,8 +58,8 @@ pub async fn test_startup_shutdown_from_config() {
 
 pub async fn test_attach_detach() {
     trace!("test_attach_detach: --- test normal order ---");
-    let (update_callback, config_callback) = setup_veilid_core();
-    let api = api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
     api.attach().await.unwrap();
@@ -69,8 +69,8 @@ pub async fn test_attach_detach() {
     api.shutdown().await;
 
     trace!("test_attach_detach: --- test auto detach ---");
-    let (update_callback, config_callback) = setup_veilid_core();
-    let api = api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
     api.attach().await.unwrap();
@@ -78,8 +78,8 @@ pub async fn test_attach_detach() {
     api.shutdown().await;
 
     trace!("test_attach_detach: --- test detach without attach ---");
-    let (update_callback, config_callback) = setup_veilid_core();
-    let api = api_startup(update_callback, config_callback)
+    let (update_callback, config) = setup_veilid_core();
+    let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
     assert!(api.detach().await.is_err());
@@ -92,8 +92,8 @@ pub async fn test_startup_shutdown_multiple() {
 
     let mut apis = vec![];
     for ns in &namespaces {
-        let (update_callback, config_callback) = setup_veilid_core_with_namespace(ns);
-        let api = api_startup(update_callback, config_callback)
+        let (update_callback, config) = setup_veilid_core_with_namespace(ns);
+        let api = api_startup(update_callback, config)
             .await
             .expect("startup failed");
         apis.push(api);
@@ -134,7 +134,7 @@ pub async fn test_startup_shutdown_from_config_multiple() {
             },
             ..Default::default()
         };
-        let api = api_startup_config(Arc::new(|_: VeilidUpdate| {}), config)
+        let api = api_startup(Arc::new(|_: VeilidUpdate| {}), config)
             .await
             .expect("startup failed");
         apis.push(api);
@@ -151,8 +151,8 @@ pub async fn test_attach_detach_multiple() {
     let namespaces = (0..3).map(|x| format!("ns_{}", x)).collect::<Vec<_>>();
     let mut apis = vec![];
     for ns in &namespaces {
-        let (update_callback, config_callback) = setup_veilid_core_with_namespace(ns);
-        let api = api_startup(update_callback, config_callback)
+        let (update_callback, config) = setup_veilid_core_with_namespace(ns);
+        let api = api_startup(update_callback, config)
             .await
             .expect("startup failed");
         apis.push(api);
@@ -172,8 +172,8 @@ pub async fn test_attach_detach_multiple() {
     trace!("test_attach_detach_multiple: --- test auto detach ---");
     let mut apis = vec![];
     for ns in &namespaces {
-        let (update_callback, config_callback) = setup_veilid_core_with_namespace(ns);
-        let api = api_startup(update_callback, config_callback)
+        let (update_callback, config) = setup_veilid_core_with_namespace(ns);
+        let api = api_startup(update_callback, config)
             .await
             .expect("startup failed");
         apis.push(api);
@@ -190,8 +190,8 @@ pub async fn test_attach_detach_multiple() {
     trace!("test_attach_detach_multiple: --- test detach without attach ---");
     let mut apis = vec![];
     for ns in &namespaces {
-        let (update_callback, config_callback) = setup_veilid_core_with_namespace(ns);
-        let api = api_startup(update_callback, config_callback)
+        let (update_callback, config) = setup_veilid_core_with_namespace(ns);
+        let api = api_startup(update_callback, config)
             .await
             .expect("startup failed");
         apis.push(api);

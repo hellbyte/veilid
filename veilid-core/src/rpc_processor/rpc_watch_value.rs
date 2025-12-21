@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 #[derive(Clone, Debug)]
 pub struct WatchValueAnswer {
     pub accepted: bool,
-    pub expiration_ts: Timestamp,
+    pub expiration: Timestamp,
     pub peers: Vec<Arc<PeerInfo>>,
     pub watch_id: u64,
 }
@@ -21,13 +21,14 @@ impl RPCProcessor {
     #[instrument(level = "trace", target = "rpc", skip(self),
             fields(ret.expiration,
                 ret.latency,
+                ret.accepted,
                 ret.peers.len
             ),err(level=Level::DEBUG))]
     #[allow(clippy::too_many_arguments)]
     pub async fn rpc_call_watch_value(
         &self,
         dest: Destination,
-        key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
         expiration: Timestamp,
         count: u32,
@@ -49,12 +50,15 @@ impl RPCProcessor {
         };
 
         // Get the target node id
-        let crypto = self.crypto();
-        let Some(vcrypto) = crypto.get(key.kind) else {
-            return Err(RPCError::internal("unsupported cryptosystem"));
-        };
-        let Some(target_node_id) = target_node_ids.get(key.kind) else {
+        let Some(target_node_id) = target_node_ids.get(opaque_record_key.kind()) else {
             return Err(RPCError::internal("No node id for crypto kind"));
+        };
+
+        // Get duration
+        let duration = if expiration.is_zero() {
+            TimestampDuration::new(0)
+        } else {
+            expiration.duration_since(Timestamp::now())
         };
 
         let debug_string = format!(
@@ -64,23 +68,21 @@ impl RPCProcessor {
             } else {
                 "".to_owned()
             },
-            key,
+            opaque_record_key,
             subkeys,
-            expiration,
+            duration,
             count,
             dest,
-            watcher.key
+            watcher
         );
 
         // Send the watchvalue question
         let watch_value_q = RPCOperationWatchValueQ::new(
-            key,
+            opaque_record_key.clone(),
             subkeys.clone(),
-            expiration.as_u64(),
+            duration,
             count,
             watch_id,
-            watcher,
-            &vcrypto,
         )?;
         let question = RPCQuestion::new(
             network_result_try!(self.get_destination_respond_to(&dest)?),
@@ -89,13 +91,16 @@ impl RPCProcessor {
 
         veilid_log!(self debug target: "dht", "{}", debug_string);
 
-        let waitable_reply =
-            network_result_try!(self.question(dest.clone(), question, None).await?);
+        let waitable_reply = network_result_try!(
+            self.question(dest.clone(), question, Some(watcher), None)
+                .await?
+        );
 
         // Keep the reply private route that was used to return with the answer
-        let reply_private_route = waitable_reply.context.reply_private_route;
+        let reply_private_route = waitable_reply.context.reply_private_route.clone();
 
         // Wait for reply
+        let send_ts = waitable_reply.context.send_ts;
         let (msg, latency) = match self.wait_for_reply(waitable_reply, debug_string).await? {
             TimeoutOr::Timeout => return Ok(NetworkResult::Timeout),
             TimeoutOr::Value(v) => v,
@@ -111,15 +116,15 @@ impl RPCProcessor {
             _ => return Ok(NetworkResult::invalid_message("not an answer")),
         };
         let question_watch_id = watch_id;
-        let (accepted, expiration, peers, watch_id) = watch_value_a.destructure();
+        let (accepted, duration, peers, watch_id) = watch_value_a.destructure();
         if debug_target_enabled!("dht") {
             let debug_string_answer = format!(
                 "OUT <== WatchValueA({}id={} {} #{:?}@{} peers={}) <= {}",
                 if accepted { "+accept " } else { "" },
                 watch_id,
-                key,
+                opaque_record_key,
                 subkeys,
-                expiration,
+                duration,
                 peers.len(),
                 dest
             );
@@ -128,7 +133,11 @@ impl RPCProcessor {
 
             let peer_ids: Vec<String> = peers
                 .iter()
-                .filter_map(|p| p.node_ids().get(key.kind).map(|k| k.to_string()))
+                .filter_map(|p| {
+                    p.node_ids()
+                        .get(opaque_record_key.kind())
+                        .map(|k| k.to_string())
+                })
                 .collect();
             veilid_log!(self debug target: "dht", "Peers: {:#?}", peer_ids);
         }
@@ -145,7 +154,7 @@ impl RPCProcessor {
                 }
             }
             // Validate if a watch is created/updated, that it has a nonzero id
-            if expiration != 0 && watch_id == 0 {
+            if !duration.is_zero() && watch_id == 0 {
                 return Ok(NetworkResult::invalid_message(
                     "zero watch id returned on accepted or cancelled watch",
                 ));
@@ -153,10 +162,9 @@ impl RPCProcessor {
         }
 
         // Validate peers returned are, in fact, closer to the key than the node we sent this to
-        let valid = match RoutingTable::verify_peers_closer(
-            &vcrypto,
-            target_node_id.into(),
-            key.into(),
+        let valid = match self.routing_table().verify_peers_closer(
+            target_node_id.to_hash_coordinate(),
+            opaque_record_key.to_hash_coordinate(),
             &peers,
         ) {
             Ok(v) => v,
@@ -171,10 +179,20 @@ impl RPCProcessor {
             return Ok(NetworkResult::invalid_message("non-closer peers returned"));
         }
 
+        // Get expiration timestamp
+        // Estimates the duration as calculated at a time halfway through the RPC by the remote node
+        let expiration = if duration.is_zero() {
+            Timestamp::new(0)
+        } else {
+            send_ts.later(latency.div(2)).later(duration)
+        };
+
         #[cfg(feature = "verbose-tracing")]
         tracing::Span::current().record("ret.latency", latency.as_u64());
         #[cfg(feature = "verbose-tracing")]
-        tracing::Span::current().record("ret.expiration", latency.as_u64());
+        tracing::Span::current().record("ret.accepted", accepted);
+        #[cfg(feature = "verbose-tracing")]
+        tracing::Span::current().record("ret.expiration", tracing::field::display(expiration));
         #[cfg(feature = "verbose-tracing")]
         tracing::Span::current().record("ret.peers.len", peers.len());
 
@@ -183,7 +201,7 @@ impl RPCProcessor {
             reply_private_route,
             WatchValueAnswer {
                 accepted,
-                expiration_ts: Timestamp::new(expiration),
+                expiration,
                 peers,
                 watch_id,
             },
@@ -195,30 +213,23 @@ impl RPCProcessor {
     #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
     pub(super) async fn process_watch_value_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
-        match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(_) | RPCMessageHeaderDetail::SafetyRouted(_) => {}
-            RPCMessageHeaderDetail::PrivateRouted(_) => {
-                return Ok(NetworkResult::invalid_message(
-                    "not processing watch value request over private route",
-                ))
-            }
+        if msg.header.is_private_routed() {
+            return Ok(NetworkResult::invalid_message(
+                "not processing watch value request over private route",
+            ));
         }
 
         // Ignore if disabled
         let routing_table = self.routing_table();
         let routing_domain = msg.header.routing_domain();
 
-        let has_capability_dht_and_watch = routing_table
+        let has_cap_dhtv = routing_table
             .get_published_peer_info(msg.header.routing_domain())
-            .map(|ppi| {
-                ppi.signed_node_info()
-                    .node_info()
-                    .has_all_capabilities(&[CAP_DHT, CAP_DHT_WATCH])
-            })
+            .map(|ppi| ppi.node_info().has_capability(VEILID_CAPABILITY_DHT))
             .unwrap_or(false);
-        if !has_capability_dht_and_watch {
+        if !has_cap_dhtv {
             return Ok(NetworkResult::service_unavailable(
-                "dht and dht_watch are not available",
+                "DHTV capability is not available",
             ));
         }
 
@@ -233,8 +244,17 @@ impl RPCProcessor {
         };
 
         // Destructure
-        let (key, subkeys, expiration, count, watch_id, watcher, _signature) =
-            watch_value_q.destructure();
+        let (opaque_record_key, subkeys, duration, count, watch_id) = watch_value_q.destructure();
+        let Some(watcher) = &msg.opt_signer else {
+            return Ok(NetworkResult::invalid_message("WatchValueQ must be signed"));
+        };
+
+        // Extract member id for watcher
+        let Ok(watcher_member_id) = self.storage_manager().generate_member_id(watcher) else {
+            return Ok(NetworkResult::invalid_message(
+                "could not generate member id for watcher public key",
+            ));
+        };
 
         // Get target for ValueChanged notifications
         let dest = network_result_try!(self.get_respond_to_destination(&msg));
@@ -248,12 +268,12 @@ impl RPCProcessor {
                 } else {
                     "".to_owned()
                 },
-                key,
+                opaque_record_key,
                 subkeys,
-                expiration,
+                duration,
                 count,
                 msg.header.direct_sender_node_id(),
-                watcher
+                watcher_member_id
             );
 
             veilid_log!(self debug target: "dht", "{}", debug_string);
@@ -261,56 +281,77 @@ impl RPCProcessor {
 
         // Get the nodes that we know about that are closer to the the key than our own node
         let closer_to_key_peers = network_result_try!(routing_table
-            .find_preferred_peers_closer_to_key(routing_domain, key, vec![CAP_DHT, CAP_DHT_WATCH]));
+            .find_reliable_peers_closer_to_key(
+                routing_domain,
+                opaque_record_key.to_hash_coordinate(),
+                vec![VEILID_CAPABILITY_DHT]
+            ));
 
-        // See if we would have accepted this as a set, same set_value_count for watches
-        let set_value_count = self
-            .config()
-            .with(|c| c.network.dht.set_value_count as usize);
+        // Calculate expiration
+        let expiration = if duration.is_zero() {
+            Timestamp::new(0)
+        } else {
+            Timestamp::now().later(duration)
+        };
+
+        // See if this is within the consensus width
+        let consensus_width = self.config().network.dht.consensus_width as usize;
+
         let (ret_accepted, ret_expiration, ret_watch_id) =
-            if closer_to_key_peers.len() >= set_value_count {
+            if closer_to_key_peers.len() >= consensus_width {
                 // Not close enough, not accepted
                 veilid_log!(self debug "Not close enough for watch value");
 
-                (false, 0, watch_id.unwrap_or_default())
+                (false, Timestamp::new(0), watch_id.unwrap_or_default())
             } else {
                 // Accepted, lets try to watch or cancel it
                 let params = InboundWatchParameters {
                     subkeys: subkeys.clone(),
-                    expiration: Timestamp::new(expiration),
+                    expiration,
                     count,
-                    watcher,
+                    watcher_member_id,
                     target,
                 };
 
                 // See if we have this record ourselves, if so, accept the watch
                 let storage_manager = self.storage_manager();
                 let watch_result = network_result_try!(storage_manager
-                    .inbound_watch_value(key, params, watch_id)
+                    .inbound_watch_value(opaque_record_key.clone(), params, watch_id)
                     .await
                     .map_err(RPCError::internal)?);
 
                 // Encode the watch result
                 // Rejections and cancellations are treated the same way by clients
                 let (ret_expiration, ret_watch_id) = match watch_result {
-                    InboundWatchResult::Created { id, expiration } => (expiration.as_u64(), id),
-                    InboundWatchResult::Changed { expiration } => {
-                        (expiration.as_u64(), watch_id.unwrap_or_default())
+                    InboundWatchValueResult::Created { id, expiration } => (expiration, id.into()),
+                    InboundWatchValueResult::Changed { expiration } => {
+                        (expiration, watch_id.unwrap_or_default())
                     }
-                    InboundWatchResult::Cancelled => (0, watch_id.unwrap_or_default()),
-                    InboundWatchResult::Rejected => (0, watch_id.unwrap_or_default()),
+                    InboundWatchValueResult::Cancelled => {
+                        (Timestamp::new(0), watch_id.unwrap_or_default())
+                    }
+                    InboundWatchValueResult::Rejected => {
+                        (Timestamp::new(0), watch_id.unwrap_or_default())
+                    }
                 };
                 (true, ret_expiration, ret_watch_id)
             };
 
+        // Calculate duration
+        let ret_duration = if ret_expiration.is_zero() {
+            TimestampDuration::new(0)
+        } else {
+            ret_expiration.duration_since(Timestamp::now())
+        };
+
         if debug_target_enabled!("dht") {
             let debug_string_answer = format!(
-                "IN ===> WatchValueA({}id={} {} #{} expiration={} peers={}) ==> {}",
+                "IN ===> WatchValueA({}id={} {} #{} @{} peers={}) ==> {}",
                 if ret_accepted { "+accept " } else { "" },
                 ret_watch_id,
-                key,
+                opaque_record_key,
                 subkeys,
-                ret_expiration,
+                ret_duration,
                 closer_to_key_peers.len(),
                 msg.header.direct_sender_node_id()
             );
@@ -321,7 +362,7 @@ impl RPCProcessor {
         // Make WatchValue answer
         let watch_value_a = RPCOperationWatchValueA::new(
             ret_accepted,
-            ret_expiration,
+            ret_duration,
             closer_to_key_peers,
             ret_watch_id,
         )?;
@@ -330,6 +371,7 @@ impl RPCProcessor {
         self.answer(
             msg,
             RPCAnswer::new(RPCAnswerDetail::WatchValueA(Box::new(watch_value_a))),
+            None,
         )
         .await
     }

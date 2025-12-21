@@ -20,7 +20,7 @@ use clap::{Args, Parser};
 use server::*;
 use settings::LogLevel;
 use tools::*;
-use veilid_core::{TypedNodeIdGroup, TypedSecretKeyGroup};
+use veilid_core::{PublicKeyGroup, SecretKeyGroup};
 use veilid_logs::*;
 
 #[derive(Args, Debug, Clone)]
@@ -98,20 +98,20 @@ pub struct CmdlineArgs {
     /// Specify either an remote tcp or ws url ('tcp://localhost:5149' or 'ws://localhost:5148')
     /// or '' or 'local' to specify using an internally spawned server
     #[cfg(feature = "virtual-network")]
-    #[arg(long, value_name = "URL", default_missing_value = "")]
+    #[arg(long, value_name = "URL", num_args=0..=1, require_equals=true, default_missing_value = "")]
     virtual_router: Option<String>,
 
-    /// Only generate a new keypair and print it
+    /// Generate keypairs and print them
     ///
     /// Generate a new keypair for a specific crypto kind and print both the key and its secret to the terminal, then exit immediately.
-    #[arg(long, value_name = "crypto_kind")]
-    generate_key_pair: Option<String>,
+    #[arg(long, value_name = "CRYPTO_KINDS", num_args=0..=1, require_equals=true, default_missing_value = "")]
+    generate_key_pairs: Option<String>,
 
-    /// Set the node ids and secret keys
+    /// Set the public and secret keys
     ///
-    /// Specify node ids in typed key set format ('\[VLD0:xxxx,VLD1:xxxx\]') on the command line, a prompt appears to enter the secret key set interactively.
-    #[arg(long, value_name = "NODE_IDS")]
-    set_node_id: Option<String>,
+    /// A prompt appears to enter the node's keypairs interactively, one per crypto kind, in the same format as --generate_key_pair
+    #[arg(long)]
+    set_key_pairs: bool,
 
     /// Delete the entire contents of the protected store (DANGER, NO UNDO!)
     #[arg(long)]
@@ -130,19 +130,19 @@ pub struct CmdlineArgs {
     dump_config: bool,
 
     /// Prints the bootstrap TXT record for this node and then quits
-    #[arg(long, value_name = "BOOTSTRAP_SIGNING_KEYPAIR")]
-    dump_txt_record: Option<String>,
+    #[arg(long)]
+    dump_txt_record: bool,
 
     /// Emits a JSON-Schema for a named type
-    #[arg(long, value_name = "schema_name")]
+    #[arg(long, value_name = "SCHEMA_NAME")]
     emit_schema: Option<String>,
 
     /// Specify a list of bootstrap hostnames to use
     #[arg(long, value_name = "BOOTSTRAP_LIST")]
     bootstrap: Option<String>,
 
-    /// Specify a list of bootstrap node ids to use
-    #[arg(long, value_name = "BOOTSTRAP_NODE_IDS_LIST")]
+    /// Specify a list of bootstrap signing keys to use
+    #[arg(long, value_name = "BOOTSTRAP_KEYS_LIST")]
     bootstrap_keys: Option<String>,
 
     /// Panic on ctrl-c instead of graceful shutdown
@@ -300,31 +300,82 @@ fn main() -> EyreResult<()> {
     if let Some(network_key) = args.network_key {
         settingsrw.core.network.network_key_password = Some(network_key);
     }
-    if args.dump_txt_record.is_some() {
+    if args.dump_txt_record {
         // Turn off terminal logging so we can be interactive
         settingsrw.logging.terminal.enabled = false;
     }
     let mut node_id_set = false;
-    if let Some(key_set) = args.set_node_id {
+    if args.set_key_pairs {
         if settingsrw.testing.subnode_count != 1 {
             bail!("subnode count must be 1 if setting node id/secret");
         }
 
         node_id_set = true;
+
         // Turn off terminal logging so we can be interactive
         settingsrw.logging.terminal.enabled = false;
 
-        // Split or get secret
-        let tks = TypedNodeIdGroup::from_str(&key_set)
-            .wrap_err("failed to decode node id set from command line")?;
+        println!(
+            "Enter node keypairs, one per cryptosystem per line (will not echo, empty line to finish): "
+        );
 
-        let buffer = rpassword::prompt_password("Enter secret key set (will not echo): ")
-            .wrap_err("invalid secret key")?;
-        let buffer = buffer.trim().to_string();
-        let tss = TypedSecretKeyGroup::from_str(&buffer).wrap_err("failed to decode secret set")?;
+        let keypairs = read_keypairs()?;
+        if keypairs.is_empty() {
+            println!("No keypairs specified. Generating random keypair...");
+            settingsrw.core.network.routing_table.public_keys = None;
+            settingsrw.core.network.routing_table.secret_keys = None;
+        } else {
+            println!(
+                "{} keypair{} specified.",
+                keypairs.len(),
+                if keypairs.len() == 1 { "" } else { "s" }
+            );
+            let mut pks = PublicKeyGroup::new();
+            let mut sks = SecretKeyGroup::new();
+            for kp in keypairs.iter() {
+                pks.add(kp.key());
+                sks.add(kp.secret());
+            }
+            settingsrw.core.network.routing_table.public_keys = Some(pks);
+            settingsrw.core.network.routing_table.secret_keys = Some(sks);
+        }
+    }
 
-        settingsrw.core.network.routing_table.node_id = Some(tks);
-        settingsrw.core.network.routing_table.node_id_secret = Some(tss);
+    // --- Generate DHT Key ---
+    if let Some(ckstr) = args.generate_key_pairs {
+        if ckstr.is_empty() {
+            for ck in veilid_core::VALID_CRYPTO_KINDS {
+                let tkp =
+                    veilid_core::Crypto::generate_keypair(ck).wrap_err("invalid crypto kind")?;
+                println!("{}", tkp);
+            }
+        } else {
+            for cks in ckstr.split(",") {
+                let ck: veilid_core::CryptoKind = veilid_core::CryptoKind::from_str(cks.trim())
+                    .wrap_err("couldn't parse crypto kind")?;
+                let tkp =
+                    veilid_core::Crypto::generate_keypair(ck).wrap_err("invalid crypto kind")?;
+                println!("{}", tkp);
+            }
+        }
+        return Ok(());
+    }
+
+    // -- Emit JSON-Schema --
+    if let Some(esstr) = args.emit_schema {
+        let mut schemas = HashMap::<String, String>::new();
+        veilid_remote_api::emit_schemas(&mut schemas);
+
+        if let Some(schema) = schemas.get(&esstr) {
+            println!("{}", schema);
+        } else {
+            eprintln!("No schema specified. Valid schemas:");
+            for s in schemas.keys() {
+                eprintln!("  {}", s);
+            }
+        }
+
+        return Ok(());
     }
 
     if let Some(bootstrap) = args.bootstrap {
@@ -339,16 +390,15 @@ fn main() -> EyreResult<()> {
         }
         if bootstrap_list != settingsrw.core.network.routing_table.bootstrap {
             settingsrw.core.network.routing_table.bootstrap = bootstrap_list;
-            settingsrw.core.network.routing_table.bootstrap_keys = vec![];
         }
     };
 
     if let Some(bootstrap_keys) = args.bootstrap_keys {
         println!("Overriding bootstrap keys with: ");
-        let mut bootstrap_keys_list: Vec<veilid_core::TypedPublicKey> = Vec::new();
+        let mut bootstrap_keys_list: Vec<veilid_core::PublicKey> = Vec::new();
         for x in bootstrap_keys.split(',') {
             let x = x.trim();
-            let key = match veilid_core::TypedPublicKey::from_str(x) {
+            let key = match veilid_core::PublicKey::from_str(x) {
                 Ok(v) => v,
                 Err(e) => {
                     bail!("Failed to parse bootstrap key: {}\n{}", e, x)
@@ -392,7 +442,10 @@ fn main() -> EyreResult<()> {
         settingsrw.core.network.protocol.udp.listen_address = listen_address.clone();
         settingsrw.core.network.protocol.tcp.listen_address = listen_address.clone();
         settingsrw.core.network.protocol.ws.listen_address = listen_address.clone();
-        settingsrw.core.network.protocol.wss.listen_address = listen_address;
+        #[cfg(feature = "enable-protocol-wss")]
+        {
+            settingsrw.core.network.protocol.wss.listen_address = listen_address;
+        }
     }
 
     drop(settingsrw);
@@ -422,57 +475,32 @@ fn main() -> EyreResult<()> {
             .wrap_err("failed to write yaml");
     }
 
-    // --- Generate DHT Key ---
-    if let Some(ckstr) = args.generate_key_pair {
-        if ckstr.is_empty() {
-            let mut tks = veilid_core::TypedPublicKeyGroup::new();
-            let mut tss = veilid_core::TypedSecretKeyGroup::new();
-            for ck in veilid_core::VALID_CRYPTO_KINDS {
-                let tkp =
-                    veilid_core::Crypto::generate_keypair(ck).wrap_err("invalid crypto kind")?;
-                tks.add(veilid_core::TypedPublicKey::new(tkp.kind, tkp.value.key));
-                tss.add(veilid_core::TypedSecretKey::new(tkp.kind, tkp.value.secret));
-            }
-            println!("Public Keys:\n{}\nSecret Keys:\n{}\n", tks, tss);
-        } else {
-            let ck: veilid_core::CryptoKind =
-                veilid_core::CryptoKind::from_str(&ckstr).wrap_err("couldn't parse crypto kind")?;
-            let tkp = veilid_core::Crypto::generate_keypair(ck).wrap_err("invalid crypto kind")?;
-            println!("{}", tkp);
-        }
-        return Ok(());
-    }
-
-    // -- Emit JSON-Schema --
-    if let Some(esstr) = args.emit_schema {
-        let mut schemas = HashMap::<String, String>::new();
-        veilid_remote_api::emit_schemas(&mut schemas);
-
-        if let Some(schema) = schemas.get(&esstr) {
-            println!("{}", schema);
-        } else {
-            println!("Valid schemas:");
-            for s in schemas.keys() {
-                println!("  {}", s);
-            }
-        }
-
-        return Ok(());
-    }
-
     // See if we're just running a quick command
     let (server_mode, success, failure) = if node_id_set {
         (
             ServerMode::ShutdownImmediate,
-            "Node Id and Secret set successfully",
-            "Failed to set Node Id and Secret",
+            "Key pairs set successfully",
+            "Failed to set key pairs",
         )
-    } else if let Some(skpstr) = args.dump_txt_record.as_ref() {
+    } else if args.dump_txt_record {
+        println!(
+            "Enter signing keypairs, one per cryptosystem per line (will not echo, empty line to finish): "
+        );
+
+        let keypairs = read_keypairs()?;
+        if keypairs.is_empty() {
+            println!("No keypairs specified, will only generate V0 TXT records.");
+        } else {
+            println!(
+                "{} keypair{} specified.",
+                keypairs.len(),
+                if keypairs.len() == 1 { "" } else { "s" }
+            );
+        }
+
+        println!("Dumping...");
         (
-            ServerMode::DumpTXTRecord(
-                veilid_core::TypedKeyPair::from_str(skpstr)
-                    .expect("should be valid typed key pair"),
-            ),
+            ServerMode::DumpTXTRecord(keypairs),
             "",
             "Failed to dump bootstrap TXT record",
         )

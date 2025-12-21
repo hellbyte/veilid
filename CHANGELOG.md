@@ -1,5 +1,66 @@
-**UNRELEASED**
+**Changed in Veilid 0.5.0**
 
+- _0.5.0 BREAKING CHANGES_
+  - Many on-the-wire encoding changes: [#453](https://gitlab.com/veilid/veilid/-/issues/453)
+  - Rename crypto types: [#463](https://gitlab.com/veilid/veilid/-/issues/463)
+    - {CryptoBytes} -> Bare{CryptoBytes}
+    - Typed{CryptoBytes} -> {CryptoBytes} [#465](https://gitlab.com/veilid/veilid/-/issues/465)
+  - Handle NotInSchema:
+    -  switch match alternative failures and list decode failures to `RPCError::Ignore` from `RPCError::Protocol` to keep from punishing newer nodes
+    - add `.ignore_ok()` trait that makes it easy to 'soft fail' `RPCError::Ignore`
+    - add `rpc_ignore_*` macros
+    - canonicalize coders' handling of lengths
+  - Envelope and Receipt versions are now FOURCC codes to allow for parallel development of on-the-wire protocols
+  - Rename `api_startup_config` -> `api_startup`, and remove the ability to configure the VeilidAPI using a callback.
+
+- _BREAKING API CHANGES_:
+  - Eliminated DHTW capability, merged into DHTV capability, now there is only one DHT enabling/disabling capability and all operations are part of it
+  - Crypto / CryptoSystem functions now use typed keys everywhere (#483)
+  - Eliminated 'best' `CryptoKind` concept, crypto kinds must now be explicitly stated, otherwise upgrades of veilid-core that change the 'best' `CryptoKind` could break functionality silently.
+  - Encryption is enabled by default for all DHT operations, closes [#300](https://gitlab.com/veilid/veilid/-/issues/300) (@neequ57)
+  - Deprecation of WSS config and removal of Application config
+  - Use `VeilidAPIError` type for `ProtectedStore` functions [#480](https://gitlab.com/veilid/veilid/-/issues/480)
+  - `get_dht_record_key` moved to `VeilidAPI` from `RoutingContext`, because it does not use the network
+  - `TableDBTransaction::store` and `delete` are now async
+  - WASM identifier names changed to camelCase, numerous structural changes, many types are now classes, no more string marshaling
+
+- veilid-core:
+  - Hop counts removed from private routes [#466](https://gitlab.com/veilid/veilid/-/issues/466)
+  - Added `SequenceOrdering` enum to represent ordering mode for protocols rather than a bool
+  - `RecordKey`s are now validated on both server side and client side of DHT RPC operations, closes [#299](https://gitlab.com/veilid/veilid/-/issues/299)
+  - Revert punishment for FailedToVerifySenderPeerInfo, with a better peer info filter, fixes [#470](https://gitlab.com/veilid/veilid/-/issues/470)
+  - Update keyring-manager to eliminate licensing issue
+  - Added 'tick lag' detection to check for missed watch updates
+  - Added 'DHT Widening', separates consensus width (server side dht operation acceptance) from consensus count (client side), fixes [#435](https://gitlab.com/veilid/veilid/-/issues/435)
+  - Deprecation of WSS protocol, closes [#487](https://gitlab.com/veilid/veilid/-/issues/487)
+  - Move node id and public key init to routing table
+  - VeilidConfig is now read-only and no longer requires a lock [#485](https://gitlab.com/veilid/veilid/-/issues/485)
+  - Make `Timestamp::now()` monotonically increasing
+  - Add `EnvelopeInfo` tracking, implementing clock drift detection [#416](https://gitlab.com/veilid/veilid/-/issues/416)
+  - Improved hairpin NAT handling for contact methods
+  - `StorageManager::set_value` now caches if it sent a descriptor [#203](https://gitlab.com/veilid/veilid/-/issues/203)
+  - `ValueSeqNum` is now a type-safe newtype struct
+  - Safety routes are now twice the length when accessing a node directly [#361](https://gitlab.com/veilid/veilid/-/issues/361)
+  - DHT Transactions support now exists. Multiple subkeys over multiple records can not be operated on in a single atomic commit. [#364](https://gitlab.com/veilid/veilid/-/issues/364)
+  - RecordStore and StorageManager global locks have been split into per-subkey locks allowing greater parallelism.
+  - RecordStore index now has more metadata and will require a one-time 'repair' delay to the tabledb upon starting a node if it contained record data created before 0.5.0. If the node doesn't start immediately, don't panic. :)
+
+- veilid_flutter:
+  - Android NDK version requirement is now 28.2.13676358
+  - Android Gradle version is now 8.13.2
+
+- veilid-python:
+  - Migrated to 'uv' from 'poetry'
+
+- veilid-server:
+  - Improved ergonomics for `--dump-txt-record`, `--generate-key-pairs`, and `--set-key-pairs`
+
+- veilid-tools:
+  - Rename `get_timestamp()` -> `get_raw_timestamp()` for clarity
+
+- veilid-wasm:
+  - Reorganize crate and add `js` and `dart` features to enable different target bindings
+  - Revamp bindings for `js` to eliminate excessive strings and improve marshaling
 
 **Changed in Veilid 0.4.8**
 
@@ -79,16 +140,16 @@
   - watch_dht_values() now returns a bool rather than an expiration timestamp. Expiration renewal is now managed by veilid-core internally. Apps no longer need to renew watches!
   - inspect_dht_record() and cancel_dht_watch() now take an Option<ValueSubkeyRangeSet> instead of just a ValueSubkeyRangeSet, to make things easier for automatic binding generation someday and to remove ambiguities about the semantics of the default empty set.
   - DHTRecordReport now uses a `Vec<Option<ValueSubkey>>` for seq lists, rather than using the 'ValueSubkey::MAX' sentinel value (0xFFFFFFFF) to represent a missing subkey
-  - Renamed config structs to better describe their purpose, and remove "Inner" from a struct that's being exposed via the API. ([!402](https://gitlab.com/veilid/veilid/-/merge_requests/402))
+  - Renamed config structs to better describe their purpose, and remove "Inner" from a struct that's being exposed via the API. [!402](https://gitlab.com/veilid/veilid/-/merge_requests/402)
     - `VeilidConfig` -> `VeilidStartupOptions`
     - `VeilidConfigInner` -> `VeilidConfig`
-  - Gate insecure capabilities behind the new `footgun` feature flag ([#394](https://gitlab.com/veilid/veilid/-/issues/394)), which is disabled by default. ([!400](https://gitlab.com/veilid/veilid/-/merge_requests/400))
+  - Gate insecure capabilities behind the new `footgun` feature flag [#394](https://gitlab.com/veilid/veilid/-/issues/394), which is disabled by default. [!400](https://gitlab.com/veilid/veilid/-/merge_requests/400)
     - Calling `app_call` or `app_message` with a `NodeId` target will throw an error. Use a `PrivateRoute` target instead.
     - Creating an `Unsafe` routing context will throw and error. Use `Safe` routing context instead.
     - Any AppCall or AppMessage sent from a direct NodeId will not be received.
 
 - veilid-core:
-  - **Security** Signed bootstrap v1 added which closes #293: https://gitlab.com/veilid/veilid/-/issues/293
+  - **Security** Signed bootstrap v1 added which closes [#293](https://gitlab.com/veilid/veilid/-/issues/293)
   - Allow shutdown even if tables are closed
   - New, more robust, watchvalue implementation
   - Consensus is now counted from the nodes closest to the key, excluding attempts that have failed, but including new nodes that show up, requiring N out of the M closest nodes to have succeeded and all have been attempted.
@@ -96,34 +157,34 @@
   - Fanout queue disqualifaction for distance-based rejections reimplemented
   - Local rehydration implemented. DHT record subkey data that does not have sufficient consensus online is re-pushed to keep it alive when records are opened.
   - Direct bootstrap v0 now filters out Relayed nodes correctly
-  - Closed issue #400: https://gitlab.com/veilid/veilid/-/issues/400
-  - Closed issue #377: https://gitlab.com/veilid/veilid/-/issues/377
-  - Add the `veilid_features()` API, which lists the compile-time features that were enabled when `veilid-core` was built (available in language bindings as well). ([!401](https://gitlab.com/veilid/veilid/-/issues/400))
-  - When `veilid-core` starts up, log the version number, and the compile-time features that were enabled when it was built. ([!401](https://gitlab.com/veilid/veilid/-/issues/400))
-  - Closed issue #448: https://gitlab.com/veilid/veilid/-/issues/448
-  - Add background flush for routing table and route spec store, to address issue #449: https://gitlab.com/veilid/veilid/-/issues/449
+  - Closed issue [#400](https://gitlab.com/veilid/veilid/-/issues/400)
+  - Closed issue [#377](https://gitlab.com/veilid/veilid/-/issues/377)
+  - Add the `veilid_features()` API, which lists the compile-time features that were enabled when `veilid-core` was built (available in language bindings as well). [#401](https://gitlab.com/veilid/veilid/-/issues/400)
+  - When `veilid-core` starts up, log the version number, and the compile-time features that were enabled when it was built. [#401](https://gitlab.com/veilid/veilid/-/issues/400)
+  - Closed issue [#448](https://gitlab.com/veilid/veilid/-/issues/448)
+  - Add background flush for routing table and route spec store, to address issue [#449](https://gitlab.com/veilid/veilid/-/issues/449)
 
 - veilid-flutter:
   - Bindings updated for API changes
-  - Corrosion version in cmake build for linux and windows updated to 0.5.1: https://gitlab.com/veilid/veilid/-/issues/447
-  - Expose the isShutdown API: https://gitlab.com/veilid/veilid/-/merge_requests/392
+  - Corrosion version in cmake build for linux and windows updated to 0.5.1: [#447](https://gitlab.com/veilid/veilid/-/issues/447)
+  - Expose the isShutdown API: [!392](https://gitlab.com/veilid/veilid/-/merge_requests/392)
 
 - veilid-python:
   - Fix type assertion bug in watch_dht_values
   - Update watchvalue integration tests
-  - Expose the is_shutdown API: https://gitlab.com/veilid/veilid/-/merge_requests/392
+  - Expose the is_shutdown API [!392](https://gitlab.com/veilid/veilid/-/merge_requests/392)
 
 - veilid-server:
-  - Put tokio-console behind a feature flag. Closed issue #274: https://gitlab.com/veilid/veilid/-/issues/274
-  - Fixed 'daemon' mode `-d` option. Closed issue #360: https://gitlab.com/veilid/veilid/-/issues/360
+  - Put tokio-console behind a feature flag. Closed issue [#274]( https://gitlab.com/veilid/veilid/-/issues/274)
+  - Fixed 'daemon' mode `-d` option. Closed issue [#360](https://gitlab.com/veilid/veilid/-/issues/360)
 
 - veilid-wasm:
-  - **Breaking** Properly generate TypeScript types for `ValueSubkeyRangeSet`, which would previously resolve to `any`. This is breaking since it can cause type errors to correctly surface in existing applications. ([!397](https://gitlab.com/veilid/veilid/-/merge_requests/397))
+  - **Breaking** Properly generate TypeScript types for `ValueSubkeyRangeSet`, which would previously resolve to `any`. This is breaking since it can cause type errors to correctly surface in existing applications. [!397](https://gitlab.com/veilid/veilid/-/merge_requests/397)
   - **Breaking** `startupCore()` and `defaultConfig()` now use config objects instead of stringified JSON.
-    - `veilidClient.startupCore(callback, JSON.stringify(config))` now becomes `veilidClient.startupCore(callback, config)`. ([!402](https://gitlab.com/veilid/veilid/-/merge_requests/402))
+    - `veilidClient.startupCore(callback, JSON.stringify(config))` now becomes `veilidClient.startupCore(callback, config)`. [!402](https://gitlab.com/veilid/veilid/-/merge_requests/402)
     - `JSON.parse(veilidClient.defaultConfig())` is now `veilidClient.defaultConfig()`
     - The `VeilidConfigInner` type is now `VeilidConfig`.
-  - Expose the isShutdown API: https://gitlab.com/veilid/veilid/-/merge_requests/392
+  - Expose the isShutdown API: [#392](https://gitlab.com/veilid/veilid/-/merge_requests/392)
 
 - CI:
   - Ensure Cargo.lock is up-to-date during CI pipelines
@@ -218,7 +279,7 @@ veilid-flutter:
 - rust-android-gradle upgraded to 0.9.6
 - Kotlin version is now 1.9.25
 - API added for create_dht_record with 'owner'
-  - Breaking change: https://gitlab.com/veilid/veilid/-/merge_requests/353
+  - Breaking change: [!353](https://gitlab.com/veilid/veilid/-/merge_requests/353)
 
 veilid-cli:
 - You can now switch between subnodes easily with the 'connect <N>' command where N is the subnode id
@@ -229,13 +290,13 @@ veilid-server:
 - Turn off detect_address_changes and upnp by default
 
 veilid-wasm:
-- (bgrift) Merged !352 - WASM supports owner on createDhtRecord, also added the getDhtRecordKey function
-  - Breaking change: https://gitlab.com/veilid/veilid/-/merge_requests/352
+- (bgrift) Merged [!352](https://gitlab.com/veilid/veilid/-/merge_requests/352) - WASM supports owner on createDhtRecord, also added the getDhtRecordKey function
+  - Breaking change: [!352](https://gitlab.com/veilid/veilid/-/merge_requests/352)
 - Fixes for heavy sync crypto code, optimizations in debug mode, wasm tests went from 731 seconds to 112 seconds
 
 veilid-python:
 - API added for create_dht_record with 'owner'
-  - Breaking change: https://gitlab.com/veilid/veilid/-/merge_requests/353
+  - Breaking change:[!353](https://gitlab.com/veilid/veilid/-/merge_requests/353)
 - api_connector() now attempts IPC connection to veilid-server before trying port 5959 tcp
 - dependencies corrected for pypi package
 
@@ -258,7 +319,7 @@ general:
 - Fix deadlock in peer info change event
 - Fix incorrect node info equivalence check
 - Ping relays every second instead of every 10 seconds
-- MR !328 'tiny improvements'
+- MR [!328](https://gitlab.com/veilid/veilid/-/merge_requests/328) 'tiny improvements'
 
 **Changed in Veilid 0.4.0**
 
@@ -270,7 +331,7 @@ general:
   - Publish should happen after relay selection as well
   - Publish should happen if the relay's peerinfo has changed
   - Publish should not do anything if the peerinfo hasn't changed
-  - PeerInfo -> Arc<PeerInfo> everywhere to minimize deep clones and ensure read-only PeerInfo
+  - `PeerInfo` -> `Arc<PeerInfo>` everywhere to minimize deep clones and ensure read-only PeerInfo
   - Routing domain editing is now more atomic
   - When a node selects a relay it now immediately protects its connections.
   - Made dial info port (for port restricted nat) more resilient to changes, in the case there are multiple mappings
@@ -340,7 +401,7 @@ general:
 - Improved punishment and state
   - Create 'reasons' for dead and unreliable states
   - Make 'punished' its own state
-  - Closes issue #281
+  - Closes issue [#281](https://gitlab.com/veilid/veilid/-/issues/281)
   - Fixes an issue with reliable nodes being marked as 'dead' unjustly
 - _Community Contributions_
   - Fixed memory leak in Windows DNS resolver @kyanha
@@ -380,16 +441,16 @@ general:
   - InspectRecord RPC support
   - RoutingContext now defaults to Reliable and EnsureOrdered modes
   - generate_shared_secret added that abstracts DH and ensures domain separation
-- Closed #357 - AppCall and AppMessage now have private route information
+- Closed [#357](https://gitlab.com/veilid/veilid/-/issues/357) - AppCall and AppMessage now have private route information
 - Logging: Log facilities now can be enabled and disabled at runtime
 - Logging: Log facility added for DHT, network results, and API calls
-- CLI: Closed #358 - veilid-cli now has 'interactive' (-i), 'log viewer' (-l) and 'execute command' (-e) command line options
+- CLI: Closed [#358](https://gitlab.com/veilid/veilid/-/issues/357) - veilid-cli now has 'interactive' (-i), 'log viewer' (-l) and 'execute command' (-e) command line options
 - Testing: veilid-flutter now has integration tests of its own that work like the veilid-python unit tests
 - Network: Failures to hole-punch UDP or reverse-connect TCP or UDP now falls back to inbound relaying
 - Bugfix: Signal handling for unix-like platforms was not handling SIGTERM correctly
 - Bugfix: Restarting veilid-server quickly might result in failures to bind()
-- Bugfix: Closed #359 - Block node identity from DHT record schema owner/writer
-- Bugfix: Closed #355 - Fixed memory error reading macos/ios interfaces list
+- Bugfix: Closed [#359](https://gitlab.com/veilid/veilid/-/issues/357) - Block node identity from DHT record schema owner/writer
+- Bugfix: Closed [#355](https://gitlab.com/veilid/veilid/-/issues/357) - Fixed memory error reading macos/ios interfaces list
 - _Community Contributions_
   - Made private route allocation bidirectional by default @kyanha
   - Use $CI_REGISTRY_IMAGE for the registry path @SalvatoreT

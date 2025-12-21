@@ -1,6 +1,7 @@
 mod tcp;
 mod udp;
 mod ws;
+#[cfg(feature = "enable-protocol-wss")]
 mod wss;
 
 use super::*;
@@ -8,21 +9,31 @@ use super::*;
 pub(crate) use tcp::*;
 pub(crate) use udp::*;
 pub(crate) use ws::*;
+#[cfg(feature = "enable-protocol-wss")]
 pub(crate) use wss::*;
 
 // Keep member order appropriate for sorting < preference
 // Must match ProtocolType order
-#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, PartialOrd, Ord, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub(crate) enum DialInfo {
     UDP(DialInfoUDP),
     TCP(DialInfoTCP),
     WS(DialInfoWS),
+    #[cfg(feature = "enable-protocol-wss")]
     WSS(DialInfoWSS),
 }
 impl Default for DialInfo {
     fn default() -> Self {
         DialInfo::UDP(DialInfoUDP::default())
+    }
+}
+
+impl fmt::Debug for DialInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // always use display for debug variant because everything about the
+        // dialinfo is always in the full printed version and it makes debugging less verbose
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -47,6 +58,7 @@ impl fmt::Display for DialInfo {
                     }
                 }
             }
+            #[cfg(feature = "enable-protocol-wss")]
             DialInfo::WSS(di) => {
                 let url = format!("wss://{}", di.request);
                 let split_url = SplitUrl::from_str(&url).unwrap();
@@ -110,6 +122,7 @@ impl FromStr for DialInfo {
                     }
                 }
             }
+            #[cfg(feature = "enable-protocol-wss")]
             "wss" => {
                 let url = format!("wss://{}", rest);
                 let split_url = SplitUrl::from_str(&url).map_err(|e| {
@@ -191,6 +204,7 @@ impl DialInfo {
             request: url[5..].to_string(),
         }))
     }
+    #[cfg(feature = "enable-protocol-wss")]
     pub fn try_wss(socket_address: SocketAddress, url: String) -> VeilidAPIResult<Self> {
         let split_url = SplitUrl::from_str(&url).map_err(|e| {
             VeilidAPIError::parse_error(format!("unable to split WSS url: {}", e), &url)
@@ -220,6 +234,7 @@ impl DialInfo {
             Self::UDP(_) => ProtocolType::UDP,
             Self::TCP(_) => ProtocolType::TCP,
             Self::WS(_) => ProtocolType::WS,
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(_) => ProtocolType::WSS,
         }
     }
@@ -231,6 +246,7 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address.address(),
             Self::TCP(di) => di.socket_address.address(),
             Self::WS(di) => di.socket_address.address(),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.address(),
         }
     }
@@ -240,6 +256,7 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address.set_address(address),
             Self::TCP(di) => di.socket_address.set_address(address),
             Self::WS(di) => di.socket_address.set_address(address),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.set_address(address),
         }
     }
@@ -248,6 +265,7 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address,
             Self::TCP(di) => di.socket_address,
             Self::WS(di) => di.socket_address,
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address,
         }
     }
@@ -256,15 +274,16 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address.ip_addr(),
             Self::TCP(di) => di.socket_address.ip_addr(),
             Self::WS(di) => di.socket_address.ip_addr(),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.ip_addr(),
         }
     }
-    #[expect(dead_code)]
     pub fn port(&self) -> u16 {
         match self {
             Self::UDP(di) => di.socket_address.port(),
             Self::TCP(di) => di.socket_address.port(),
             Self::WS(di) => di.socket_address.port(),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.port(),
         }
     }
@@ -274,6 +293,7 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address.set_port(port),
             Self::TCP(di) => di.socket_address.set_port(port),
             Self::WS(di) => di.socket_address.set_port(port),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.set_port(port),
         }
     }
@@ -282,6 +302,7 @@ impl DialInfo {
             Self::UDP(di) => di.socket_address.socket_addr(),
             Self::TCP(di) => di.socket_address.socket_addr(),
             Self::WS(di) => di.socket_address.socket_addr(),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => di.socket_address.socket_addr(),
         }
     }
@@ -290,6 +311,7 @@ impl DialInfo {
             Self::UDP(di) => PeerAddress::new(di.socket_address, ProtocolType::UDP),
             Self::TCP(di) => PeerAddress::new(di.socket_address, ProtocolType::TCP),
             Self::WS(di) => PeerAddress::new(di.socket_address, ProtocolType::WS),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => PeerAddress::new(di.socket_address, ProtocolType::WSS),
         }
     }
@@ -298,6 +320,7 @@ impl DialInfo {
             Self::UDP(_) => None,
             Self::TCP(_) => None,
             Self::WS(di) => Some(format!("ws://{}", di.request)),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::WSS(di) => Some(format!("wss://{}", di.request)),
         }
     }
@@ -316,7 +339,7 @@ impl DialInfo {
     }
 
     pub fn ordered_sequencing_sort(a: &DialInfo, b: &DialInfo) -> core::cmp::Ordering {
-        let s = ProtocolType::ordered_sequencing_sort(a.protocol_type(), b.protocol_type());
+        let s = ProtocolType::ordered_sequencing_sort(&a.protocol_type(), &b.protocol_type());
         if s != core::cmp::Ordering::Equal {
             return s;
         }
@@ -324,6 +347,7 @@ impl DialInfo {
             (DialInfo::UDP(a), DialInfo::UDP(b)) => a.cmp(b),
             (DialInfo::TCP(a), DialInfo::TCP(b)) => a.cmp(b),
             (DialInfo::WS(a), DialInfo::WS(b)) => a.cmp(b),
+            #[cfg(feature = "enable-protocol-wss")]
             (DialInfo::WSS(a), DialInfo::WSS(b)) => a.cmp(b),
             _ => unreachable!(),
         }

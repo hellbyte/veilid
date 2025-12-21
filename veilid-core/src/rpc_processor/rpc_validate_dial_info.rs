@@ -5,6 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Can only be sent directly, not via relays or routes
     #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
     pub async fn rpc_call_validate_dial_info(
         &self,
         peer: NodeRef,
@@ -24,9 +25,8 @@ impl RPCProcessor {
 
         let network_manager = self.network_manager();
 
-        let validate_dial_info_receipt_time_ms = self
-            .config()
-            .with(|c| c.network.dht.validate_dial_info_receipt_time_ms as u64);
+        let validate_dial_info_receipt_time_ms =
+            self.config().network.dht.validate_dial_info_receipt_time_ms as u64;
 
         let receipt_time = TimestampDuration::new_ms(validate_dial_info_receipt_time_ms);
 
@@ -42,7 +42,7 @@ impl RPCProcessor {
 
         // Send the validate_dial_info request
         // This can only be sent directly, as relays can not validate dial info
-        network_result_value_or_log!(self self.statement(Destination::direct(peer.default_filtered()), statement)
+        network_result_value_or_log!(self self.statement(Destination::direct(peer.default_filtered()), statement, None, None)
             .await? => [ format!(": peer={} statement={:?}", peer, statement) ] {
                 return Ok(false);
             }
@@ -103,10 +103,9 @@ impl RPCProcessor {
         let has_capability_validate_dial_info = routing_table
             .get_published_peer_info(routing_domain)
             .map(|ppi| {
-                ppi.signed_node_info()
-                    .node_info()
-                    .has_capability(CAP_VALIDATE_DIAL_INFO)
-                    && ppi.signed_node_info().node_info().is_fully_direct_inbound()
+                ppi.node_info()
+                    .has_capability(VEILID_CAPABILITY_VALIDATE_DIAL_INFO)
+                    && ppi.node_info().is_fully_direct_inbound()
             })
             .unwrap_or(false);
         if !has_capability_validate_dial_info {
@@ -131,11 +130,9 @@ impl RPCProcessor {
             // We filter on the -outgoing- protocol capability status not the node's dial info
             // Use the address type though, to ensure we reach an ipv6 capable node if this is
             // an ipv6 address
-            let sender_node_id = detail.envelope.get_sender_typed_id();
+            let sender_node_id = detail.envelope.get_sender_id();
             let routing_domain = detail.routing_domain;
-            let node_count = self
-                .config()
-                .with(|c| c.network.dht.max_find_node_count as usize);
+            let node_count = self.config().network.dht.max_find_node_count as usize;
 
             // Filter on nodes that can validate dial info, and can reach a specific dial info
             let outbound_dial_info_entry_filter =
@@ -144,12 +141,12 @@ impl RPCProcessor {
                     dial_info.clone(),
                 );
             let will_validate_dial_info_filter = Box::new(
-                move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
+                move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                     let entry = v.unwrap();
                     entry.with(rti, move |_rti, e| {
                         e.node_info(routing_domain)
                             .map(|ni| {
-                                ni.has_capability(CAP_VALIDATE_DIAL_INFO)
+                                ni.has_capability(VEILID_CAPABILITY_VALIDATE_DIAL_INFO)
                                     && ni.is_fully_direct_inbound()
                             })
                             .unwrap_or(false)
@@ -189,7 +186,7 @@ impl RPCProcessor {
 
                 // Send the validate_dial_info request
                 // This can only be sent directly, as relays can not validate dial info
-                network_result_value_or_log!(self pin_future_closure!(self.statement(Destination::direct(peer.default_filtered()), statement))
+                network_result_value_or_log!(self pin_future_closure!(self.statement(Destination::direct(peer.default_filtered()), statement, None, None))
                     .await? => [ format!(": peer={} statement={:?}", peer, statement) ] {
                         continue;
                     }

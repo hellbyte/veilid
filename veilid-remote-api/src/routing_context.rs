@@ -27,47 +27,47 @@ pub enum RoutingContextRequestOp {
     },
     Safety,
     AppCall {
-        target: String,
+        target: Target,
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
         message: Vec<u8>,
     },
     AppMessage {
-        target: String,
+        target: Target,
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
         message: Vec<u8>,
     },
     CreateDhtRecord {
+        #[schemars(with = "String")]
+        kind: CryptoKind,
         schema: DHTSchema,
         #[schemars(with = "Option<String>")]
         owner: Option<KeyPair>,
-        #[schemars(with = "Option<String>")]
-        kind: Option<CryptoKind>,
     },
     OpenDhtRecord {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         #[schemars(with = "Option<String>")]
         writer: Option<KeyPair>,
     },
     CloseDhtRecord {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
     },
     DeleteDhtRecord {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
     },
     GetDhtValue {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         subkey: ValueSubkey,
         force_refresh: bool,
     },
     SetDhtValue {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         subkey: ValueSubkey,
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
@@ -76,19 +76,19 @@ pub enum RoutingContextRequestOp {
     },
     WatchDhtValues {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         subkeys: Option<ValueSubkeyRangeSet>,
         expiration: Option<Timestamp>,
         count: Option<u32>,
     },
     CancelDhtWatch {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         subkeys: Option<ValueSubkeyRangeSet>,
     },
     InspectDhtRecord {
         #[schemars(with = "String")]
-        key: TypedRecordKey,
+        key: RecordKey,
         subkeys: Option<ValueSubkeyRangeSet>,
         #[schemars(default)]
         scope: DHTReportScope,

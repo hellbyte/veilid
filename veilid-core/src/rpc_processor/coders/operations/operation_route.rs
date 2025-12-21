@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Clone)]
 pub(in crate::rpc_processor) struct RoutedOperation {
-    routing_domain: RoutingDomain,
+    origin_routing_domain: RoutingDomain,
     sequencing: Sequencing,
     signatures: Vec<Signature>,
     nonce: Nonce,
@@ -12,7 +12,7 @@ pub(in crate::rpc_processor) struct RoutedOperation {
 impl fmt::Debug for RoutedOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RoutedOperation")
-            .field("routing_domain", &self.routing_domain)
+            .field("origin_routing_domain", &self.origin_routing_domain)
             .field("sequencing", &self.sequencing)
             .field("signatures.len", &self.signatures.len())
             .field("nonce", &self.nonce)
@@ -25,23 +25,27 @@ impl RoutedOperation {
     pub fn new(
         routing_domain: RoutingDomain,
         sequencing: Sequencing,
+        signatures: Vec<Signature>,
         nonce: Nonce,
         data: Vec<u8>,
-    ) -> Self {
-        Self {
-            routing_domain,
+    ) -> Result<Self, RPCError> {
+        if signatures.len() > MAX_CRYPTO_KINDS {
+            return Err(RPCError::protocol("too many signatures"));
+        }
+        Ok(Self {
+            origin_routing_domain: routing_domain,
             sequencing,
-            signatures: Vec::new(),
+            signatures,
             nonce,
             data,
-        }
+        })
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         //xxx
         Ok(())
     }
     pub fn routing_domain(&self) -> RoutingDomain {
-        self.routing_domain
+        self.origin_routing_domain
     }
     pub fn sequencing(&self) -> Sequencing {
         self.sequencing
@@ -50,8 +54,12 @@ impl RoutedOperation {
         &self.signatures
     }
 
-    pub fn add_signature(&mut self, signature: Signature) {
+    pub fn add_signature(&mut self, signature: Signature) -> Result<(), RPCError> {
+        if self.signatures.len() >= MAX_CRYPTO_KINDS {
+            return Err(RPCError::protocol("too many signatures"));
+        }
         self.signatures.push(signature);
+        Ok(())
     }
 
     pub fn nonce(&self) -> &Nonce {
@@ -61,7 +69,7 @@ impl RoutedOperation {
         &self.data
     }
 
-    // pub fn destructure(self) -> (Sequencing, Vec<Signature>, Nonce, Vec<u8>) {
+    // pub fn destructure(self) -> (Sequencing, Vec<BareSignature>, BareNonce, Vec<u8>) {
     //     (self.sequencing, self.signatures, self.nonce, self.data)
     // }
 
@@ -69,7 +77,8 @@ impl RoutedOperation {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::routed_operation::Reader,
     ) -> Result<Self, RPCError> {
-        let sigs_reader = reader.get_signatures().map_err(RPCError::protocol)?;
+        rpc_ignore_missing_property!(reader, signatures);
+        let sigs_reader = reader.get_signatures()?;
         let mut signatures = Vec::<Signature>::with_capacity(
             sigs_reader
                 .len()
@@ -77,22 +86,26 @@ impl RoutedOperation {
                 .map_err(RPCError::map_internal("too many signatures"))?,
         );
         for s in sigs_reader.iter() {
-            let sig = decode_signature512(&s);
+            let Some(sig) = decode_signature(&s).ignore_ok()? else {
+                continue;
+            };
             signatures.push(sig);
         }
 
-        let sequencing = decode_sequencing(reader.get_sequencing().map_err(RPCError::protocol)?);
-        let n_reader = reader.get_nonce().map_err(RPCError::protocol)?;
-        let nonce = decode_nonce(&n_reader);
-        let data = reader.get_data().map_err(RPCError::protocol)?;
+        let sequencing = decode_sequencing(reader.get_sequencing())?;
+        rpc_ignore_missing_property!(reader, nonce);
+        let n_reader = reader.get_nonce()?;
+        let nonce = decode_nonce(&n_reader)?;
+        rpc_ignore_missing_property!(reader, data);
+        let data = reader.get_data()?;
 
-        Ok(Self {
-            routing_domain: decode_context.routing_domain,
+        Self::new(
+            decode_context.origin_routing_domain,
             sequencing,
             signatures,
             nonce,
-            data: data.to_vec(),
-        })
+            data.to_vec(),
+        )
     }
 
     pub fn encode(
@@ -110,7 +123,7 @@ impl RoutedOperation {
         );
         for (i, sig) in self.signatures.iter().enumerate() {
             let mut sig_builder = sigs_builder.reborrow().get(i as u32);
-            encode_signature512(sig, &mut sig_builder);
+            encode_signature(sig, &mut sig_builder);
         }
         let mut n_builder = builder.reborrow().init_nonce();
         encode_nonce(&self.nonce, &mut n_builder);
@@ -133,7 +146,7 @@ impl RPCOperationRoute {
             operation,
         }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         self.operation.validate(validate_context)
     }
 
@@ -151,10 +164,12 @@ impl RPCOperationRoute {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_route::Reader,
     ) -> Result<Self, RPCError> {
-        let sr_reader = reader.get_safety_route().map_err(RPCError::protocol)?;
+        rpc_ignore_missing_property!(reader, safety_route);
+        let sr_reader = reader.get_safety_route()?;
         let safety_route = decode_safety_route(decode_context, &sr_reader)?;
 
-        let o_reader = reader.get_operation().map_err(RPCError::protocol)?;
+        rpc_ignore_missing_property!(reader, operation);
+        let o_reader = reader.get_operation()?;
         let operation = RoutedOperation::decode(decode_context, &o_reader)?;
 
         Ok(Self {

@@ -23,6 +23,9 @@ pub use table_db::*;
 mod crypto_system;
 pub use crypto_system::*;
 
+mod dht_transaction;
+pub use dht_transaction::*;
+
 mod process;
 pub use process::*;
 
@@ -63,6 +66,17 @@ pub enum RequestOp {
     IsShutdown,
     Attach,
     Detach,
+    GenerateMemberId {
+        #[schemars(with = "String")]
+        writer_key: PublicKey,
+    },
+    GetDhtRecordKey {
+        schema: DHTSchema,
+        #[schemars(with = "String")]
+        owner: PublicKey,
+        #[schemars(with = "Option<String>")]
+        encryption_key: Option<SharedSecret>,
+    },
     NewPrivateRoute,
     NewCustomPrivateRoute {
         #[schemars(with = "Vec<String>")]
@@ -91,6 +105,13 @@ pub enum RequestOp {
     // Routing Context
     NewRoutingContext,
     RoutingContext(RoutingContextRequest),
+    // DHT Transaction
+    TransactDhtRecords {
+        #[schemars(with = "Vec<String>")]
+        record_keys: Vec<RecordKey>,
+        options: Option<TransactDHTRecordsOptions>,
+    },
+    DhtTransaction(DhtTransactionRequest),
     // TableDb
     OpenTableDb {
         name: String,
@@ -106,23 +127,22 @@ pub enum RequestOp {
         #[schemars(with = "String")]
         kind: CryptoKind,
     },
-    BestCryptoSystem,
     CryptoSystem(CryptoSystemRequest),
     VerifySignatures {
         #[schemars(with = "Vec<String>")]
-        node_ids: Vec<TypedPublicKey>,
+        node_ids: Vec<PublicKey>,
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
         data: Vec<u8>,
         #[schemars(with = "Vec<String>")]
-        signatures: Vec<TypedSignature>,
+        signatures: Vec<Signature>,
     },
     GenerateSignatures {
         #[serde(with = "as_human_base64")]
         #[schemars(with = "String")]
         data: Vec<u8>,
         #[schemars(with = "Vec<String>")]
-        key_pairs: Vec<TypedKeyPair>,
+        key_pairs: Vec<KeyPair>,
     },
     GenerateKeyPair {
         #[schemars(with = "String")]
@@ -137,15 +157,7 @@ pub enum RequestOp {
     VeilidVersion,
     VeilidFeatures,
     DefaultVeilidConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct NewPrivateRouteResult {
-    #[schemars(with = "String")]
-    route_id: RouteId,
-    #[serde(with = "as_human_base64")]
-    #[schemars(with = "String")]
-    blob: Vec<u8>,
+    ValidCryptoKinds,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -170,13 +182,23 @@ pub enum ResponseOp {
         #[serde(flatten)]
         result: ApiResult<()>,
     },
+    GenerateMemberId {
+        #[serde(flatten)]
+        #[schemars(with = "ApiResult<String>")]
+        result: ApiResultWithString<MemberId>,
+    },
+    GetDhtRecordKey {
+        #[serde(flatten)]
+        #[schemars(with = "ApiResult<String>")]
+        result: ApiResultWithString<RecordKey>,
+    },
     NewPrivateRoute {
         #[serde(flatten)]
-        result: ApiResult<NewPrivateRouteResult>,
+        result: ApiResult<RouteBlob>,
     },
     NewCustomPrivateRoute {
         #[serde(flatten)]
-        result: ApiResult<NewPrivateRouteResult>,
+        result: ApiResult<RouteBlob>,
     },
     ImportRemotePrivateRoute {
         #[serde(flatten)]
@@ -197,6 +219,12 @@ pub enum ResponseOp {
         result: ApiResult<u32>,
     },
     RoutingContext(Box<RoutingContextResponse>),
+    // DHT Transaction
+    TransactDhtRecords {
+        #[serde(flatten)]
+        result: ApiResult<u32>,
+    },
+    DhtTransaction(Box<DhtTransactionResponse>),
     // TableDb
     OpenTableDb {
         #[serde(flatten)]
@@ -221,17 +249,17 @@ pub enum ResponseOp {
     VerifySignatures {
         #[serde(flatten)]
         #[schemars(with = "ApiResult<Option<Vec<String>>>")]
-        result: ApiResultWithOptVecString<Option<TypedPublicKeyGroup>>,
+        result: ApiResultWithOptVecString<Option<PublicKeyGroup>>,
     },
     GenerateSignatures {
         #[serde(flatten)]
         #[schemars(with = "ApiResult<Vec<String>>")]
-        result: ApiResultWithVecString<Vec<TypedSignature>>,
+        result: ApiResultWithVecString<Vec<Signature>>,
     },
     GenerateKeyPair {
         #[serde(flatten)]
         #[schemars(with = "ApiResult<String>")]
-        result: ApiResultWithString<TypedKeyPair>,
+        result: ApiResultWithString<KeyPair>,
     },
     // Misc
     Now {
@@ -255,6 +283,10 @@ pub enum ResponseOp {
     },
     VeilidFeatures {
         value: Vec<String>,
+    },
+    ValidCryptoKinds {
+        #[schemars(with = "Vec<String>")]
+        value: Vec<CryptoKind>,
     },
 }
 

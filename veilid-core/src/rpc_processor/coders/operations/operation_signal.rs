@@ -9,9 +9,8 @@ impl RPCOperationSignal {
     pub fn new(signal_info: SignalInfo) -> Self {
         Self { signal_info }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
-        let crypto = validate_context.crypto();
-        self.signal_info.validate(&crypto)
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+        self.signal_info.validate()
     }
     // pub fn signal_info(&self) -> &SignalInfo {
     //     &self.signal_info
@@ -25,7 +24,7 @@ impl RPCOperationSignal {
         reader: &veilid_capnp::operation_signal::Reader,
     ) -> Result<Self, RPCError> {
         let signal_info = decode_signal_info(decode_context, reader)?;
-        Ok(Self { signal_info })
+        Ok(Self::new(signal_info))
     }
     pub fn encode(
         &self,

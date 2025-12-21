@@ -4,7 +4,8 @@ use super::*;
 pub async fn get_outbound_relay_peer(
     _routing_domain: routing_table::RoutingDomain,
 ) -> Option<Arc<routing_table::PeerInfo>> {
-    panic!("Native Veilid should never require an outbound relay");
+    // unimplemented!
+    None
 }
 
 /////////////////////////////////////////////////////////////////////////////////

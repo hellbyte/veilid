@@ -55,7 +55,7 @@ pub struct RoutingTableInner {
     /// Statistics about the total bandwidth to/from this node
     pub(super) self_transfer_stats: TransferStatsDownUp,
     /// Peers we have recently communicated with
-    pub(super) recent_peers: LruCache<TypedNodeId, RecentPeersEntry>,
+    pub(super) recent_peers: LruCache<NodeId, RecentPeersEntry>,
     /// Async tagged critical sections table
     /// Tag: "tick" -> in ticker
     pub(super) critical_sections: AsyncTagLockTable<&'static str>,
@@ -63,7 +63,7 @@ pub struct RoutingTableInner {
     pub(super) opt_active_watch_keepalive_ts: Option<Timestamp>,
 }
 
-impl_veilid_component_registry_accessor!(RoutingTableInner);
+impl_veilid_component_accessors!(RoutingTableInner);
 
 impl RoutingTableInner {
     pub(super) fn new(registry: VeilidComponentRegistry) -> RoutingTableInner {
@@ -98,7 +98,8 @@ impl RoutingTableInner {
 
     pub fn routing_domain_for_address(&self, address: Address) -> Option<RoutingDomain> {
         for rd in RoutingDomain::all() {
-            let can_contain = self.with_routing_domain(rd, |rdd| rdd.can_contain_address(address));
+            let can_contain =
+                self.with_routing_domain(rd, |_rti, rdd| rdd.can_contain_address(address));
             if can_contain {
                 return Some(rd);
             }
@@ -106,55 +107,59 @@ impl RoutingTableInner {
         None
     }
 
-    pub fn with_routing_domain<F, R>(&self, domain: RoutingDomain, f: F) -> R
-    where
-        F: FnOnce(&dyn RoutingDomainDetail) -> R,
-    {
-        match domain {
-            RoutingDomain::PublicInternet => f(&self.public_internet_routing_domain),
-            RoutingDomain::LocalNetwork => f(&self.local_network_routing_domain),
+    pub fn routing_domain_for_flow(&self, flow: Flow) -> Option<RoutingDomain> {
+        let rd_remote = self.routing_domain_for_address(flow.remote_address().address())?;
+        let Some(local_address) = flow.local().map(|x| x.address()) else {
+            return Some(rd_remote);
+        };
+        if local_address.is_unspecified() {
+            return Some(rd_remote);
+        }
+        let rd_local = self.routing_domain_for_address(local_address)?;
+        match (rd_local, rd_remote) {
+            (RoutingDomain::LocalNetwork, RoutingDomain::LocalNetwork) => {
+                Some(RoutingDomain::LocalNetwork)
+            }
+            (RoutingDomain::LocalNetwork, RoutingDomain::PublicInternet)
+            | (RoutingDomain::PublicInternet, RoutingDomain::LocalNetwork)
+            | (RoutingDomain::PublicInternet, RoutingDomain::PublicInternet) => {
+                Some(RoutingDomain::PublicInternet)
+            }
         }
     }
 
-    pub fn relay_node(&self, domain: RoutingDomain) -> Option<FilteredNodeRef> {
-        self.with_routing_domain(domain, |rdd| rdd.relay_node())
+    pub fn with_routing_domain<F, R>(&self, domain: RoutingDomain, f: F) -> R
+    where
+        F: FnOnce(&RoutingTableInner, &dyn RoutingDomainDetail) -> R,
+    {
+        match domain {
+            RoutingDomain::PublicInternet => f(self, &self.public_internet_routing_domain),
+            RoutingDomain::LocalNetwork => f(self, &self.local_network_routing_domain),
+        }
     }
 
-    pub fn relay_node_last_keepalive(&self, domain: RoutingDomain) -> Option<Timestamp> {
-        self.with_routing_domain(domain, |rdd| rdd.relay_node_last_keepalive())
-    }
-    pub fn relay_node_last_optimized(&self, domain: RoutingDomain) -> Option<Timestamp> {
-        self.with_routing_domain(domain, |rdd| rdd.relay_node_last_optimized())
+    pub fn relays(&self, domain: RoutingDomain) -> Vec<RoutingDomainRelay> {
+        self.with_routing_domain(domain, |_rti, rdd| rdd.relays())
     }
 
-    pub fn set_relay_node_last_keepalive(&mut self, domain: RoutingDomain, ts: Timestamp) {
-        match domain {
-            RoutingDomain::PublicInternet => self
-                .public_internet_routing_domain
-                .set_relay_node_last_keepalive(Some(ts)),
-            RoutingDomain::LocalNetwork => self
-                .local_network_routing_domain
-                .set_relay_node_last_keepalive(Some(ts)),
-        };
+    pub fn relays_and_states(
+        &self,
+        domain: RoutingDomain,
+    ) -> Vec<(RoutingDomainRelay, RoutingDomainRelayState)> {
+        self.with_routing_domain(domain, |_rti, rdd| rdd.relays_and_states())
     }
-    pub fn set_relay_node_last_optimized(&mut self, domain: RoutingDomain, ts: Timestamp) {
-        match domain {
-            RoutingDomain::PublicInternet => self
-                .public_internet_routing_domain
-                .set_relay_node_last_optimized(Some(ts)),
-            RoutingDomain::LocalNetwork => self
-                .local_network_routing_domain
-                .set_relay_node_last_optimized(Some(ts)),
-        };
+
+    pub fn routing_domain_state(&self, domain: RoutingDomain) -> RoutingDomainState {
+        self.with_routing_domain(domain, |_rti, rdd| rdd.state())
     }
 
     #[expect(dead_code)]
     pub fn has_dial_info(&self, domain: RoutingDomain) -> bool {
-        self.with_routing_domain(domain, |rdd| !rdd.dial_info_details().is_empty())
+        self.with_routing_domain(domain, |_rti, rdd| !rdd.dial_info_details().is_empty())
     }
 
     pub fn dial_info_details(&self, domain: RoutingDomain) -> Vec<DialInfoDetail> {
-        self.with_routing_domain(domain, |rdd| rdd.dial_info_details().clone())
+        self.with_routing_domain(domain, |_rti, rdd| rdd.dial_info_details().clone())
     }
 
     pub fn first_filtered_dial_info_detail(
@@ -166,7 +171,7 @@ impl RoutingTableInner {
             return None;
         }
         for routing_domain in routing_domain_set {
-            let did = self.with_routing_domain(routing_domain, |rdd| {
+            let did = self.with_routing_domain(routing_domain, |_rti, rdd| {
                 for did in rdd.dial_info_details() {
                     if did.matches_filter(filter) {
                         return Some(did.clone());
@@ -191,7 +196,7 @@ impl RoutingTableInner {
             return ret;
         }
         for routing_domain in routing_domain_set {
-            self.with_routing_domain(routing_domain, |rdd| {
+            self.with_routing_domain(routing_domain, |_rti, rdd| {
                 for did in rdd.dial_info_details() {
                     if did.matches_filter(filter) {
                         ret.push(did.clone());
@@ -203,46 +208,46 @@ impl RoutingTableInner {
         ret
     }
 
-    pub fn node_info_is_valid_in_routing_domain(
-        &self,
-        routing_domain: RoutingDomain,
-        node_info: &NodeInfo,
-    ) -> bool {
-        // Ensure all of the dial info works in this routing domain
-        self.with_routing_domain(routing_domain, |rdd| {
+    pub fn get_node_info_routing_domains(&self, node_info: &NodeInfo) -> RoutingDomainSet {
+        let mut valid_routing_domain_set = RoutingDomainSet::new();
+
+        'skip: for routing_domain in RoutingDomainSet::all() {
+            let mut rd_valid = false;
+
             for did in node_info.dial_info_detail_list() {
-                if !rdd.ensure_dial_info_is_valid(&did.dial_info) {
-                    return false;
+                let valid = self.with_routing_domain(routing_domain, |_rti, rdd| {
+                    rdd.ensure_dial_info_is_valid(&did.dial_info)
+                });
+                if !valid {
+                    continue 'skip;
+                }
+                rd_valid = true;
+            }
+
+            // Ensure the relay is also valid in this routing domain if it is provided
+            for ri in node_info.relay_info_list() {
+                for did in ri.dial_info_detail_list() {
+                    let valid = self.with_routing_domain(routing_domain, |_rti, rdd| {
+                        rdd.ensure_dial_info_is_valid(&did.dial_info)
+                    });
+                    if !valid {
+                        continue 'skip;
+                    }
+                    rd_valid = true;
                 }
             }
-            true
-        })
+
+            if rd_valid {
+                valid_routing_domain_set.insert(routing_domain);
+            }
+        }
+
+        // Return the valid routing domains
+        valid_routing_domain_set
     }
 
-    pub fn signed_node_info_is_valid_in_routing_domain(
-        &self,
-        routing_domain: RoutingDomain,
-        signed_node_info: &SignedNodeInfo,
-    ) -> bool {
-        if !self.node_info_is_valid_in_routing_domain(routing_domain, signed_node_info.node_info())
-        {
-            return false;
-        }
-        // Ensure the relay is also valid in this routing domain if it is provided
-        if let Some(relay_ni) = signed_node_info.relay_info() {
-            // If there is a relay, the relay should have inbound capable network class and the node's network class should be valid
-            if relay_ni.network_class() != NetworkClass::InboundCapable {
-                return false;
-            }
-            if signed_node_info.node_info().network_class() == NetworkClass::Invalid {
-                return false;
-            }
-
-            if !self.node_info_is_valid_in_routing_domain(routing_domain, relay_ni) {
-                return false;
-            }
-        }
-        true
+    pub fn origin_routing_domains(&self, routing_domain: RoutingDomain) -> RoutingDomainSet {
+        self.with_routing_domain(routing_domain, |_rti, rdd| rdd.origin_routing_domains())
     }
 
     pub fn get_contact_method(
@@ -252,10 +257,17 @@ impl RoutingTableInner {
         peer_b: Arc<PeerInfo>,
         dial_info_filter: DialInfoFilter,
         sequencing: Sequencing,
-        dif_sort: Option<&DialInfoDetailSort>,
+        context_sort: Option<&DialInfoDetailSort>,
     ) -> ContactMethod {
-        self.with_routing_domain(routing_domain, |rdd| {
-            rdd.get_contact_method(self, peer_a, peer_b, dial_info_filter, sequencing, dif_sort)
+        self.with_routing_domain(routing_domain, |rti, rdd| {
+            rdd.get_contact_method(
+                rti,
+                peer_a,
+                peer_b,
+                dial_info_filter,
+                sequencing,
+                context_sort,
+            )
         })
     }
 
@@ -271,36 +283,31 @@ impl RoutingTableInner {
 
     /// Publish the node's current peer info to the world if it is valid
     pub fn publish_peer_info(&mut self, routing_domain: RoutingDomain) -> bool {
-        self.with_routing_domain(routing_domain, |rdd| rdd.publish_peer_info(self))
+        self.with_routing_domain(routing_domain, |rti, rdd| rdd.publish_peer_info(rti))
     }
     /// Unpublish the node's current peer info
     pub fn unpublish_peer_info(&mut self, routing_domain: RoutingDomain) {
-        self.with_routing_domain(routing_domain, |rdd| rdd.unpublish_peer_info(self))
+        self.with_routing_domain(routing_domain, |rti, rdd| rdd.unpublish_peer_info(rti))
     }
 
     /// Get the current published peer info
     pub fn get_published_peer_info(&self, routing_domain: RoutingDomain) -> Option<Arc<PeerInfo>> {
-        self.with_routing_domain(routing_domain, |rdd| rdd.get_published_peer_info())
+        self.with_routing_domain(routing_domain, |_rti, rdd| rdd.get_published_peer_info())
     }
 
     /// Return a copy of our node's current peerinfo (may not yet be published)
     pub fn get_current_peer_info(&self, routing_domain: RoutingDomain) -> Arc<PeerInfo> {
-        self.with_routing_domain(routing_domain, |rdd| rdd.get_peer_info(self))
+        self.with_routing_domain(routing_domain, |rti, rdd| rdd.get_peer_info(rti))
     }
 
     /// Return a list of the current valid bootstrap peers in a particular routing domain
     pub fn get_bootstrap_peers(&self, routing_domain: RoutingDomain) -> Vec<NodeRef> {
-        self.with_routing_domain(routing_domain, |rdd| rdd.get_bootstrap_peers())
-    }
-
-    /// Return the domain's currently registered network class
-    pub fn get_network_class(&self, routing_domain: RoutingDomain) -> NetworkClass {
-        self.with_routing_domain(routing_domain, |rdd| rdd.network_class())
+        self.with_routing_domain(routing_domain, |_rti, rdd| rdd.get_bootstrap_peers())
     }
 
     /// Return the domain's filter for what we can receivein the form of a dial info filter
     pub fn get_inbound_dial_info_filter(&self, routing_domain: RoutingDomain) -> DialInfoFilter {
-        self.with_routing_domain(routing_domain, |rdd| rdd.inbound_dial_info_filter())
+        self.with_routing_domain(routing_domain, |_rti, rdd| rdd.inbound_dial_info_filter())
     }
 
     /// Return the domain's filter for what we can receive in the form of a node ref filter
@@ -314,7 +321,7 @@ impl RoutingTableInner {
 
     /// Return the domain's filter for what we can send out in the form of a dial info filter
     pub fn get_outbound_dial_info_filter(&self, routing_domain: RoutingDomain) -> DialInfoFilter {
-        self.with_routing_domain(routing_domain, |rdd| rdd.outbound_dial_info_filter())
+        self.with_routing_domain(routing_domain, |_rti, rdd| rdd.outbound_dial_info_filter())
     }
     /// Return the domain's filter for what we can receive in the form of a node ref filter
     pub fn get_outbound_node_ref_filter(&self, routing_domain: RoutingDomain) -> NodeRefFilter {
@@ -342,8 +349,8 @@ impl RoutingTableInner {
         // Size the buckets (one per bit), one bucket set per crypto kind
         self.buckets.clear();
         for ck in VALID_CRYPTO_KINDS {
-            let mut ckbuckets = Vec::with_capacity(PUBLIC_KEY_LENGTH * 8);
-            for _ in 0..PUBLIC_KEY_LENGTH * 8 {
+            let mut ckbuckets = Vec::with_capacity(BUCKET_COUNT);
+            for _ in 0..BUCKET_COUNT {
                 let bucket = Bucket::new(self.registry(), ck);
                 ckbuckets.push(bucket);
             }
@@ -389,7 +396,7 @@ impl RoutingTableInner {
 
     /// Attempt to settle buckets and remove entries down to the desired number
     /// which may not be possible due extant NodeRefs
-    pub fn kick_bucket(&mut self, bucket_index: BucketIndex, exempt_peers: &BTreeSet<NodeId>) {
+    pub fn kick_bucket(&mut self, bucket_index: BucketIndex, exempt_peers: &BTreeSet<BareNodeId>) {
         let bucket = self.get_bucket_mut(bucket_index);
         let bucket_depth = Self::bucket_depth(bucket_index);
 
@@ -411,9 +418,9 @@ impl RoutingTableInner {
             entry.with_inner(|e| {
                 // Tally per routing domain and crypto kind
                 for rd in RoutingDomain::all() {
-                    if let Some(sni) = e.signed_node_info(rd) {
+                    if let Some(pi) = e.get_peer_info(rd) {
                         // Only consider entries that have valid signed node info in this domain
-                        if sni.has_any_signature() {
+                        if !pi.signatures().is_empty() {
                             // Tally
                             for crypto_kind in e.crypto_kinds() {
                                 live_entry_counts
@@ -520,29 +527,31 @@ impl RoutingTableInner {
     ) -> Vec<FilteredNodeRef> {
         let opt_own_node_info_ts = self
             .get_published_peer_info(routing_domain)
-            .map(|pi| pi.signed_node_info().timestamp());
+            .map(|pi| pi.node_info().timestamp());
 
         let mut filters = VecDeque::new();
 
         // Remove our own node from the results
-        let filter_self =
-            Box::new(move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| v.is_some())
-                as RoutingTableEntryFilter;
+        let filter_self = Box::new(
+            move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
+                v.is_some()
+            },
+        ) as RoutingTableEntryFilter;
         filters.push_back(filter_self);
 
         let filter_ping = Box::new(
-            move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
+            move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let entry = v.unwrap();
                 entry.with_inner(|e| {
-                    // If this entry isn't in the routing domain we are checking, don't include it
-                    if !e.exists_in_routing_domain(rti, routing_domain) {
+                    // If this entry doesn't have node info in the routing domain we are checking, don't include it
+                    if !e.has_node_info(routing_domain.into()) {
                         return false;
                     }
 
                     // If we don't have node status for this node, then we should ping it to get some node status
-                    if e.has_node_info(routing_domain.into())
-                        && e.node_status(routing_domain).is_none()
-                    {
+                    if e.node_status(routing_domain).is_none() {
+                        #[cfg(feature="verbose-tracing")]
+                        veilid_log!(self debug "Ping reason: node_status is none (rd={:?} ids={:?})", routing_domain, e.node_ids());
                         return true;
                     }
 
@@ -553,14 +562,18 @@ impl RoutingTableInner {
                             opt_own_node_info_ts.unwrap(),
                         )
                     {
+                        #[cfg(feature="verbose-tracing")]
+                        veilid_log!(self debug "Ping reason: has not seen our node info timestamp (rd={:?} ids={:?} own_ni_ts={}\n:entry:\n{}",
+                            routing_domain, e.node_ids(), opt_own_node_info_ts.unwrap(), e);
                         return true;
                     }
 
                     // If this entry needs need a ping by non-routing-domain-specific metrics then do it
                     if e.needs_ping(cur_ts) {
+                        #[cfg(feature="verbose-tracing")]
+                        veilid_log!(self debug "Ping reason: timing (rd={:?} ids={:?})", routing_domain, e.node_ids());
                         return true;
                     }
-
                     false
                 })
             },
@@ -568,50 +581,53 @@ impl RoutingTableInner {
         filters.push_back(filter_ping);
 
         // Sort by least recently contacted
-        let compare = |_rti: &RoutingTableInner,
-                       a_entry: &Option<Arc<BucketEntry>>,
-                       b_entry: &Option<Arc<BucketEntry>>| {
-            // same nodes are always the same
-            if let Some(a_entry) = a_entry {
-                if let Some(b_entry) = b_entry {
-                    if Arc::ptr_eq(a_entry, b_entry) {
-                        return core::cmp::Ordering::Equal;
+        let compare = Box::new(
+            |_rti: &RoutingTableInner,
+             a_entry: Option<Arc<BucketEntry>>,
+             b_entry: Option<Arc<BucketEntry>>,
+             _cur_ts: Timestamp| {
+                // same nodes are always the same
+                if let Some(a_entry) = a_entry.clone() {
+                    if let Some(b_entry) = b_entry.clone() {
+                        if a_entry.hash_atom() == b_entry.hash_atom() {
+                            return core::cmp::Ordering::Equal;
+                        }
                     }
+                } else if b_entry.is_none() {
+                    return core::cmp::Ordering::Equal;
                 }
-            } else if b_entry.is_none() {
-                return core::cmp::Ordering::Equal;
-            }
 
-            // our own node always comes last (should not happen, here for completeness)
-            if a_entry.is_none() {
-                return core::cmp::Ordering::Greater;
-            }
-            if b_entry.is_none() {
-                return core::cmp::Ordering::Less;
-            }
-            // Sort by least recently contacted regardless of reliability
-            // If something needs a ping it should get it in the order of need
-            let ae = a_entry.as_ref().unwrap();
-            let be = b_entry.as_ref().unwrap();
-            ae.with_inner(|ae| {
-                be.with_inner(|be| {
-                    let ca = ae
-                        .peer_stats()
-                        .rpc_stats
-                        .last_question_ts
-                        .unwrap_or(Timestamp::new(0))
-                        .as_u64();
-                    let cb = be
-                        .peer_stats()
-                        .rpc_stats
-                        .last_question_ts
-                        .unwrap_or(Timestamp::new(0))
-                        .as_u64();
+                // our own node always comes last (should not happen, here for completeness)
+                if a_entry.is_none() {
+                    return core::cmp::Ordering::Greater;
+                }
+                if b_entry.is_none() {
+                    return core::cmp::Ordering::Less;
+                }
+                // Sort by least recently contacted regardless of reliability
+                // If something needs a ping it should get it in the order of need
+                let ae = a_entry.as_ref().unwrap();
+                let be = b_entry.as_ref().unwrap();
+                ae.with_inner(|ae| {
+                    be.with_inner(|be| {
+                        let ca = ae
+                            .peer_stats()
+                            .rpc_stats
+                            .last_question_ts
+                            .unwrap_or(Timestamp::new(0))
+                            .as_u64();
+                        let cb = be
+                            .peer_stats()
+                            .rpc_stats
+                            .last_question_ts
+                            .unwrap_or(Timestamp::new(0))
+                            .as_u64();
 
-                    ca.cmp(&cb)
+                        ca.cmp(&cb)
+                    })
                 })
-            })
-        };
+            },
+        ) as RoutingTableEntrySort;
 
         let transform = |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
             FilteredNodeRef::new(
@@ -622,7 +638,22 @@ impl RoutingTableInner {
             )
         };
 
-        self.find_peers_with_sort_and_filter(usize::MAX, cur_ts, filters, compare, transform)
+        let pre_sort_filter = Box::new(
+            |_rti: &RoutingTableInner,
+             _all_entries: &mut Vec<Option<Arc<BucketEntry>>>,
+             _cur_ts: Timestamp| {
+                //
+            },
+        ) as RoutingTableEntryPreSortFilter;
+
+        self.find_peers_with_sort_and_filter(
+            usize::MAX,
+            cur_ts,
+            filters,
+            pre_sort_filter,
+            compare,
+            transform,
+        )
     }
 
     #[expect(dead_code)]
@@ -655,7 +686,7 @@ impl RoutingTableInner {
     fn update_bucket_entry_node_ids(
         &mut self,
         entry: Arc<BucketEntry>,
-        node_ids: &[TypedNodeId],
+        node_ids: &[NodeId],
     ) -> EyreResult<()> {
         let routing_table = self.routing_table();
 
@@ -666,7 +697,7 @@ impl RoutingTableInner {
             let mut old_peer_infos = vec![];
 
             for node_id in node_ids {
-                let ck = node_id.kind;
+                let ck = node_id.kind();
                 let is_existing_node_id = existing_node_ids.contains(node_id);
 
                 existing_node_ids.remove(ck);
@@ -686,21 +717,21 @@ impl RoutingTableInner {
                 }
 
                 // Add new node id to entry
-                if let Some(old_node_id) = e.add_node_id(*node_id)? {
+                if let Some(old_node_id) = e.add_node_id(node_id.clone())? {
                     // Remove any old node id for this crypto kind
                     if VALID_CRYPTO_KINDS.contains(&ck) {
-                        let bucket_index = routing_table.calculate_bucket_index(&old_node_id);
+                        let bucket_index = routing_table.calculate_bucket_index(&old_node_id)?;
                         let bucket = self.get_bucket_mut(bucket_index);
-                        bucket.remove_entry(&old_node_id.value);
+                        bucket.remove_entry(old_node_id.ref_value());
                         routing_table.kick_queue.lock().insert(bucket_index);
                     }
                 }
 
                 // Bucket the entry appropriately
                 if VALID_CRYPTO_KINDS.contains(&ck) {
-                    let bucket_index = routing_table.calculate_bucket_index(node_id);
+                    let bucket_index = routing_table.calculate_bucket_index(node_id)?;
                     let bucket = self.get_bucket_mut(bucket_index);
-                    bucket.add_existing_entry(node_id.value, entry.clone());
+                    bucket.add_existing_entry(node_id.value(), entry.clone());
 
                     // Kick bucket
                     routing_table.kick_queue.lock().insert(bucket_index);
@@ -709,11 +740,11 @@ impl RoutingTableInner {
 
             // Remove from buckets if node id wasn't seen in new peer info list
             for node_id in existing_node_ids.iter() {
-                let ck = node_id.kind;
+                let ck = node_id.kind();
                 if VALID_CRYPTO_KINDS.contains(&ck) {
-                    let bucket_index = routing_table.calculate_bucket_index(node_id);
+                    let bucket_index = routing_table.calculate_bucket_index(node_id)?;
                     let bucket = self.get_bucket_mut(bucket_index);
-                    bucket.remove_entry(&node_id.value);
+                    bucket.remove_entry(node_id.ref_value());
                     entry.with_mut_inner(|e| e.remove_node_id(ck));
                 }
             }
@@ -743,11 +774,7 @@ impl RoutingTableInner {
     /// the 'update_func' closure is called on the node, and, if created,
     /// in a locked fashion as to ensure the bucket entry state is always valid
     #[instrument(level = "trace", skip_all, err)]
-    fn create_node_ref<F>(
-        &mut self,
-        node_ids: &TypedNodeIdGroup,
-        update_func: F,
-    ) -> EyreResult<NodeRef>
+    fn create_node_ref<F>(&mut self, node_ids: &NodeIdGroup, update_func: F) -> EyreResult<NodeRef>
     where
         F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner),
     {
@@ -764,18 +791,18 @@ impl RoutingTableInner {
         // Look up all bucket entries and make sure we only have zero or one
         // If we have more than one, pick the one with the best cryptokind to add node ids to
         let mut best_entry: Option<Arc<BucketEntry>> = None;
-        let mut supported_node_ids = TypedNodeIdGroup::new();
+        let mut supported_node_ids = NodeIdGroup::new();
         for node_id in node_ids.iter() {
             // Ignore node ids we don't support
-            if !VALID_CRYPTO_KINDS.contains(&node_id.kind) {
+            if !VALID_CRYPTO_KINDS.contains(&node_id.kind()) {
                 continue;
             }
-            supported_node_ids.add(*node_id);
+            supported_node_ids.add(node_id.clone());
 
             // Find the first in crypto sort order
-            let bucket_index = routing_table.calculate_bucket_index(node_id);
+            let bucket_index = routing_table.calculate_bucket_index(node_id)?;
             let bucket = self.get_bucket(bucket_index);
-            if let Some(entry) = bucket.entry(&node_id.value) {
+            if let Some(entry) = bucket.entry(node_id.ref_value()) {
                 // Best entry is the first one in sorted order that exists from the node id list
                 // Everything else that matches will be overwritten in the bucket and the
                 // existing noderefs will eventually unref and drop the old unindexed bucketentry
@@ -810,10 +837,10 @@ impl RoutingTableInner {
         }
 
         // If no entry exists yet, add the first entry to a bucket, possibly evicting a bucket member
-        let first_node_id = supported_node_ids[0];
-        let bucket_entry = routing_table.calculate_bucket_index(&first_node_id);
+        let first_node_id = supported_node_ids[0].clone();
+        let bucket_entry = routing_table.calculate_bucket_index(&first_node_id)?;
         let bucket = self.get_bucket_mut(bucket_entry);
-        let new_entry = bucket.add_new_entry(first_node_id.value);
+        let new_entry = bucket.add_new_entry(first_node_id.value());
         self.all_entries.insert(new_entry.clone());
         routing_table.kick_queue.lock().insert(bucket_entry);
 
@@ -836,9 +863,9 @@ impl RoutingTableInner {
 
     /// Resolve an existing routing table entry using any crypto kind and return a reference to it
     #[instrument(level = "trace", skip_all, err)]
-    pub fn lookup_any_node_ref(&self, node_id_key: NodeId) -> EyreResult<Option<NodeRef>> {
+    pub fn lookup_bare_node_ref(&self, node_id_key: BareNodeId) -> EyreResult<Option<NodeRef>> {
         for ck in VALID_CRYPTO_KINDS {
-            if let Some(nr) = self.lookup_node_ref(TypedNodeId::new(ck, node_id_key))? {
+            if let Some(nr) = self.lookup_node_ref(NodeId::new(ck, node_id_key.clone()))? {
                 return Ok(Some(nr));
             }
         }
@@ -847,18 +874,21 @@ impl RoutingTableInner {
 
     /// Resolve an existing routing table entry and return a reference to it
     #[instrument(level = "trace", skip_all, err)]
-    pub fn lookup_node_ref(&self, node_id: TypedNodeId) -> EyreResult<Option<NodeRef>> {
-        if self.routing_table().matches_own_node_id(&[node_id]) {
+    pub fn lookup_node_ref(&self, node_id: NodeId) -> EyreResult<Option<NodeRef>> {
+        if self
+            .routing_table()
+            .matches_own_node_id(std::slice::from_ref(&node_id))
+        {
             bail!("can't look up own node id in routing table");
         }
-        if !VALID_CRYPTO_KINDS.contains(&node_id.kind) {
+        if !VALID_CRYPTO_KINDS.contains(&node_id.kind()) {
             bail!("can't look up node id with invalid crypto kind");
         }
 
-        let bucket_index = self.routing_table().calculate_bucket_index(&node_id);
+        let bucket_index = self.routing_table().calculate_bucket_index(&node_id)?;
         let bucket = self.get_bucket(bucket_index);
         Ok(bucket
-            .entry(&node_id.value)
+            .entry(node_id.ref_value())
             .map(|e| NodeRef::new(self.registry(), e)))
     }
 
@@ -866,7 +896,7 @@ impl RoutingTableInner {
     #[instrument(level = "trace", skip_all, err)]
     pub fn lookup_and_filter_noderef(
         &self,
-        node_id: TypedNodeId,
+        node_id: NodeId,
         routing_domain_set: RoutingDomainSet,
         dial_info_filter: DialInfoFilter,
     ) -> EyreResult<Option<FilteredNodeRef>> {
@@ -881,21 +911,31 @@ impl RoutingTableInner {
     }
 
     /// Resolve an existing routing table entry and call a function on its entry without using a noderef
-    pub fn with_node_entry<F, R>(&self, node_id: TypedNodeId, f: F) -> Option<R>
+    #[expect(dead_code)]
+    pub fn with_node_entry<F, R>(&self, node_id: NodeId, f: F) -> Option<R>
     where
         F: FnOnce(Arc<BucketEntry>) -> R,
     {
-        if self.routing_table().matches_own_node_id(&[node_id]) {
+        if self
+            .routing_table()
+            .matches_own_node_id(std::slice::from_ref(&node_id))
+        {
             veilid_log!(self error "can't look up own node id in routing table");
             return None;
         }
-        if !VALID_CRYPTO_KINDS.contains(&node_id.kind) {
+        if !VALID_CRYPTO_KINDS.contains(&node_id.kind()) {
             veilid_log!(self error "can't look up node id with invalid crypto kind");
             return None;
         }
-        let bucket_entry = self.routing_table().calculate_bucket_index(&node_id);
+        let bucket_entry = match self.routing_table().calculate_bucket_index(&node_id) {
+            Ok(v) => v,
+            Err(e) => {
+                veilid_log!(self error "can't look up node id with unsupported size: {}", e);
+                return None;
+            }
+        };
         let bucket = self.get_bucket(bucket_entry);
-        bucket.entry(&node_id.value).map(f)
+        bucket.entry(node_id.ref_value()).map(f)
     }
 
     /// Shortcut function to add a node to our routing table if it doesn't exist
@@ -918,51 +958,37 @@ impl RoutingTableInner {
         }
 
         // node can not be its own relay
-        let rids = peer_info.signed_node_info().relay_ids();
-        let nids = peer_info.node_ids();
-        if nids.contains_any(&rids) {
+        let node_info = peer_info.node_info();
+        let relay_ids = node_info.relay_ids();
+        let node_ids = peer_info.node_ids().clone();
+        if node_ids.contains_any_from_slice(&relay_ids) {
             bail!("node can not be its own relay");
         }
 
         if !allow_invalid {
             // verify signature
-            if !peer_info.signed_node_info().has_any_signature() {
+            if peer_info.signatures().is_empty() {
                 bail!(
-                    "signed node info for {:?} has no valid signature",
+                    "peerinfo for {:?} has no valid signature",
                     peer_info.node_ids()
                 );
             }
-            // verify signed node info is valid in this routing domain
-            if !self.signed_node_info_is_valid_in_routing_domain(
-                routing_domain,
-                peer_info.signed_node_info(),
-            ) {
-                bail!(
-                    "signed node info for {:?} not valid in the {:?} routing domain",
-                    peer_info.node_ids(),
-                    routing_domain
-                );
-            }
+        }
+        // verify node info is valid in this routing domain
+        let valid_routing_domains = self.get_node_info_routing_domains(node_info);
+        if !valid_routing_domains.contains(routing_domain) {
+            bail!(
+                "peerinfo for {:?} not valid in the {:?} routing domain",
+                peer_info.node_ids(),
+                routing_domain
+            );
         }
 
-        // Register relay info first if we have that and the relay isn't us
-        if let Some(relay_peer_info) = peer_info.signed_node_info().relay_peer_info(routing_domain)
-        {
-            if !self
-                .routing_table()
-                .matches_own_node_id(relay_peer_info.node_ids())
-            {
-                self.register_node_with_peer_info(relay_peer_info, false)?;
-            }
-        }
-
-        let (_routing_domain, node_ids, signed_node_info) =
-            Arc::unwrap_or_clone(peer_info).destructure();
         let mut updated = false;
         let mut old_peer_info = None;
         let nr = self.create_node_ref(&node_ids, |_rti, e| {
             old_peer_info = e.get_peer_info(routing_domain);
-            updated = e.update_signed_node_info(routing_domain, &signed_node_info);
+            updated = e.update_peer_info(routing_domain, peer_info);
         })?;
 
         // Process any new or updated PeerInfo
@@ -981,10 +1007,10 @@ impl RoutingTableInner {
     pub fn register_node_with_id(
         &mut self,
         routing_domain: RoutingDomain,
-        node_id: TypedNodeId,
+        node_id: NodeId,
         timestamp: Timestamp,
     ) -> EyreResult<FilteredNodeRef> {
-        let nr = self.create_node_ref(&TypedNodeIdGroup::from(node_id), |_rti, e| {
+        let nr = self.create_node_ref(&NodeIdGroup::from(node_id), |_rti, e| {
             //e.make_not_dead(timestamp);
             e.touch_last_seen(timestamp);
         })?;
@@ -1022,7 +1048,7 @@ impl RoutingTableInner {
                     "routing domains should be the same here",
                 );
                 let mut node_ids = old_pi.node_ids().clone();
-                node_ids.add_all(new_pi.node_ids());
+                node_ids.add_all_from_slice(new_pi.node_ids());
                 (new_pi.routing_domain(), node_ids)
             }
         };
@@ -1030,15 +1056,15 @@ impl RoutingTableInner {
         // If this is our relay, then redo our own peerinfo because
         // if we have relayed peerinfo, then changing the relay's peerinfo
         // changes our own peer info
-        self.with_routing_domain(routing_domain, |rd| {
-            let opt_our_relay_node_ids = rd
-                .relay_node()
-                .map(|relay_nr| relay_nr.locked(self).node_ids());
-            if let Some(our_relay_node_ids) = opt_our_relay_node_ids {
-                if our_relay_node_ids.contains_any(&node_ids) {
-                    rd.refresh();
-                    rd.publish_peer_info(self);
-                }
+        self.with_routing_domain(routing_domain, |rti, rd| {
+            let our_relay_node_ids = rd
+                .relays()
+                .iter()
+                .flat_map(|rdr| rdr.relay_node.locked(rti).node_ids().to_vec())
+                .collect::<Vec<_>>();
+            if node_ids.contains_any_from_slice(&our_relay_node_ids) {
+                rd.refresh();
+                rd.publish_peer_info(rti);
             }
         });
 
@@ -1102,7 +1128,7 @@ impl RoutingTableInner {
         }
     }
 
-    pub fn touch_recent_peer(&mut self, node_id: TypedNodeId, last_connection: Flow) {
+    pub fn touch_recent_peer(&mut self, node_id: NodeId, last_connection: Flow) {
         self.recent_peers
             .insert(node_id, RecentPeersEntry { last_connection });
     }
@@ -1125,7 +1151,7 @@ impl RoutingTableInner {
             "LocalNetwork is not a valid non-local RoutingDomain"
         );
         let public_node_filter = Box::new(
-            move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
+            move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let entry = v.unwrap();
                 entry.with_inner(|e| {
                     // skip nodes on local network
@@ -1152,26 +1178,7 @@ impl RoutingTableInner {
     }
 
     #[instrument(level = "trace", skip_all)]
-    pub fn filter_has_valid_signed_node_info(
-        &self,
-        routing_domain: RoutingDomain,
-        has_valid_own_node_info: bool,
-        entry: Option<Arc<BucketEntry>>,
-    ) -> bool {
-        match entry {
-            None => has_valid_own_node_info,
-            Some(entry) => entry.with_inner(|e| {
-                e.signed_node_info(routing_domain)
-                    .map(|sni| {
-                        sni.has_any_signature()
-                            && !matches!(sni.node_info().network_class(), NetworkClass::Invalid)
-                    })
-                    .unwrap_or(false)
-            }),
-        }
-    }
-
-    #[instrument(level = "trace", skip_all)]
+    #[expect(dead_code)]
     pub fn transform_to_peer_info(
         &self,
         routing_domain: RoutingDomain,
@@ -1185,20 +1192,16 @@ impl RoutingTableInner {
     }
 
     #[instrument(level = "trace", skip_all)]
-    pub fn find_peers_with_sort_and_filter<C, T, O>(
+    pub fn find_peers_with_sort_and_filter<T, O>(
         &self,
         node_count: usize,
         cur_ts: Timestamp,
         mut filters: VecDeque<RoutingTableEntryFilter>,
-        mut compare: C,
+        mut pre_sort_filter: RoutingTableEntryPreSortFilter,
+        mut compare: RoutingTableEntrySort,
         mut transform: T,
     ) -> Vec<O>
     where
-        C: for<'a, 'b> FnMut(
-            &'a RoutingTableInner,
-            &'b Option<Arc<BucketEntry>>,
-            &'b Option<Arc<BucketEntry>>,
-        ) -> core::cmp::Ordering,
         T: for<'r> FnMut(&'r RoutingTableInner, Option<Arc<BucketEntry>>) -> O,
     {
         // collect all the nodes for sorting
@@ -1206,45 +1209,34 @@ impl RoutingTableInner {
             Vec::<Option<Arc<BucketEntry>>>::with_capacity(self.bucket_entry_count() + 1);
 
         // add our own node (only one of there with the None entry)
-        let mut filtered = false;
-        for filter in &mut filters {
-            if !filter(self, None) {
-                filtered = true;
-                break;
-            }
-        }
-        if !filtered {
+        if filters.iter_mut().all(|filter| filter(self, None, cur_ts)) {
             nodes.push(None);
         }
 
         // add all nodes that match filter
         self.with_entries(cur_ts, BucketEntryState::Unreliable, |rti, v| {
             // Apply filter
-            let mut filtered = false;
-            for filter in &mut filters {
-                if !filter(rti, Some(v.clone())) {
-                    filtered = true;
-                    break;
-                }
-            }
-            if !filtered {
+            if filters
+                .iter_mut()
+                .all(|filter| filter(rti, Some(v.clone()), cur_ts))
+            {
                 nodes.push(Some(v.clone()));
             }
             Option::<()>::None
         });
 
+        // apply pre-sort filter
+        pre_sort_filter(self, &mut nodes, cur_ts);
+
         // sort by preference for returning nodes
-        nodes.sort_by(|a, b| compare(self, a, b));
+        nodes.sort_by(|a, b| compare(self, a.clone(), b.clone(), cur_ts));
 
         // return transformed vector for filtered+sorted nodes
-        nodes.truncate(node_count);
-        let mut out = Vec::<O>::with_capacity(nodes.len());
-        for node in nodes {
-            let val = transform(self, node);
-            out.push(val);
-        }
-
-        out
+        nodes
+            .into_iter()
+            .take(node_count)
+            .map(|node| transform(self, node))
+            .collect()
     }
 
     #[instrument(level = "trace", skip_all)]
@@ -1260,77 +1252,97 @@ impl RoutingTableInner {
         let cur_ts = Timestamp::now();
 
         // always filter out self peer, as it is irrelevant to the 'fastest nodes' search
-        let filter_self =
-            Box::new(move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| v.is_some())
-                as RoutingTableEntryFilter;
+        let filter_self = Box::new(
+            move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
+                v.is_some()
+            },
+        ) as RoutingTableEntryFilter;
         filters.push_front(filter_self);
 
         // Fastest sort
-        let sort = |_rti: &RoutingTableInner,
-                    a_entry: &Option<Arc<BucketEntry>>,
-                    b_entry: &Option<Arc<BucketEntry>>| {
-            // same nodes are always the same
-            if let Some(a_entry) = a_entry {
-                if let Some(b_entry) = b_entry {
-                    if Arc::ptr_eq(a_entry, b_entry) {
-                        return core::cmp::Ordering::Equal;
+        let sort = Box::new(
+            |_rti: &RoutingTableInner,
+             a_entry: Option<Arc<BucketEntry>>,
+             b_entry: Option<Arc<BucketEntry>>,
+             cur_ts: Timestamp| {
+                // same nodes are always the same
+                if let Some(a_entry) = a_entry.clone() {
+                    if let Some(b_entry) = b_entry.clone() {
+                        if a_entry.hash_atom() == b_entry.hash_atom() {
+                            return core::cmp::Ordering::Equal;
+                        }
                     }
+                } else if b_entry.is_none() {
+                    return core::cmp::Ordering::Equal;
                 }
-            } else if b_entry.is_none() {
-                return core::cmp::Ordering::Equal;
-            }
 
-            // our own node always comes last (should not happen, here for completeness)
-            if a_entry.is_none() {
-                return core::cmp::Ordering::Greater;
-            }
-            if b_entry.is_none() {
-                return core::cmp::Ordering::Less;
-            }
-            // reliable nodes come first
-            let ae = a_entry.as_ref().unwrap();
-            let be = b_entry.as_ref().unwrap();
-            ae.with_inner(|ae| {
-                be.with_inner(|be| {
-                    let ra = ae.check_unreliable(cur_ts).is_none();
-                    let rb = be.check_unreliable(cur_ts).is_none();
-                    if ra != rb {
-                        if ra {
-                            return core::cmp::Ordering::Less;
-                        } else {
-                            return core::cmp::Ordering::Greater;
+                // our own node always comes last (should not happen, here for completeness)
+                if a_entry.is_none() {
+                    return core::cmp::Ordering::Greater;
+                }
+                if b_entry.is_none() {
+                    return core::cmp::Ordering::Less;
+                }
+                // reliable nodes come first
+                let ae = a_entry.as_ref().unwrap();
+                let be = b_entry.as_ref().unwrap();
+                ae.with_inner(|ae| {
+                    be.with_inner(|be| {
+                        let ra = ae.check_unreliable(cur_ts).is_none();
+                        let rb = be.check_unreliable(cur_ts).is_none();
+                        if ra != rb {
+                            if ra {
+                                return core::cmp::Ordering::Less;
+                            } else {
+                                return core::cmp::Ordering::Greater;
+                            }
                         }
-                    }
 
-                    // latency is the next metric, closer nodes first
-                    let a_latency = match ae.peer_stats().latency.as_ref() {
-                        None => {
-                            // treat unknown latency as slow
-                            return core::cmp::Ordering::Greater;
-                        }
-                        Some(l) => l,
-                    };
-                    let b_latency = match be.peer_stats().latency.as_ref() {
-                        None => {
-                            // treat unknown latency as slow
-                            return core::cmp::Ordering::Less;
-                        }
-                        Some(l) => l,
-                    };
-                    // Sort by average latency
-                    a_latency.average.cmp(&b_latency.average)
+                        // latency is the next metric, closer nodes first
+                        let a_latency = match ae.peer_stats().latency.as_ref() {
+                            None => {
+                                // treat unknown latency as slow
+                                return core::cmp::Ordering::Greater;
+                            }
+                            Some(l) => l,
+                        };
+                        let b_latency = match be.peer_stats().latency.as_ref() {
+                            None => {
+                                // treat unknown latency as slow
+                                return core::cmp::Ordering::Less;
+                            }
+                            Some(l) => l,
+                        };
+                        // Sort by average latency
+                        a_latency.average.cmp(&b_latency.average)
+                    })
                 })
-            })
-        };
+            },
+        ) as RoutingTableEntrySort;
 
-        self.find_peers_with_sort_and_filter(node_count, cur_ts, filters, sort, transform)
+        let pre_sort_filter = Box::new(
+            |_rti: &RoutingTableInner,
+             _all_entries: &mut Vec<Option<Arc<BucketEntry>>>,
+             _cur_ts| {
+                //
+            },
+        ) as RoutingTableEntryPreSortFilter;
+
+        self.find_peers_with_sort_and_filter(
+            node_count,
+            cur_ts,
+            filters,
+            pre_sort_filter,
+            sort,
+            transform,
+        )
     }
 
     #[instrument(level = "trace", skip_all)]
     pub fn find_preferred_closest_nodes<T, O>(
         &self,
         node_count: usize,
-        node_id: TypedHashDigest,
+        hash_coordinate: HashCoordinate,
         mut filters: VecDeque<RoutingTableEntryFilter>,
         transform: T,
     ) -> VeilidAPIResult<Vec<O>>
@@ -1341,16 +1353,14 @@ impl RoutingTableInner {
         let routing_table = self.routing_table();
 
         // Get the crypto kind
-        let crypto_kind = node_id.kind;
-        let crypto = self.crypto();
-        let Some(vcrypto) = crypto.get(crypto_kind) else {
-            apibail_generic!("invalid crypto kind");
-        };
+        let crypto_kind = hash_coordinate.kind();
 
         // Filter to ensure entries support the crypto kind in use
         // always filter out dead and punished nodes
         let filter = Box::new(
-            move |_rti: &RoutingTableInner, opt_entry: Option<Arc<BucketEntry>>| {
+            move |_rti: &RoutingTableInner,
+                  opt_entry: Option<Arc<BucketEntry>>,
+                  _cur_ts: Timestamp| {
                 if let Some(entry) = opt_entry {
                     entry.with_inner(|e| e.crypto_kinds().contains(&crypto_kind))
                 } else {
@@ -1362,55 +1372,78 @@ impl RoutingTableInner {
 
         // Closest sort
         // Distance is done using the node id's distance metric which may vary based on crypto system
-        let sort = |_rti: &RoutingTableInner,
-                    a_entry: &Option<Arc<BucketEntry>>,
-                    b_entry: &Option<Arc<BucketEntry>>| {
-            // same nodes are always the same
-            if let Some(a_entry) = a_entry {
-                if let Some(b_entry) = b_entry {
-                    if Arc::ptr_eq(a_entry, b_entry) {
-                        return core::cmp::Ordering::Equal;
+        let sort = Box::new(
+            |_rti: &RoutingTableInner,
+             a_entry: Option<Arc<BucketEntry>>,
+             b_entry: Option<Arc<BucketEntry>>,
+             _cur_ts: Timestamp| {
+                // same nodes are always the same
+                if let Some(a_entry) = a_entry.clone() {
+                    if let Some(b_entry) = b_entry.clone() {
+                        if a_entry.hash_atom() == b_entry.hash_atom() {
+                            return core::cmp::Ordering::Equal;
+                        }
+                    }
+                } else if b_entry.is_none() {
+                    return core::cmp::Ordering::Equal;
+                }
+
+                // reliable nodes come first, pessimistically treating our own node as unreliable
+                let ra = a_entry
+                    .as_ref()
+                    .is_some_and(|x| x.with_inner(|x| x.check_unreliable(cur_ts).is_none()));
+                let rb = b_entry
+                    .as_ref()
+                    .is_some_and(|x| x.with_inner(|x| x.check_unreliable(cur_ts).is_none()));
+                if ra != rb {
+                    if ra {
+                        return core::cmp::Ordering::Less;
+                    } else {
+                        return core::cmp::Ordering::Greater;
                     }
                 }
-            } else if b_entry.is_none() {
-                return core::cmp::Ordering::Equal;
-            }
 
-            // reliable nodes come first, pessimistically treating our own node as unreliable
-            let ra = a_entry
-                .as_ref()
-                .is_some_and(|x| x.with_inner(|x| x.check_unreliable(cur_ts).is_none()));
-            let rb = b_entry
-                .as_ref()
-                .is_some_and(|x| x.with_inner(|x| x.check_unreliable(cur_ts).is_none()));
-            if ra != rb {
-                if ra {
-                    return core::cmp::Ordering::Less;
+                // get keys
+                let a_key = if let Some(a_entry) = a_entry {
+                    a_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
                 } else {
-                    return core::cmp::Ordering::Greater;
-                }
-            }
+                    routing_table.node_id(crypto_kind)
+                };
+                let b_key = if let Some(b_entry) = b_entry {
+                    b_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
+                } else {
+                    routing_table.node_id(crypto_kind)
+                };
 
-            // get keys
-            let a_key = if let Some(a_entry) = a_entry {
-                a_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
-            } else {
-                routing_table.node_id(crypto_kind)
-            };
-            let b_key = if let Some(b_entry) = b_entry {
-                b_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
-            } else {
-                routing_table.node_id(crypto_kind)
-            };
+                // distance is the next metric, closer nodes first
+                let da = a_key
+                    .ref_value()
+                    .to_bare_hash_coordinate()
+                    .distance(hash_coordinate.ref_value());
+                let db = b_key
+                    .ref_value()
+                    .to_bare_hash_coordinate()
+                    .distance(hash_coordinate.ref_value());
+                da.cmp(&db)
+            },
+        ) as RoutingTableEntrySort;
 
-            // distance is the next metric, closer nodes first
-            let da = vcrypto.distance(&HashDigest::from(a_key.value), &node_id.value);
-            let db = vcrypto.distance(&HashDigest::from(b_key.value), &node_id.value);
-            da.cmp(&db)
-        };
+        let pre_sort_filter = Box::new(
+            |_rti: &RoutingTableInner,
+             _all_entries: &mut Vec<Option<Arc<BucketEntry>>>,
+             _cur_ts: Timestamp| {
+                //
+            },
+        ) as RoutingTableEntryPreSortFilter;
 
-        let out =
-            self.find_peers_with_sort_and_filter(node_count, cur_ts, filters, sort, transform);
+        let out = self.find_peers_with_sort_and_filter(
+            node_count,
+            cur_ts,
+            filters,
+            pre_sort_filter,
+            sort,
+            transform,
+        );
         veilid_log!(self trace ">> find_closest_nodes: node count = {}", out.len());
         Ok(out)
     }
@@ -1418,11 +1451,11 @@ impl RoutingTableInner {
     #[instrument(level = "trace", skip_all)]
     pub fn sort_and_clean_closest_noderefs(
         &self,
-        node_id: TypedHashDigest,
+        hash_coordinate: HashCoordinate,
         closest_nodes: &[NodeRef],
     ) -> Vec<NodeRef> {
         // Lock all noderefs
-        let kind = node_id.kind;
+        let kind = hash_coordinate.kind();
         let mut closest_nodes_locked: Vec<LockedNodeRef> = closest_nodes
             .iter()
             .filter_map(|nr| {
@@ -1436,8 +1469,7 @@ impl RoutingTableInner {
             .collect();
 
         // Sort closest
-        let crypto = self.crypto();
-        let sort = make_closest_noderef_sort(&crypto, node_id);
+        let sort = make_closest_noderef_sort(hash_coordinate);
         closest_nodes_locked.sort_by(sort);
 
         // Unlock noderefs
@@ -1536,7 +1568,7 @@ impl RoutingTableInner {
     #[instrument(level = "trace", skip(self, filter, metric), ret)]
     pub fn get_node_relative_performance(
         &self,
-        node_id: TypedNodeId,
+        node_id: NodeId,
         cur_ts: Timestamp,
         filter: impl Fn(&BucketEntryInner) -> bool,
         metric: impl Fn(&LatencyStats) -> TimestampDuration,
@@ -1594,14 +1626,10 @@ impl RoutingTableInner {
     }
 }
 
-#[instrument(level = "trace", skip_all)]
-pub fn make_closest_noderef_sort<'a>(
-    crypto: &'a Crypto,
-    node_id: TypedHashDigest,
-) -> impl Fn(&LockedNodeRef, &LockedNodeRef) -> core::cmp::Ordering + 'a {
-    let kind = node_id.kind;
-    // Get cryptoversion to check distance with
-    let vcrypto = crypto.get(kind).unwrap();
+pub fn make_closest_noderef_sort(
+    hash_coordinate: HashCoordinate,
+) -> impl Fn(&LockedNodeRef, &LockedNodeRef) -> core::cmp::Ordering {
+    let kind = hash_coordinate.kind();
 
     move |a: &LockedNodeRef, b: &LockedNodeRef| -> core::cmp::Ordering {
         // same nodes are always the same
@@ -1616,26 +1644,42 @@ pub fn make_closest_noderef_sort<'a>(
                 let b_key = b_entry.node_ids().get(kind).unwrap();
 
                 // distance is the next metric, closer nodes first
-                let da = vcrypto.distance(&HashDigest::from(a_key.value), &node_id.value);
-                let db = vcrypto.distance(&HashDigest::from(b_key.value), &node_id.value);
+                let da = a_key
+                    .ref_value()
+                    .to_bare_hash_coordinate()
+                    .distance(hash_coordinate.ref_value());
+                let db = b_key
+                    .ref_value()
+                    .to_bare_hash_coordinate()
+                    .distance(hash_coordinate.ref_value());
                 da.cmp(&db)
             })
         })
     }
 }
 
-pub fn make_closest_node_id_sort(
-    crypto: &Crypto,
-    node_id: TypedNodeId,
-) -> impl Fn(&NodeId, &NodeId) -> core::cmp::Ordering + '_ {
-    let kind = node_id.kind;
-    // Get cryptoversion to check distance with
-    let vcrypto = crypto.get(kind).unwrap();
+pub fn make_closest_bare_node_id_sort(
+    bare_hash_coordinate: BareHashCoordinate,
+) -> impl Fn(&BareNodeId, &BareNodeId) -> core::cmp::Ordering {
+    move |a: &BareNodeId, b: &BareNodeId| -> core::cmp::Ordering {
+        let da = a.to_bare_hash_coordinate().distance(&bare_hash_coordinate);
+        let db = b.to_bare_hash_coordinate().distance(&bare_hash_coordinate);
+        da.cmp(&db)
+    }
+}
 
+pub fn make_closest_node_id_sort(
+    hash_coordinate: HashCoordinate,
+) -> impl Fn(&NodeId, &NodeId) -> core::cmp::Ordering {
     move |a: &NodeId, b: &NodeId| -> core::cmp::Ordering {
-        // distance is the next metric, closer nodes first
-        let da = vcrypto.distance(&HashDigest::from(*a), &HashDigest::from(node_id.value));
-        let db = vcrypto.distance(&HashDigest::from(*b), &HashDigest::from(node_id.value));
+        let da = a
+            .ref_value()
+            .to_bare_hash_coordinate()
+            .distance(hash_coordinate.ref_value());
+        let db = b
+            .ref_value()
+            .to_bare_hash_coordinate()
+            .distance(hash_coordinate.ref_value());
         da.cmp(&db)
     }
 }

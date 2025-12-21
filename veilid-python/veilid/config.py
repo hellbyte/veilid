@@ -2,7 +2,7 @@ from dataclasses import dataclass, fields
 from enum import StrEnum
 from typing import Optional, Self
 
-from .types import TypedKey, TypedSecret, VeilidCapability
+from .types import PublicKey, SecretKey, VeilidCapability
 
 
 class VeilidConfigLogLevel(StrEnum):
@@ -68,10 +68,10 @@ class VeilidConfigBlockStore(ConfigBase):
 
 @dataclass
 class VeilidConfigRoutingTable(ConfigBase):
-    node_id: list[TypedKey]
-    node_id_secret: list[TypedSecret]
+    public_keys: list[PublicKey]
+    secret_keys: list[SecretKey]
     bootstrap: list[str]
-    bootstrap_keys: list[TypedKey]
+    bootstrap_keys: list[PublicKey]
     limit_over_attached: int
     limit_fully_attached: int
     limit_attached_strong: int
@@ -102,6 +102,7 @@ class VeilidConfigDHT(ConfigBase):
     set_value_timeout_ms: int
     set_value_count: int
     set_value_fanout: int
+    consensus_width: int
     min_peer_count: int
     min_peer_refresh_time_ms: int
     validate_dial_info_receipt_time_ms: int
@@ -114,34 +115,15 @@ class VeilidConfigDHT(ConfigBase):
     public_watch_limit: int
     member_watch_limit: int
     max_watch_expiration_ms: int
+    public_transaction_limit: int
+    member_transaction_limit: int
+
 
 @dataclass
 class VeilidConfigTLS(ConfigBase):
     certificate_path: str
     private_key_path: str
     connection_initial_timeout_ms: int
-
-
-@dataclass
-class VeilidConfigHTTPS(ConfigBase):
-    enabled: bool
-    listen_address: str
-    path: str
-    url: Optional[str]
-
-
-@dataclass
-class VeilidConfigHTTP(ConfigBase):
-    enabled: bool
-    listen_address: str
-    path: str
-    url: Optional[str]
-
-
-@dataclass
-class VeilidConfigApplication(ConfigBase):
-    https: VeilidConfigHTTPS
-    http: VeilidConfigHTTP
 
 
 @dataclass
@@ -171,14 +153,14 @@ class VeilidConfigWS(ConfigBase):
     url: Optional[str]
 
 
-@dataclass
-class VeilidConfigWSS(ConfigBase):
-    connect: bool
-    listen: bool
-    max_connections: int
-    listen_address: str
-    path: str
-    url: Optional[str]
+# @dataclass
+# class VeilidConfigWSS(ConfigBase):
+#     connect: bool
+#     listen: bool
+#     max_connections: int
+#     listen_address: str
+#     path: str
+#     url: Optional[str]
 
 
 @dataclass
@@ -186,7 +168,7 @@ class VeilidConfigProtocol(ConfigBase):
     udp: VeilidConfigUDP
     tcp: VeilidConfigTCP
     ws: VeilidConfigWS
-    wss: VeilidConfigWSS
+#    wss: VeilidConfigWSS
 
 
 @dataclass
@@ -213,7 +195,6 @@ class VeilidConfigNetwork(ConfigBase):
     detect_address_changes: Optional[bool]
     restricted_nat_retries: int
     tls: VeilidConfigTLS
-    application: VeilidConfigApplication
     protocol: VeilidConfigProtocol
     privacy: VeilidConfigPrivacy
 

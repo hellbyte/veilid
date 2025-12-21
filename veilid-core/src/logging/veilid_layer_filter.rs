@@ -109,9 +109,9 @@ impl VeilidLayerFilter {
             return false;
         }
 
-        if !inner.empty_log_key_enabled && metadata.fields().field(VEILID_LOG_KEY_FIELD).is_none() {
-            return false;
-        }
+        // if !inner.empty_log_key_enabled && metadata.fields().field(VEILID_LOG_KEY_FIELD).is_none() {
+        //     return false;
+        // }
 
         true
     }

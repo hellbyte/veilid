@@ -9,8 +9,6 @@ impl StorageManager {
         _last_ts: Timestamp,
         _cur_ts: Timestamp,
     ) -> EyreResult<()> {
-        let mut inner = self.inner.lock().await;
-        self.save_metadata_inner(&mut inner).await?;
-        Ok(())
+        self.save_metadata().await
     }
 }

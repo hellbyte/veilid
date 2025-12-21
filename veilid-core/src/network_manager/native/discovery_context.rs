@@ -137,7 +137,7 @@ pub(super) struct DiscoveryContext {
     stop_token: StopToken,
 }
 
-impl_veilid_component_registry_accessor!(DiscoveryContext);
+impl_veilid_component_accessors!(DiscoveryContext);
 
 impl core::ops::Deref for DiscoveryContext {
     type Target = DiscoveryContextUnlockedInner;
@@ -205,7 +205,7 @@ impl DiscoveryContext {
         // filtered down to the protocol/address type we are checking the public address for
         node_ref.clear_last_flows();
 
-        let res = network_result_value_or_log!(self match rpc.rpc_call_status(Destination::direct(node_ref.clone())).await {
+        let res = network_result_value_or_log!(self match Box::pin(rpc.rpc_call_status(Destination::direct(node_ref.clone()))).await {
                 Ok(v) => v,
                 Err(e) => {
                     veilid_log!(self error
@@ -246,10 +246,10 @@ impl DiscoveryContext {
         let inbound_dial_info_entry_filter =
             RoutingTable::make_inbound_dial_info_entry_filter(routing_domain, dial_info_filter);
         let disallow_relays_filter = Box::new(
-            move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
+            move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let v = v.unwrap();
                 v.with(rti, |_rti, e| {
-                    if let Some(n) = e.signed_node_info(routing_domain) {
+                    if let Some(n) = e.node_info(routing_domain) {
                         n.relay_ids().is_empty()
                     } else {
                         false
@@ -258,12 +258,12 @@ impl DiscoveryContext {
             },
         ) as RoutingTableEntryFilter;
         let will_validate_dial_info_filter = Box::new(
-            move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
+            move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let entry = v.unwrap();
                 entry.with(rti, move |_rti, e| {
                     e.node_info(routing_domain)
                         .map(|ni| {
-                            ni.has_capability(CAP_VALIDATE_DIAL_INFO)
+                            ni.has_capability(VEILID_CAPABILITY_VALIDATE_DIAL_INFO)
                                 && ni.is_fully_direct_inbound()
                         })
                         .unwrap_or(false)
@@ -301,7 +301,7 @@ impl DiscoveryContext {
                     .with_dial_info_filter(dial_info_filter),
             );
             async move {
-                if let Some(address) = this.request_public_address(node.clone()).await {
+                if let Some(address) = Box::pin(this.request_public_address(node.clone())).await {
                     let dial_info = this
                         .network_manager()
                         .net()
@@ -687,8 +687,10 @@ impl DiscoveryContext {
         // If we have no external address that matches our local port, then lets try that port
         // on our best external address and see if there's a port forward someone added manually
         ///////////
-        if local_port_matching_external_info.is_none() && best_external_info.is_some() {
-            let c_external_1 = best_external_info.as_ref().unwrap().clone();
+        if let (None, Some(best_external_info)) =
+            (&local_port_matching_external_info, &best_external_info)
+        {
+            let c_external_1 = best_external_info.clone();
 
             // Do a validate_dial_info on the external address, but with the same port as the local port of local interface, from a redirected node
             // This test is to see if a node had manual port forwarding done with the same port number as the local listener
@@ -737,7 +739,7 @@ impl DiscoveryContext {
         // NAT Detection
         ///////////
 
-        let retry_count = self.config().with(|c| c.network.restricted_nat_retries);
+        let retry_count = self.config().network.restricted_nat_retries;
 
         // Full Cone NAT Detection
         ///////////
@@ -883,10 +885,8 @@ impl DiscoveryContext {
 
         // UPNP Automatic Mapping
         ///////////
-
-        let enable_upnp = self
-            .config()
-            .with(|c| c.network.upnp && !c.network.privacy.require_inbound_relay);
+        let config = self.config();
+        let enable_upnp = config.network.upnp && !config.network.privacy.require_inbound_relay;
         if enable_upnp {
             // Attempt a port mapping via all available and enabled mechanisms
             // Try this before the direct mapping in the event that we are restarting

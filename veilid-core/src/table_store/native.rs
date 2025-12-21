@@ -8,7 +8,7 @@ pub(in crate::table_store) struct TableStoreDriver {
     registry: VeilidComponentRegistry,
 }
 
-impl_veilid_component_registry_accessor!(TableStoreDriver);
+impl_veilid_component_accessors!(TableStoreDriver);
 
 impl TableStoreDriver {
     pub fn new(registry: VeilidComponentRegistry) -> Self {
@@ -16,12 +16,11 @@ impl TableStoreDriver {
     }
 
     fn get_dbpath(&self, table: &str) -> VeilidAPIResult<PathBuf> {
-        let config = self.registry().config();
-        let c = config.get();
-        let tablestoredir = c.table_store.directory.clone();
+        let config = self.config();
+        let tablestoredir = config.table_store.directory.clone();
         std::fs::create_dir_all(&tablestoredir).map_err(VeilidAPIError::from)?;
 
-        let namespace = c.namespace.clone();
+        let namespace = config.namespace.clone();
         let dbpath: PathBuf = if namespace.is_empty() {
             [tablestoredir, String::from(table)].iter().collect()
         } else {
@@ -33,13 +32,21 @@ impl TableStoreDriver {
     }
 
     #[expect(clippy::unused_async)]
-    pub async fn open(&self, table_name: &str, column_count: u32) -> VeilidAPIResult<Database> {
+    pub async fn open(
+        &self,
+        table_name: &str,
+        column_count: u32,
+        concurrency: usize,
+    ) -> VeilidAPIResult<Database> {
         let dbpath = self.get_dbpath(table_name)?;
 
         // Ensure permissions are correct
         ensure_file_private_owner(&dbpath).map_err(VeilidAPIError::internal)?;
 
-        let cfg = DatabaseConfig::with_columns(column_count);
+        let cfg = DatabaseConfig::new()
+            .with_columns(column_count)
+            .with_num_conns(concurrency)
+            .with_vacuum_mode(VacuumMode::Incremental);
         let db = Database::open(&dbpath, cfg).map_err(VeilidAPIError::from)?;
 
         // Ensure permissions are correct

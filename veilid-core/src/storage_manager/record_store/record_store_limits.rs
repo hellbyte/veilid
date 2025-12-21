@@ -8,7 +8,7 @@ pub struct RecordStoreLimits {
     /// Maximum size of an individual subkey
     pub max_subkey_size: usize,
     /// Maximum total record data size per record
-    pub max_record_total_size: usize,
+    pub max_record_data_size: usize,
     /// Limit on the total number of records in the table store
     pub max_records: Option<usize>,
     /// Limit on the amount of subkey cache memory to use before evicting cache items
@@ -23,4 +23,12 @@ pub struct RecordStoreLimits {
     pub max_watch_expiration: TimestampDuration,
     /// Min expiration duration per watch
     pub min_watch_expiration: TimestampDuration,
+    /// Max number of anonymous transactions
+    pub public_transaction_limit: usize,
+    /// Max number of transactions per schema member
+    pub member_transaction_limit: usize,
+    /// Per-operation transaction timeout
+    pub transaction_timeout: TimestampDuration,
+    /// Store database connection pool size
+    pub pool_concurrency: usize,
 }

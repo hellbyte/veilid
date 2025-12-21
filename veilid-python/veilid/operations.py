@@ -8,6 +8,9 @@ class Operation(StrEnum):
     IS_SHUTDOWN = "IsShutdown"
     ATTACH = "Attach"
     DETACH = "Detach"
+    GENERATE_MEMBER_ID = "GenerateMemberId"
+    GET_DHT_RECORD_KEY = "GetDhtRecordKey"
+    TRANSACT_DHT_RECORDS = "TransactDhtRecords"
     NEW_PRIVATE_ROUTE = "NewPrivateRoute"
     NEW_CUSTOM_PRIVATE_ROUTE = "NewCustomPrivateRoute"
     IMPORT_REMOTE_PRIVATE_ROUTE = "ImportRemotePrivateRoute"
@@ -19,8 +22,8 @@ class Operation(StrEnum):
     DELETE_TABLE_DB = "DeleteTableDb"
     TABLE_DB = "TableDb"
     TABLE_DB_TRANSACTION = "TableDbTransaction"
+    DHT_TRANSACTION = "DhtTransaction"
     GET_CRYPTO_SYSTEM = "GetCryptoSystem"
-    BEST_CRYPTO_SYSTEM = "BestCryptoSystem"
     CRYPTO_SYSTEM = "CryptoSystem"
     VERIFY_SIGNATURES = "VerifySignatures"
     GENERATE_SIGNATURES = "GenerateSignatures"
@@ -31,6 +34,7 @@ class Operation(StrEnum):
     VEILID_VERSION = "VeilidVersion"
     VEILID_FEATURES = "VeilidFeatures"
     DEFAULT_VEILID_CONFIG = "DefaultVeilidConfig"
+    VALID_CRYPTO_KINDS = "ValidCryptoKinds"
 
 
 class RoutingContextOperation(StrEnum):
@@ -72,6 +76,15 @@ class TableDbTransactionOperation(StrEnum):
     DELETE = "Delete"
 
 
+class DhtTransactionOperation(StrEnum):
+    INVALID_ID = "InvalidId"
+    COMMIT = "Commit"
+    ROLLBACK = "Rollback"
+    GET = "Get"
+    SET = "Set"
+    INSPECT = "Inspect"
+
+
 class CryptoSystemOperation(StrEnum):
     INVALID_ID = "InvalidId"
     RELEASE = "Release"
@@ -80,7 +93,20 @@ class CryptoSystemOperation(StrEnum):
     COMPUTE_DH = "ComputeDh"
     GENERATE_SHARED_SECRET = "GenerateSharedSecret"
     RANDOM_BYTES = "RandomBytes"
+    SHARED_SECRET_LENGTH = "SharedSecretLength"
+    NONCE_LENGTH = "NonceLength"
+    HASH_DIGEST_LENGTH = "HashDigestLength"
+    PUBLIC_KEY_LENGTH = "PublicKeyLength"
+    SECRET_KEY_LENGTH = "SecretKeyLength"
+    SIGNATURE_LENGTH = "SignatureLength"
     DEFAULT_SALT_LENGTH = "DefaultSaltLength"
+    AEAD_OVERHEAD = "AeadOverhead"
+    CHECK_SHARED_SECRET = "CheckSharedSecret"
+    CHECK_NONCE = "CheckNonce"
+    CHECK_HASH_DIGEST = "CheckHashDigest"
+    CHECK_PUBLIC_KEY = "CheckPublicKey"
+    CHECK_SECRET_KEY = "CheckSecretKey"
+    CHECK_SIGNATURE = "CheckSignature"
     HASH_PASSWORD = "HashPassword"
     VERIFY_PASSWORD = "VerifyPassword"
     DERIVE_SHARED_SECRET = "DeriveSharedSecret"
@@ -93,7 +119,6 @@ class CryptoSystemOperation(StrEnum):
     DISTANCE = "Distance"
     SIGN = "Sign"
     VERIFY = "Verify"
-    AEAD_OVERHEAD = "AeadOverhead"
     DECRYPT_AEAD = "DecryptAead"
     ENCRYPT_AEAD = "EncryptAead"
     CRYPT_NO_AUTH = "CryptNoAuth"

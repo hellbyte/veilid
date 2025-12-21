@@ -161,11 +161,6 @@ impl ApiTracingLayer {
     }
 }
 
-pub struct SpanDuration {
-    start: Timestamp,
-    end: Timestamp,
-}
-
 fn simplify_file(file: &'static str) -> &'static str {
     file.static_transform(|file| {
         let out = {
@@ -203,48 +198,6 @@ impl<S: Subscriber + for<'a> registry::LookupSpan<'a>> Layer<S> for ApiTracingLa
         if let Some(span_ref) = ctx.span(id) {
             let mut extensions_mut = span_ref.extensions_mut();
             extensions_mut.insert::<VeilidKeyedStringRecorder>(new_debug_record);
-            if crate::DURATION_LOG_FACILITIES.contains(&attrs.metadata().target()) {
-                extensions_mut.insert::<SpanDuration>(SpanDuration {
-                    start: Timestamp::now(),
-                    end: Timestamp::default(),
-                });
-            }
-        }
-    }
-
-    fn on_close(&self, id: span::Id, ctx: layer::Context<'_, S>) {
-        if !API_LOGGER_ENABLED.load(Ordering::Acquire) {
-            // Optimization if api logger has no callbacks
-            return;
-        }
-        if let Some(span_ref) = ctx.span(&id) {
-            let mut extensions_mut = span_ref.extensions_mut();
-            if let Some(span_duration) = extensions_mut.get_mut::<SpanDuration>() {
-                span_duration.end = Timestamp::now();
-                let duration = span_duration.end.saturating_sub(span_duration.start);
-                let meta = span_ref.metadata();
-
-                let log_key =
-                    if let Some(span_ksr) = extensions_mut.get_mut::<VeilidKeyedStringRecorder>() {
-                        span_ksr.log_key()
-                    } else {
-                        ""
-                    };
-
-                self.emit_log(
-                    meta,
-                    log_key,
-                    &format!(
-                        " {}{}: duration={}",
-                        span_ref
-                            .parent()
-                            .map(|p| format!("{}::", p.name()))
-                            .unwrap_or_default(),
-                        span_ref.name(),
-                        format_opt_ts(Some(duration))
-                    ),
-                );
-            }
         }
     }
 
@@ -267,14 +220,32 @@ impl<S: Subscriber + for<'a> registry::LookupSpan<'a>> Layer<S> for ApiTracingLa
         }
     }
 
-    fn on_event(&self, event: &tracing::Event<'_>, _ctx: layer::Context<'_, S>) {
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: layer::Context<'_, S>) {
         if !API_LOGGER_ENABLED.load(Ordering::Acquire) {
             // Optimization if api logger has no callbacks
             return;
         }
+
         let mut recorder = VeilidKeyedStringRecorder::new();
         event.record(&mut recorder);
+
         let meta = event.metadata();
+
+        // If the log key is not on the event, get it from the parent span
+        if recorder.log_key() == "" {
+            if let Some(span) = ctx.event_span(event) {
+                if let Some(debug_record) = span.extensions().get::<VeilidKeyedStringRecorder>() {
+                    if debug_record.log_key() != "" {
+                        self.emit_log(
+                            meta,
+                            debug_record.log_key(),
+                            &format!("{} {}", recorder.display(), debug_record.display()),
+                        );
+                        return;
+                    }
+                }
+            }
+        }
         self.emit_log(meta, recorder.log_key(), recorder.display());
     }
 }

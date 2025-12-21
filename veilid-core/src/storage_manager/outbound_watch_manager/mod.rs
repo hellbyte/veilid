@@ -1,12 +1,14 @@
 mod outbound_watch;
 mod outbound_watch_parameters;
+mod outbound_watch_per_node_state;
 mod outbound_watch_state;
-mod per_node_state;
+mod per_node_key;
 
 pub(in crate::storage_manager) use outbound_watch::*;
 pub(in crate::storage_manager) use outbound_watch_parameters::*;
+pub(in crate::storage_manager) use outbound_watch_per_node_state::*;
 pub(in crate::storage_manager) use outbound_watch_state::*;
-pub(in crate::storage_manager) use per_node_state::*;
+pub(in crate::storage_manager) use per_node_key::*;
 
 use super::*;
 
@@ -19,20 +21,20 @@ impl_veilid_log_facility!("stor");
 pub(in crate::storage_manager) struct OutboundWatchManager {
     /// Each watch per record key
     #[serde(skip)]
-    pub outbound_watches: HashMap<TypedRecordKey, OutboundWatch>,
+    pub outbound_watches: HashMap<OpaqueRecordKey, OutboundWatch>,
     /// Last known active watch per node+record
     #[serde_as(as = "Vec<(_, _)>")]
-    pub per_node_states: HashMap<PerNodeKey, PerNodeState>,
+    pub per_node_states: HashMap<PerNodeKey, OutboundWatchPerNodeState>,
     /// Value changed updates that need inpection to determine if they should be reported
     #[serde(skip)]
-    pub needs_change_inspection: HashMap<TypedRecordKey, ValueSubkeyRangeSet>,
+    pub needs_change_inspection: HashMap<RecordKey, ValueSubkeyRangeSet>,
 }
 
 impl fmt::Display for OutboundWatchManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = format!("outbound_watches({}): [\n", self.outbound_watches.len());
         {
-            let mut keys = self.outbound_watches.keys().copied().collect::<Vec<_>>();
+            let mut keys = self.outbound_watches.keys().cloned().collect::<Vec<_>>();
             keys.sort();
 
             for k in keys {
@@ -43,7 +45,7 @@ impl fmt::Display for OutboundWatchManager {
         out += "]\n";
         out += &format!("per_node_states({}): [\n", self.per_node_states.len());
         {
-            let mut keys = self.per_node_states.keys().copied().collect::<Vec<_>>();
+            let mut keys = self.per_node_states.keys().cloned().collect::<Vec<_>>();
             keys.sort();
 
             for k in keys {
@@ -60,7 +62,7 @@ impl fmt::Display for OutboundWatchManager {
             let mut keys = self
                 .needs_change_inspection
                 .keys()
-                .copied()
+                .cloned()
                 .collect::<Vec<_>>();
             keys.sort();
 
@@ -90,9 +92,9 @@ impl OutboundWatchManager {
         }
     }
 
-    pub fn prepare(&mut self, routing_table: VeilidComponentGuard<'_, RoutingTable>) {
+    pub fn prepare(&mut self, routing_table: &RoutingTable) {
         for (pnk, pns) in &mut self.per_node_states {
-            pns.watch_node_ref = match routing_table.lookup_node_ref(pnk.node_id) {
+            pns.watch_node_ref = match routing_table.lookup_node_ref(pnk.node_id.clone()) {
                 Ok(v) => v,
                 Err(e) => {
                     veilid_log!(routing_table debug "Error looking up outbound watch node ref: {}", e);
@@ -103,7 +105,7 @@ impl OutboundWatchManager {
         self.per_node_states
             .retain(|_, v| v.watch_node_ref.is_some());
 
-        let keys = self.per_node_states.keys().copied().collect::<HashSet<_>>();
+        let keys = self.per_node_states.keys().cloned().collect::<HashSet<_>>();
 
         for v in self.outbound_watches.values_mut() {
             if let Some(state) = v.state_mut() {
@@ -116,31 +118,36 @@ impl OutboundWatchManager {
 
     pub fn set_desired_watch(
         &mut self,
-        record_key: TypedRecordKey,
+        record_key: RecordKey,
         desired_watch: Option<OutboundWatchParameters>,
     ) {
-        match self.outbound_watches.get_mut(&record_key) {
+        let opaque_record_key = record_key.opaque();
+        match self.outbound_watches.get_mut(&opaque_record_key) {
             Some(w) => {
                 // Replace desired watch
                 w.set_desired(desired_watch);
 
                 // Remove if the watch is done (shortcut the dead state)
                 if w.state().is_none() && w.state().is_none() {
-                    self.outbound_watches.remove(&record_key);
+                    self.outbound_watches.remove(&opaque_record_key);
                 }
             }
             None => {
                 // Watch does not exist, add one if that's what is desired
                 if let Some(desired) = desired_watch {
                     self.outbound_watches
-                        .insert(record_key, OutboundWatch::new(record_key, desired));
+                        .insert(opaque_record_key, OutboundWatch::new(record_key, desired));
                 }
             }
         }
     }
 
-    pub fn set_next_reconcile_ts(&mut self, record_key: TypedRecordKey, next_ts: Timestamp) {
-        if let Some(outbound_watch) = self.outbound_watches.get_mut(&record_key) {
+    pub fn set_next_reconcile_ts(
+        &mut self,
+        opaque_record_key: OpaqueRecordKey,
+        next_ts: Timestamp,
+    ) {
+        if let Some(outbound_watch) = self.outbound_watches.get_mut(&opaque_record_key) {
             if let Some(state) = outbound_watch.state_mut() {
                 state.edit(&self.per_node_states, |editor| {
                     editor.set_next_reconcile_ts(next_ts);
@@ -163,7 +170,7 @@ impl OutboundWatchManager {
         for (pnk, pns) in &self.per_node_states {
             if pns.count == 0 {
                 // If per-node watch is done, add to finished list
-                finished_pnks.insert(*pnk);
+                finished_pnks.insert(pnk.clone());
             } else if !pns
                 .watch_node_ref
                 .as_ref()
@@ -172,10 +179,10 @@ impl OutboundWatchManager {
                 .is_alive()
             {
                 // If node is unreachable add to dead list
-                dead_pnks.insert(*pnk);
-            } else if cur_ts >= pns.expiration_ts {
+                dead_pnks.insert(pnk.clone());
+            } else if cur_ts >= pns.expiration {
                 // If per-node watch has expired add to expired list
-                expired_pnks.insert(*pnk);
+                expired_pnks.insert(pnk.clone());
             }
         }
 
@@ -206,9 +213,25 @@ impl OutboundWatchManager {
     /// Set a record up to be inspected for changed subkeys
     pub fn enqueue_change_inspect(
         &mut self,
-        record_key: TypedRecordKey,
+        storage_manager: &StorageManager,
+        record_key: RecordKey,
         subkeys: ValueSubkeyRangeSet,
     ) {
+        veilid_log!(storage_manager debug "change inspect: record_key={} subkeys={}", record_key, subkeys);
+
+        let opaque_record_key = record_key.opaque();
+
+        // Get the outbound watch
+        let Some(outbound_watch) = self.outbound_watches.get(&opaque_record_key) else {
+            // No outbound watch means no change inspect
+            return;
+        };
+
+        if outbound_watch.state().is_none() {
+            // No outbound watch current state means no change inspect
+            return;
+        };
+
         self.needs_change_inspection
             .entry(record_key)
             .and_modify(|x| *x = x.union(&subkeys))

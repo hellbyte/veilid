@@ -3,10 +3,10 @@
 use super::*;
 
 use libc::{
-    close, freeifaddrs, getifaddrs, if_nametoindex, ifaddrs, ioctl, pid_t, sockaddr, sockaddr_in6,
-    socket, sysctl, time_t, AF_INET6, CTL_NET, IFF_BROADCAST, IFF_LOOPBACK, IFF_POINTOPOINT,
-    IFF_RUNNING, IFNAMSIZ, NET_RT_FLAGS, PF_ROUTE, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTA_DST,
-    RTA_GATEWAY, RTF_GATEWAY, SOCK_DGRAM,
+    close, freeifaddrs, getifaddrs, ifaddrs, ioctl, pid_t, sockaddr, sockaddr_in6, socket, sysctl,
+    time_t, AF_INET6, CTL_NET, IFF_BROADCAST, IFF_LOOPBACK, IFF_POINTOPOINT, IFF_RUNNING, IFNAMSIZ,
+    NET_RT_FLAGS, PF_ROUTE, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTA_DST, RTA_GATEWAY, RTF_GATEWAY,
+    SOCK_DGRAM,
 };
 use sockaddr_tools::SockAddr;
 use std::ffi::CStr;
@@ -438,6 +438,8 @@ impl PlatformSupportApple {
 
         // Ask for all the addresses we have
         let ifaddrs = IfAddrs::new()?;
+        let mut ifindex = 0;
+        let mut last_name = String::new();
         for ifaddr in ifaddrs.iter() {
             // Get the interface name
             let ifname = unsafe { CStr::from_ptr(ifaddr.ifa_name) }
@@ -445,7 +447,10 @@ impl PlatformSupportApple {
                 .into_owned();
 
             // Get the interface index
-            let ifindex = unsafe { if_nametoindex(ifaddr.ifa_name) };
+            if last_name != ifname {
+                last_name = ifname.clone();
+                ifindex += 1;
+            }
 
             // Map the name to a NetworkInterface
             if !interfaces.contains_key(&ifname) {

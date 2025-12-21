@@ -5,7 +5,7 @@ impl_veilid_log_facility!("stor");
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::storage_manager) struct OutboundWatch {
     /// Record key being watched
-    record_key: TypedRecordKey,
+    record_key: RecordKey,
 
     /// Current state
     /// None means inactive/cancelled
@@ -37,12 +37,17 @@ impl fmt::Display for OutboundWatch {
 
 impl OutboundWatch {
     /// Create new outbound watch with desired parameters
-    pub fn new(record_key: TypedRecordKey, desired: OutboundWatchParameters) -> Self {
+    pub fn new(record_key: RecordKey, desired: OutboundWatchParameters) -> Self {
         Self {
             record_key,
             state: None,
             desired: Some(desired),
         }
+    }
+
+    /// Full record key
+    pub fn record_key(&self) -> RecordKey {
+        self.record_key.clone()
     }
 
     /// Get current watch state if it exists
@@ -89,7 +94,7 @@ impl OutboundWatch {
         };
 
         // Check if desired parameters have expired
-        if desired.expiration_ts.as_u64() != 0 && desired.expiration_ts <= cur_ts {
+        if desired.expiration.as_u64() != 0 && desired.expiration <= cur_ts {
             // Expired
             self.set_desired(None);
             return;
@@ -254,11 +259,10 @@ impl OutboundWatch {
         // If the watch has per node watches that have expired, but we can extend our watch then renew.
         // Do this only within RENEW_OUTBOUND_WATCHES_DURATION_SECS of the actual expiration.
         // If we're looking at this after the actual expiration, don't try because the watch id will have died.
-        let renew_ts = cur_ts + TimestampDuration::new_secs(RENEW_OUTBOUND_WATCHES_DURATION_SECS);
-        if renew_ts >= state.min_expiration_ts()
-            && cur_ts < state.min_expiration_ts()
-            && (state.params().expiration_ts.as_u64() == 0
-                || renew_ts < state.params().expiration_ts)
+        let renew_ts = cur_ts.later(RENEW_OUTBOUND_WATCHES_DURATION);
+        if renew_ts >= state.min_expiration()
+            && cur_ts < state.min_expiration()
+            && (state.params().expiration.as_u64() == 0 || renew_ts < state.params().expiration)
         {
             veilid_log!(registry debug target: "watch", "OutboundWatch({}): wants_per_node_watch_update because cur_ts is in expiration renew window", self.record_key);
             return true;

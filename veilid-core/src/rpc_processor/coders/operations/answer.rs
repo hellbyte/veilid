@@ -9,7 +9,7 @@ impl RPCAnswer {
     pub fn new(detail: RPCAnswerDetail) -> Self {
         Self { detail }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         self.detail.validate(validate_context)
     }
     pub fn desc(&self) -> &'static str {
@@ -41,6 +41,8 @@ pub(in crate::rpc_processor) enum RPCAnswerDetail {
     SetValueA(Box<RPCOperationSetValueA>),
     WatchValueA(Box<RPCOperationWatchValueA>),
     InspectValueA(Box<RPCOperationInspectValueA>),
+    TransactBeginA(Box<RPCOperationTransactBeginA>),
+    TransactCommandA(Box<RPCOperationTransactCommandA>),
     #[cfg(feature = "unstable-blockstore")]
     SupplyBlockA(Box<RPCOperationSupplyBlockA>),
     #[cfg(feature = "unstable-blockstore")]
@@ -63,6 +65,8 @@ impl RPCAnswerDetail {
             RPCAnswerDetail::SetValueA(_) => "SetValueA",
             RPCAnswerDetail::WatchValueA(_) => "WatchValueA",
             RPCAnswerDetail::InspectValueA(_) => "InspectValueA",
+            RPCAnswerDetail::TransactBeginA(_) => "TransactBeginA",
+            RPCAnswerDetail::TransactCommandA(_) => "TransactCommandA",
             #[cfg(feature = "unstable-blockstore")]
             RPCAnswerDetail::SupplyBlockA(_) => "SupplyBlockA",
             #[cfg(feature = "unstable-blockstore")]
@@ -75,7 +79,7 @@ impl RPCAnswerDetail {
             RPCAnswerDetail::CancelTunnelA(_) => "CancelTunnelA",
         }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         match self {
             RPCAnswerDetail::StatusA(r) => r.validate(validate_context),
             RPCAnswerDetail::FindNodeA(r) => r.validate(validate_context),
@@ -84,6 +88,8 @@ impl RPCAnswerDetail {
             RPCAnswerDetail::SetValueA(r) => r.validate(validate_context),
             RPCAnswerDetail::WatchValueA(r) => r.validate(validate_context),
             RPCAnswerDetail::InspectValueA(r) => r.validate(validate_context),
+            RPCAnswerDetail::TransactBeginA(r) => r.validate(validate_context),
+            RPCAnswerDetail::TransactCommandA(r) => r.validate(validate_context),
             #[cfg(feature = "unstable-blockstore")]
             RPCAnswerDetail::SupplyBlockA(r) => r.validate(validate_context),
             #[cfg(feature = "unstable-blockstore")]
@@ -100,70 +106,80 @@ impl RPCAnswerDetail {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::answer::detail::Reader,
     ) -> Result<RPCAnswerDetail, RPCError> {
-        let which_reader = reader.which().map_err(RPCError::protocol)?;
+        let which_reader = reader.which()?;
         let out = match which_reader {
             veilid_capnp::answer::detail::StatusA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationStatusA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::StatusA(Box::new(out))
             }
             veilid_capnp::answer::detail::FindNodeA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationFindNodeA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::FindNodeA(Box::new(out))
             }
             veilid_capnp::answer::detail::AppCallA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationAppCallA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::AppCallA(Box::new(out))
             }
             veilid_capnp::answer::detail::GetValueA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationGetValueA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::GetValueA(Box::new(out))
             }
             veilid_capnp::answer::detail::SetValueA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationSetValueA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::SetValueA(Box::new(out))
             }
             veilid_capnp::answer::detail::WatchValueA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationWatchValueA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::WatchValueA(Box::new(out))
             }
             veilid_capnp::answer::detail::InspectValueA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationInspectValueA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::InspectValueA(Box::new(out))
             }
+            veilid_capnp::answer::detail::TransactBeginA(r) => {
+                let op_reader = r?;
+                let out = RPCOperationTransactBeginA::decode(decode_context, &op_reader)?;
+                RPCAnswerDetail::TransactBeginA(Box::new(out))
+            }
+            veilid_capnp::answer::detail::TransactCommandA(r) => {
+                let op_reader = r?;
+                let out = RPCOperationTransactCommandA::decode(decode_context, &op_reader)?;
+                RPCAnswerDetail::TransactCommandA(Box::new(out))
+            }
             #[cfg(feature = "unstable-blockstore")]
             veilid_capnp::answer::detail::SupplyBlockA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationSupplyBlockA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::SupplyBlockA(Box::new(out))
             }
             #[cfg(feature = "unstable-blockstore")]
             veilid_capnp::answer::detail::FindBlockA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationFindBlockA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::FindBlockA(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::answer::detail::StartTunnelA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationStartTunnelA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::StartTunnelA(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::answer::detail::CompleteTunnelA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationCompleteTunnelA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::CompleteTunnelA(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::answer::detail::CancelTunnelA(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationCancelTunnelA::decode(decode_context, &op_reader)?;
                 RPCAnswerDetail::CancelTunnelA(Box::new(out))
             }
@@ -186,6 +202,13 @@ impl RPCAnswerDetail {
             RPCAnswerDetail::InspectValueA(d) => {
                 d.encode(&mut builder.reborrow().init_inspect_value_a())
             }
+            RPCAnswerDetail::TransactBeginA(d) => {
+                d.encode(&mut builder.reborrow().init_transact_begin_a())
+            }
+            RPCAnswerDetail::TransactCommandA(d) => {
+                d.encode(&mut builder.reborrow().init_transact_command_a())
+            }
+
             #[cfg(feature = "unstable-blockstore")]
             RPCAnswerDetail::SupplyBlockA(d) => {
                 d.encode(&mut builder.reborrow().init_supply_block_a())

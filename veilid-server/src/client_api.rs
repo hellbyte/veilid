@@ -240,7 +240,7 @@ impl ClientApi {
             let settings_json_string = serialize_json(settings);
             let mut settings_json =
                 json::parse(&settings_json_string).map_err(VeilidAPIError::internal)?;
-            settings_json["core"]["network"].remove("node_id_secret");
+            settings_json["core"]["network"]["routing_table"].remove("secret_keys");
             settings_json["core"]["protected_store"].remove("device_encryption_key_password");
             settings_json["core"]["protected_store"].remove("new_device_encryption_key_password");
             let safe_settings_json = settings_json.to_string();
@@ -307,9 +307,7 @@ impl ClientApi {
         // Marshal json + newline => NDJSON
         let response_string =
             Arc::new(serialize_json(veilid_remote_api::RecvMessage::Response(response)) + "\n");
-        if let Err(e) = responses_tx.send_async(response_string).await {
-            eprintln!("response not sent: {}", e)
-        }
+        let _ = responses_tx.send_async(response_string).await;
         VeilidAPIResult::Ok(None)
     }
 
@@ -386,7 +384,7 @@ impl ClientApi {
         let (responses_tx, responses_rx) = flume::unbounded();
 
         // Start sending updates
-        let id = get_timestamp();
+        let id = Timestamp::now().as_u64();
         self.inner
             .lock()
             .update_channels
@@ -438,9 +436,9 @@ impl ClientApi {
             };
 
             // Enqueue unordered future to process request line in parallel
-            unord.push(pin_dyn_future!(self
-                .clone()
-                .process_request_line(jrp.clone(), request_line)));
+            let this = self.clone();
+            let req_jh = this.process_request_line(jrp.clone(), request_line);
+            unord.push(pin_dyn_future!(req_jh));
         }
 
         // Stop sending updates

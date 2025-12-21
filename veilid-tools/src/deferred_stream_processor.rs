@@ -14,6 +14,12 @@ struct DeferredStreamProcessorInner {
     opt_join_handle: Option<MustJoinHandle<()>>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DeferredStreamResult {
+    Done,
+    Continue,
+}
+
 /// Background processor for streams
 /// Handles streams to completion, passing each item from the stream to a callback
 #[derive(Debug)]
@@ -65,20 +71,20 @@ impl DeferredStreamProcessor {
     async fn processor(stop_token: StopToken, dsc_rx: flume::Receiver<PinBoxFutureStatic<()>>) {
         let mut unord = FuturesUnordered::<PinBoxFutureStatic<()>>::new();
 
-        // Ensure the unord never finishes
-        unord.push(Box::pin(std::future::pending()));
+        // Ensure the unord never finishes unless the stop source got dropped
+        unord.push(Box::pin(stop_token));
 
         // Processor loop
         let mut unord_fut = unord.next();
         let mut dsc_fut = dsc_rx.recv_async();
-        while let Ok(res) = select(unord_fut, dsc_fut)
-            .timeout_at(stop_token.clone())
-            .await
-        {
+        loop {
+            let res = select(unord_fut, dsc_fut).await;
             match res {
                 Either::Left((x, old_dsc_fut)) => {
-                    // Unord future processor should never get empty
-                    assert!(x.is_some());
+                    // If the unord future gets empty, the stop token got dropped and all the other tasks finished
+                    if x.is_none() {
+                        break;
+                    }
 
                     // Make another unord future to process
                     unord_fut = unord.next();
@@ -119,7 +125,7 @@ impl DeferredStreamProcessor {
     >(
         &self,
         mut receiver: S,
-        mut handler: impl FnMut(T) -> PinBoxFutureStatic<bool> + Send + 'static,
+        mut handler: impl FnMut(T) -> PinBoxFutureStatic<DeferredStreamResult> + Send + 'static,
     ) -> bool {
         let (st, dsc_tx) = {
             let inner = self.inner.lock();
@@ -133,7 +139,7 @@ impl DeferredStreamProcessor {
         };
         let drp = Box::pin(async move {
             while let Ok(Some(res)) = receiver.next().timeout_at(st.clone()).await {
-                if !handler(res).await {
+                if matches!(handler(res).await, DeferredStreamResult::Done) {
                     break;
                 }
             }

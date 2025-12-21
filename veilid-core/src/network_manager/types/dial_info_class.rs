@@ -12,7 +12,7 @@ pub(crate) enum DialInfoClass {
 }
 
 impl DialInfoClass {
-    // Is a signal required to do an inbound hole-punch?
+    // Is a signal required to do an inbound hole-punch or reverse connection?
     pub fn requires_signal(&self) -> bool {
         matches!(
             self,
@@ -20,17 +20,10 @@ impl DialInfoClass {
         )
     }
 
-    // Does a relay node need to be allocated for this dial info?
     // For full cone NAT, the relay itself may not be used but the keepalive sent to it
     // is required to keep the NAT mapping valid in the router state table
-    pub fn requires_relay(&self) -> bool {
-        matches!(
-            self,
-            Self::FullConeNAT
-                | Self::Blocked
-                | Self::AddressRestrictedNAT
-                | Self::PortRestrictedNAT
-        )
+    pub fn wants_nat_keepalive(&self) -> bool {
+        matches!(self, Self::FullConeNAT)
     }
 }
 

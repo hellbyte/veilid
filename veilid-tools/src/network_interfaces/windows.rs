@@ -200,14 +200,14 @@ impl IpAdapterAddresses {
             .into_owned()
     }
 
-    pub fn prefixes(&self) -> PrefixesIterator {
+    pub fn prefixes(&self) -> PrefixesIterator<'_> {
         PrefixesIterator {
             _phantom: std::marker::PhantomData {},
             next: unsafe { (*self.data).FirstPrefix },
         }
     }
 
-    pub fn unicast_addresses(&self) -> UnicastAddressesIterator {
+    pub fn unicast_addresses(&self) -> UnicastAddressesIterator<'_> {
         UnicastAddressesIterator {
             _phantom: std::marker::PhantomData {},
             next: unsafe { (*self.data).FirstUnicastAddress },

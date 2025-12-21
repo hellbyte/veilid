@@ -12,6 +12,7 @@ pub(crate) enum ProtocolNetworkConnection {
     RawTcp(tcp::RawTcpNetworkConnection),
     WsAccepted(ws::WebSocketNetworkConnectionAccepted),
     Ws(ws::WebsocketNetworkConnectionWS),
+    #[cfg(feature = "enable-protocol-wss")]
     Wss(ws::WebsocketNetworkConnectionWSS),
     //WebRTC(wrtc::WebRTCNetworkConnection),
 }
@@ -40,7 +41,17 @@ impl ProtocolNetworkConnection {
                 )
                 .await
             }
-            ProtocolType::WS | ProtocolType::WSS => {
+            ProtocolType::WS => {
+                ws::WebsocketProtocolHandler::connect(
+                    registry,
+                    local_address,
+                    dial_info,
+                    timeout_ms,
+                )
+                .await
+            }
+            #[cfg(feature = "enable-protocol-wss")]
+            ProtocolType::WSS => {
                 ws::WebsocketProtocolHandler::connect(
                     registry,
                     local_address,
@@ -58,6 +69,7 @@ impl ProtocolNetworkConnection {
             Self::RawTcp(t) => t.flow(),
             Self::WsAccepted(w) => w.flow(),
             Self::Ws(w) => w.flow(),
+            #[cfg(feature = "enable-protocol-wss")]
             Self::Wss(w) => w.flow(),
         }
     }
@@ -68,6 +80,7 @@ impl ProtocolNetworkConnection {
             Self::RawTcp(t) => t.close().await,
             Self::WsAccepted(w) => w.close().await,
             Self::Ws(w) => w.close().await,
+            #[cfg(feature = "enable-protocol-wss")]
             Self::Wss(w) => w.close().await,
         }
     }
@@ -78,6 +91,7 @@ impl ProtocolNetworkConnection {
             Self::RawTcp(t) => t.send(message).await,
             Self::WsAccepted(w) => w.send(message).await,
             Self::Ws(w) => w.send(message).await,
+            #[cfg(feature = "enable-protocol-wss")]
             Self::Wss(w) => w.send(message).await,
         }
     }
@@ -87,6 +101,7 @@ impl ProtocolNetworkConnection {
             Self::RawTcp(t) => t.recv().await,
             Self::WsAccepted(w) => w.recv().await,
             Self::Ws(w) => w.recv().await,
+            #[cfg(feature = "enable-protocol-wss")]
             Self::Wss(w) => w.recv().await,
         }
     }

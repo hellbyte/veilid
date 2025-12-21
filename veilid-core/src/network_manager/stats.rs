@@ -105,6 +105,7 @@ impl NetworkManager {
                 bps_down: 0.into(),
                 bps_up: 0.into(),
                 peers: Vec::new(),
+                node_ids: Vec::new(),
             });
         }
         let routing_table = self.routing_table();
@@ -127,7 +128,7 @@ impl NetworkManager {
                     if let Ok(Some(nr)) = routing_table.lookup_node_ref(k) {
                         let peer_stats = nr.peer_stats();
                         let peer = PeerTableData {
-                            node_ids: nr.node_ids().iter().copied().collect(),
+                            node_ids: nr.node_ids().iter().cloned().collect(),
                             peer_address: v.last_connection.remote().to_string(),
                             peer_stats,
                         };
@@ -136,6 +137,7 @@ impl NetworkManager {
                 }
                 out
             },
+            node_ids: routing_table.node_ids().to_vec(),
         })
     }
 

@@ -13,7 +13,7 @@ impl RPCProcessor {
     pub async fn rpc_call_find_node(
         &self,
         dest: Destination,
-        node_id: TypedNodeId,
+        node_id: NodeId,
         capabilities: Vec<VeilidCapability>,
     ) -> RPCNetworkResult<Answer<Vec<Arc<PeerInfo>>>> {
         let _guard = self
@@ -36,7 +36,7 @@ impl RPCProcessor {
         }
 
         let find_node_q_detail = RPCQuestionDetail::FindNodeQ(Box::new(
-            RPCOperationFindNodeQ::new(node_id, capabilities.clone()),
+            RPCOperationFindNodeQ::new(node_id.clone(), capabilities.clone())?,
         ));
         let find_node_q = RPCQuestion::new(
             network_result_try!(self.get_destination_respond_to(&dest)?),
@@ -46,10 +46,11 @@ impl RPCProcessor {
         let debug_string = format!("FindNode(node_id={}) => {}", node_id, dest);
 
         // Send the find_node request
-        let waitable_reply = network_result_try!(self.question(dest, find_node_q, None).await?);
+        let waitable_reply =
+            network_result_try!(self.question(dest, find_node_q, None, None).await?);
 
         // Keep the reply private route that was used to return with the answer
-        let reply_private_route = waitable_reply.context.reply_private_route;
+        let reply_private_route = waitable_reply.context.reply_private_route.clone();
 
         // Wait for reply
         let (msg, latency) = match self.wait_for_reply(waitable_reply, debug_string).await? {
@@ -71,11 +72,8 @@ impl RPCProcessor {
         let peers = find_node_a.destructure();
 
         for peer_info in &peers {
-            if !self.verify_node_info(
-                peer_info.routing_domain(),
-                peer_info.signed_node_info(),
-                &capabilities,
-            ) {
+            // Check the peer info capability set
+            if !peer_info.node_info().has_all_capabilities(&capabilities) {
                 return Ok(NetworkResult::invalid_message(
                     "find_node response does not meet peer criteria",
                 ));
@@ -94,13 +92,10 @@ impl RPCProcessor {
     #[cfg_attr(feature="verbose-tracing", instrument(level = "trace", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_find_node_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
-        match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(_) | RPCMessageHeaderDetail::SafetyRouted(_) => {}
-            RPCMessageHeaderDetail::PrivateRouted(_) => {
-                return Ok(NetworkResult::invalid_message(
-                    "not processing find node request over private route",
-                ))
-            }
+        if msg.header.is_private_routed() {
+            return Ok(NetworkResult::invalid_message(
+                "not processing find node request over private route",
+            ));
         }
 
         // Get the question
@@ -120,7 +115,7 @@ impl RPCProcessor {
 
         let closest_nodes = network_result_try!(routing_table.find_preferred_closest_peers(
             routing_domain,
-            node_id,
+            node_id.to_hash_coordinate(),
             &capabilities
         ));
 
@@ -131,6 +126,7 @@ impl RPCProcessor {
         self.answer(
             msg,
             RPCAnswer::new(RPCAnswerDetail::FindNodeA(Box::new(find_node_a))),
+            None,
         )
         .await
     }

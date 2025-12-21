@@ -140,13 +140,10 @@ impl Network {
     #[instrument(level = "trace", skip_all)]
     pub(super) async fn bind_udp_protocol_handlers(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "UDP: binding protocol handlers");
-        let (listen_address, public_address, require_inbound_relay) = self.config().with(|c| {
-            (
-                c.network.protocol.udp.listen_address.clone(),
-                c.network.protocol.udp.public_address.clone(),
-                c.network.privacy.require_inbound_relay,
-            )
-        });
+        let config = self.config();
+        let listen_address = config.network.protocol.udp.listen_address.clone();
+        let public_address = config.network.protocol.udp.public_address.clone();
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         // Get the binding parameters from the user-specified listen address
         let bind_set = self
@@ -166,9 +163,13 @@ impl Network {
             );
         }
 
-        if !self.create_udp_protocol_handlers(bind_set).await? {
+        if !self.create_inbound_udp_protocol_handlers(bind_set).await? {
             return Ok(StartupDisposition::BindRetry);
         };
+
+        if !self.create_outbound_udp_protocol_handlers().await? {
+            return Ok(StartupDisposition::BindRetry);
+        }
 
         // Now create tasks for udp listeners
         self.create_udp_listener_tasks().await?;
@@ -194,14 +195,10 @@ impl Network {
     ) -> EyreResult<()> {
         veilid_log!(self trace "UDP: registering dial info");
 
-        let (public_address, resolved_detect_address_changes, require_inbound_relay) =
-            self.config().with(|c| {
-                (
-                    c.network.protocol.udp.public_address.clone(),
-                    self.inner.lock().resolved_detect_address_changes,
-                    c.network.privacy.require_inbound_relay,
-                )
-            });
+        let config = self.config();
+        let public_address = config.network.protocol.udp.public_address.clone();
+        let resolved_detect_address_changes = self.inner.lock().resolved_detect_address_changes;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         let local_dial_info_list = {
             let mut out = vec![];
@@ -239,7 +236,7 @@ impl Network {
                 editor_public_internet.add_dial_info(pdi.clone(), DialInfoClass::Direct);
 
                 // See if this public address is also a local interface address we haven't registered yet
-                if self.is_stable_interface_address(pdi_addr.ip()) {
+                if self.is_interface_address(pdi_addr.ip()) {
                     editor_local_network.add_dial_info(
                         DialInfo::udp_from_socketaddr(pdi_addr),
                         DialInfoClass::Direct,
@@ -270,13 +267,10 @@ impl Network {
     #[instrument(level = "trace", skip_all)]
     pub(super) async fn start_ws_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "WS: binding protocol handlers");
-        let (listen_address, url, require_inbound_relay) = self.config().with(|c| {
-            (
-                c.network.protocol.ws.listen_address.clone(),
-                c.network.protocol.ws.url.clone(),
-                c.network.privacy.require_inbound_relay,
-            )
-        });
+        let config = self.config();
+        let listen_address = config.network.protocol.ws.listen_address.clone();
+        let url = config.network.protocol.ws.url.clone();
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         // Get the binding parameters from the user-specified listen address
         let bind_set = self
@@ -323,15 +317,12 @@ impl Network {
         editor_local_network: &mut RoutingDomainEditorLocalNetwork<'_>,
     ) -> EyreResult<()> {
         veilid_log!(self trace "WS: registering dial info");
-        let (url, path, resolved_detect_address_changes, require_inbound_relay) =
-            self.config().with(|c| {
-                (
-                    c.network.protocol.ws.url.clone(),
-                    c.network.protocol.ws.path.clone(),
-                    self.inner.lock().resolved_detect_address_changes,
-                    c.network.privacy.require_inbound_relay,
-                )
-            });
+
+        let config = self.config();
+        let url = config.network.protocol.ws.url.clone();
+        let path = config.network.protocol.ws.path.clone();
+        let resolved_detect_address_changes = self.inner.lock().resolved_detect_address_changes;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         let mut registered_addresses: HashSet<IpAddr> = HashSet::new();
 
@@ -380,8 +371,7 @@ impl Network {
                 editor_public_internet.add_dial_info(pdi.clone(), DialInfoClass::Direct);
 
                 // See if this public address is also a local interface address
-                if !registered_addresses.contains(&gsa.ip())
-                    && self.is_stable_interface_address(gsa.ip())
+                if !registered_addresses.contains(&gsa.ip()) && self.is_interface_address(gsa.ip())
                 {
                     editor_local_network.add_dial_info(pdi, DialInfoClass::Direct);
                 }
@@ -416,19 +406,16 @@ impl Network {
         Ok(())
     }
 
+    #[cfg(feature = "enable-protocol-wss")]
     #[instrument(level = "trace", skip_all)]
     pub(super) async fn start_wss_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "WSS: binding protocol handlers");
 
-        let (listen_address, url, resolved_detect_address_changes, require_inbound_relay) =
-            self.config().with(|c| {
-                (
-                    c.network.protocol.wss.listen_address.clone(),
-                    c.network.protocol.wss.url.clone(),
-                    self.inner.lock().resolved_detect_address_changes,
-                    c.network.privacy.require_inbound_relay,
-                )
-            });
+        let config = self.config();
+        let listen_address = config.network.protocol.wss.listen_address.clone();
+        let url = config.network.protocol.wss.url.clone();
+        let resolved_detect_address_changes = self.inner.lock().resolved_detect_address_changes;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         // Get the binding parameters from the user-specified listen address
         let bind_set = self
@@ -469,6 +456,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
+    #[cfg(feature = "enable-protocol-wss")]
     #[instrument(level = "trace", skip_all)]
     pub(super) async fn register_wss_dial_info(
         &self,
@@ -476,13 +464,9 @@ impl Network {
         editor_local_network: &mut RoutingDomainEditorLocalNetwork<'_>,
     ) -> EyreResult<()> {
         veilid_log!(self trace "WSS: registering dialinfo");
-
-        let (url, _detect_address_changes) = self.config().with(|c| {
-            (
-                c.network.protocol.wss.url.clone(),
-                c.network.detect_address_changes,
-            )
-        });
+        let config = self.config();
+        let url = config.network.protocol.wss.url.clone();
+        let _detect_address_changes = config.network.detect_address_changes;
 
         // NOTE: No interface dial info for WSS, as there is no way to connect to a local dialinfo via TLS
         // If the hostname is specified, it is the public dialinfo via the URL. If no hostname
@@ -512,8 +496,7 @@ impl Network {
                 editor_public_internet.add_dial_info(pdi.clone(), DialInfoClass::Direct);
 
                 // See if this public address is also a local interface address
-                if !registered_addresses.contains(&gsa.ip())
-                    && self.is_stable_interface_address(gsa.ip())
+                if !registered_addresses.contains(&gsa.ip()) && self.is_interface_address(gsa.ip())
                 {
                     editor_local_network.add_dial_info(pdi, DialInfoClass::Direct);
                 }
@@ -531,19 +514,11 @@ impl Network {
     pub(super) async fn start_tcp_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "TCP: binding protocol handlers");
 
-        let (
-            listen_address,
-            public_address,
-            resolved_detect_address_changes,
-            require_inbound_relay,
-        ) = self.config().with(|c| {
-            (
-                c.network.protocol.tcp.listen_address.clone(),
-                c.network.protocol.tcp.public_address.clone(),
-                self.inner.lock().resolved_detect_address_changes,
-                c.network.privacy.require_inbound_relay,
-            )
-        });
+        let config = self.config();
+        let listen_address = config.network.protocol.tcp.listen_address.clone();
+        let public_address = config.network.protocol.tcp.public_address.clone();
+        let resolved_detect_address_changes = self.inner.lock().resolved_detect_address_changes;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         // Get the binding parameters from the user-specified listen address
         let bind_set = self
@@ -594,14 +569,10 @@ impl Network {
     ) -> EyreResult<()> {
         veilid_log!(self trace "TCP: registering dialinfo");
 
-        let (public_address, resolved_detect_address_changes, require_inbound_relay) =
-            self.config().with(|c| {
-                (
-                    c.network.protocol.tcp.public_address.clone(),
-                    self.inner.lock().resolved_detect_address_changes,
-                    c.network.privacy.require_inbound_relay,
-                )
-            });
+        let config = self.config();
+        let public_address = config.network.protocol.tcp.public_address.clone();
+        let resolved_detect_address_changes = self.inner.lock().resolved_detect_address_changes;
+        let require_inbound_relay = config.network.privacy.require_inbound_relay;
 
         let mut registered_addresses: HashSet<IpAddr> = HashSet::new();
 
@@ -647,7 +618,7 @@ impl Network {
                 editor_public_internet.add_dial_info(pdi.clone(), DialInfoClass::Direct);
 
                 // See if this public address is also a local interface address
-                if self.is_stable_interface_address(pdi_addr.ip()) {
+                if self.is_interface_address(pdi_addr.ip()) {
                     editor_local_network.add_dial_info(pdi, DialInfoClass::Direct);
                 }
             }

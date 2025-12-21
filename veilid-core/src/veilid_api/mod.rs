@@ -1,5 +1,6 @@
 mod api;
 mod debug;
+mod dht_transaction;
 mod error;
 mod routing_context;
 mod serialize_helpers;
@@ -11,6 +12,7 @@ pub mod tests;
 pub use api::*;
 pub use crypto::*;
 pub use debug::*;
+pub use dht_transaction::*;
 pub use error::*;
 #[cfg(feature = "unstable-blockstore")]
 pub use intf::BlockStore;

@@ -21,7 +21,7 @@ impl RPCProcessor {
         let statement = RPCStatement::new(RPCStatementDetail::AppMessage(Box::new(app_message)));
 
         // Send the app message request
-        self.statement(dest, statement).await
+        self.statement(dest, statement, None, None).await
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -32,11 +32,7 @@ impl RPCProcessor {
         let routing_table = self.routing_table();
         let has_capability_app_message = routing_table
             .get_published_peer_info(msg.header.routing_domain())
-            .map(|ppi| {
-                ppi.signed_node_info()
-                    .node_info()
-                    .has_capability(CAP_APPMESSAGE)
-            })
+            .map(|ppi| ppi.node_info().has_capability(VEILID_CAPABILITY_APPMESSAGE))
             .unwrap_or(false);
         if !has_capability_app_message {
             return Ok(NetworkResult::service_unavailable(
@@ -45,11 +41,7 @@ impl RPCProcessor {
         }
 
         // Get the private route this came over
-        let opt_pr_pubkey = match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(_) | RPCMessageHeaderDetail::SafetyRouted(_) => None,
-            RPCMessageHeaderDetail::PrivateRouted(pr) => Some(pr.private_route),
-        };
-        let route_id = if let Some(pr_pubkey) = opt_pr_pubkey {
+        let route_id = if let Some(pr_pubkey) = msg.header.get_private_route_public_key() {
             let rss = routing_table.route_spec_store();
             let Some(route_id) = rss.get_route_id_for_key(&pr_pubkey) else {
                 return Ok(NetworkResult::invalid_message(format!(
@@ -85,7 +77,7 @@ impl RPCProcessor {
         {
             if sender.is_some() {
                 return Ok(NetworkResult::invalid_message(
-                    "Direct NodeId senders are not allowed for AppMessage when footgun is disabled",
+                    "Direct BareNodeId senders are not allowed for AppMessage when footgun is disabled",
                 ));
             }
         }

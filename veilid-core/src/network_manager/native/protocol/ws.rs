@@ -1,6 +1,8 @@
 use super::*;
 
+#[cfg(feature = "enable-protocol-wss")]
 use async_tls::TlsConnector;
+
 use async_tungstenite::tungstenite::error::ProtocolError;
 use async_tungstenite::tungstenite::handshake::server::{
     Callback, ErrorResponse, Request, Response,
@@ -22,10 +24,12 @@ const MAX_WS_BEFORE_BODY: usize = 2048;
 
 cfg_if! {
     if #[cfg(feature="rt-async-std")] {
+        #[cfg(feature="enable-protocol-wss")]
         pub type WebsocketNetworkConnectionWSS =
             WebsocketNetworkConnection<async_tls::client::TlsStream<TcpStream>>;
         pub type WebsocketNetworkConnectionWS = WebsocketNetworkConnection<TcpStream>;
     } else if #[cfg(feature="rt-tokio")] {
+        #[cfg(feature="enable-protocol-wss")]
         pub type WebsocketNetworkConnectionWSS =
             WebsocketNetworkConnection<async_tls::client::TlsStream<Compat<TcpStream>>>;
         pub type WebsocketNetworkConnectionWS = WebsocketNetworkConnection<Compat<TcpStream>>;
@@ -98,10 +102,7 @@ where
 
     #[instrument(level = "trace", target = "protocol", err, skip_all)]
     pub async fn close(&self) -> io::Result<NetworkResult<()>> {
-        let timeout_ms = self
-            .registry
-            .config()
-            .with(|c| c.network.connection_initial_timeout_ms);
+        let timeout_ms = self.config().network.connection_initial_timeout_ms;
 
         // Make an attempt to close the stream normally
         let mut stream = self.stream.clone();
@@ -185,21 +186,29 @@ where
     arc: Arc<WebsocketProtocolHandlerArc>,
 }
 
-impl_veilid_component_registry_accessor!(WebsocketProtocolHandler);
+impl_veilid_component_accessors!(WebsocketProtocolHandler);
 
 impl WebsocketProtocolHandler {
     pub fn new(registry: VeilidComponentRegistry, tls: bool) -> Self {
         let config = registry.config();
-        let c = config.get();
         let path = if tls {
-            format!("GET /{}", c.network.protocol.wss.path.trim_end_matches('/'))
+            cfg_if::cfg_if! {
+                if #[cfg(feature="enable-protocol-wss")] {
+                    format!("GET /{}", config.network.protocol.wss.path.trim_end_matches('/'))
+                } else {
+                    unreachable!("no tls protocols are enabled");
+                }
+            }
         } else {
-            format!("GET /{}", c.network.protocol.ws.path.trim_end_matches('/'))
+            format!(
+                "GET /{}",
+                config.network.protocol.ws.path.trim_end_matches('/')
+            )
         };
         let connection_initial_timeout_ms = if tls {
-            c.network.tls.connection_initial_timeout_ms
+            config.network.tls.connection_initial_timeout_ms
         } else {
-            c.network.connection_initial_timeout_ms
+            config.network.connection_initial_timeout_ms
         };
 
         Self {
@@ -212,7 +221,7 @@ impl WebsocketProtocolHandler {
         }
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip(self, ps))]
+    #[instrument(level = "trace", target = "protocol", ret, err, skip(self, ps))]
     pub async fn on_accept_async(
         self,
         ps: AsyncPeekStream,
@@ -276,7 +285,13 @@ impl WebsocketProtocolHandler {
 
         // Wrap the websocket in a NetworkConnection and register it
         let protocol_type = if self.arc.tls {
-            ProtocolType::WSS
+            cfg_if::cfg_if! {
+                if #[cfg(feature="enable-protocol-wss")] {
+                    ProtocolType::WSS
+                } else {
+                    return Ok(None);
+                }
+            }
         } else {
             ProtocolType::WS
         };
@@ -299,7 +314,7 @@ impl WebsocketProtocolHandler {
         Ok(Some(conn))
     }
 
-    #[instrument(level = "trace", target = "protocol", ret, err)]
+    #[instrument(level = "trace", target = "protocol", skip(registry), ret, err)]
     pub async fn connect(
         registry: VeilidComponentRegistry,
         local_address: Option<SocketAddr>,
@@ -309,15 +324,15 @@ impl WebsocketProtocolHandler {
         // Split dial info up
         let (tls, scheme) = match dial_info {
             DialInfo::WS(_) => (false, "ws"),
+            #[cfg(feature = "enable-protocol-wss")]
             DialInfo::WSS(_) => (true, "wss"),
-            _ => panic!("invalid dialinfo for WS/WSS protocol"),
+            _ => panic!("invalid dialinfo for websocket protocol"),
         };
         let request = dial_info.request().unwrap();
         let split_url = SplitUrl::from_str(&request).map_err(to_io_error_other)?;
         if split_url.scheme != scheme {
             bail_io_error_other!("invalid websocket url scheme");
         }
-        let domain = split_url.host.clone();
 
         // Resolve remote address
         let remote_address = dial_info.to_socket_addr();
@@ -346,18 +361,26 @@ impl WebsocketProtocolHandler {
 
         // Negotiate TLS if this is WSS
         if tls {
-            let connector = TlsConnector::default();
-            let tls_stream = network_result_try!(connector
-                .connect(domain.to_string(), tcp_stream)
-                .await
-                .into_network_result()?);
-            let (ws_stream, _response) = client_async(request, tls_stream)
-                .await
-                .map_err(to_io_error_other)?;
+            cfg_if::cfg_if! {
+                if #[cfg(feature="enable-protocol-wss")] {
+                    let domain = split_url.host.clone();
 
-            Ok(NetworkResult::Value(ProtocolNetworkConnection::Wss(
-                WebsocketNetworkConnection::new(registry, flow, ws_stream),
-            )))
+                    let connector = TlsConnector::default();
+                    let tls_stream = network_result_try!(connector
+                        .connect(domain.to_string(), tcp_stream)
+                        .await
+                        .into_network_result()?);
+                    let (ws_stream, _response) = client_async(request, tls_stream)
+                        .await
+                        .map_err(to_io_error_other)?;
+
+                    Ok(NetworkResult::Value(ProtocolNetworkConnection::Wss(
+                        WebsocketNetworkConnection::new(registry, flow, ws_stream),
+                    )))
+                } else {
+                    unreachable!("no tls support for websockets enabled");
+                }
+            }
         } else {
             let (ws_stream, _response) = client_async(request, tcp_stream)
                 .await

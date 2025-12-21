@@ -12,7 +12,7 @@ impl StorageManager {
         _cur_ts: Timestamp,
     ) -> EyreResult<()> {
         let reqs = {
-            let mut inner = self.inner.lock().await;
+            let mut inner = self.inner.lock();
             core::mem::take(&mut inner.rehydration_requests)
         };
 
@@ -20,21 +20,22 @@ impl StorageManager {
         for req in reqs {
             futs.push(async move {
                 let res = self
-                    .rehydrate_record(req.0, req.1.subkeys.clone(), req.1.consensus_count)
+                    .rehydrate_record(req.0.clone(), req.1.subkeys.clone(), req.1.consensus_count)
                     .await;
 
                 let _report = match res {
                     Ok(v) => v,
                     Err(e) => {
-                        veilid_log!(self debug "Rehydration request failed: {}", e);
                         if matches!(e, VeilidAPIError::TryAgain { message: _ }) {
+                            veilid_log!(self debug "Rehydration request skipped: {}", e);
                             // Try again later
                             self.add_rehydration_request(
                                 req.0,
                                 req.1.subkeys,
                                 req.1.consensus_count,
-                            )
-                            .await;
+                            );
+                        } else {
+                            veilid_log!(self error "Rehydration request failed: {}", e);
                         }
                         return;
                     }

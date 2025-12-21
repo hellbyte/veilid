@@ -29,8 +29,8 @@ Prerequisites:
 
 Run the test script:
 
-- `./wasm_test.sh` to test with debug symbols.
-- `./wasm_test.sh release` to test against a release build.
+- `./wasm_test_js.sh` to test with debug symbols.
+- `./wasm_test_js.sh release` to test against a release build.
 
 ## Development notes
 

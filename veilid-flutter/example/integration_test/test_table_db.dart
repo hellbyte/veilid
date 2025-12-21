@@ -16,7 +16,7 @@ Future<void> testOpenDeleteTableDb() async {
 
   final tdb = await Veilid.instance.openTableDB(testDb, 1);
   try {
-    await expectLater(() async => Veilid.instance.deleteTableDB(testDb),
+    await expectLater(() => Veilid.instance.deleteTableDB(testDb),
         throwsA(isA<VeilidAPIException>()));
   } finally {
     tdb.close();
@@ -32,11 +32,11 @@ Future<void> testOpenTwiceTableDb() async {
   final tdb2 = await Veilid.instance.openTableDB(testDb, 1);
 
   // delete should fail because open
-  await expectLater(() async => Veilid.instance.deleteTableDB(testDb),
+  await expectLater(() => Veilid.instance.deleteTableDB(testDb),
       throwsA(isA<VeilidAPIException>()));
   tdb.close();
   // delete should fail because open
-  await expectLater(() async => Veilid.instance.deleteTableDB(testDb),
+  await expectLater(() => Veilid.instance.deleteTableDB(testDb),
       throwsA(isA<VeilidAPIException>()));
   tdb2.close();
 
@@ -100,7 +100,7 @@ Future<void> testResizeTableDb() async {
   final tdb = await Veilid.instance.openTableDB(testDb, 1);
   try {
     // reopen the db with more columns should fail if it is already open
-    await expectLater(() async => Veilid.instance.openTableDB(testDb, 2),
+    await expectLater(() => Veilid.instance.openTableDB(testDb, 2),
         throwsA(isA<VeilidAPIException>()));
   } finally {
     tdb.close();
@@ -115,7 +115,7 @@ Future<void> testResizeTableDb() async {
     final tdb3 = await Veilid.instance.openTableDB(testDb, 1);
     try {
       // Should fail access to second column
-      await expectLater(() async => tdb3.load(1, utf8.encode('qwer')),
+      await expectLater(() => tdb3.load(1, utf8.encode('qwer')),
           throwsA(isA<VeilidAPIException>()));
 
       // Should succeed with access to second column

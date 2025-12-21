@@ -1,28 +1,10 @@
-use crate::{Deserialize, JsonSchema, KeyPair, Serialize};
+use super::*;
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-use crate::Tsify;
-
-#[derive(Debug, JsonSchema, Serialize, Deserialize, PartialEq, Eq, Clone)]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi, into_wasm_abi)
-)]
-pub struct AllowOffline(pub bool);
-impl Default for AllowOffline {
-    fn default() -> Self {
-        Self(true)
-    }
-}
-
+/// Options that override defaults for set_dht_value
 #[derive(Debug, JsonSchema, Serialize, Deserialize, Clone)]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi, into_wasm_abi)
-)]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 pub struct SetDHTValueOptions {
+    /// Override writer key pair for this operation
     #[schemars(with = "Option<String>")]
     pub writer: Option<KeyPair>,
     /// Defaults to true. If false, the value will not be written if the node is offline,

@@ -8,6 +8,7 @@ pub(crate) trait NodeRefAccessorsTrait {
     fn filter(&self) -> NodeRefFilter;
     fn take_filter(&mut self) -> NodeRefFilter;
     fn dial_info_filter(&self) -> DialInfoFilter;
+
     // fn node_info_outbound_filter(&self, routing_domain: RoutingDomain) -> DialInfoFilter;
     // fn is_filter_dead(&self) -> bool;
 }
@@ -20,18 +21,11 @@ pub(crate) trait NodeRefOperateTrait {
     fn operate_mut<T, F>(&self, f: F) -> T
     where
         F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner) -> T;
-    #[expect(dead_code)]
-    fn with_inner<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&RoutingTableInner) -> T;
-    fn with_inner_mut<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut RoutingTableInner) -> T;
 }
 
 // Common Operations
 pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait {
-    fn same_entry<T: NodeRefAccessorsTrait>(&self, other: &T) -> bool {
+    fn same_entry<T: NodeRefAccessorsTrait + ?Sized>(&self, other: &T) -> bool {
         Arc::ptr_eq(&self.entry(), &other.entry())
     }
 
@@ -39,11 +33,27 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         Arc::ptr_eq(&self.entry(), entry)
     }
 
-    fn node_ids(&self) -> TypedNodeIdGroup {
+    fn equivalent<T: NodeRefAccessorsTrait + ?Sized>(&self, other: &T) -> bool {
+        self.same_entry(other)
+            && self.filter() == other.filter()
+            && self.sequencing() == other.sequencing()
+    }
+
+    fn node_ids(&self) -> NodeIdGroup {
         self.operate(|_rti, e| e.node_ids())
     }
-    fn best_node_id(&self) -> Option<TypedNodeId> {
+    fn public_keys(&self, routing_domain: RoutingDomain) -> PublicKeyGroup {
+        self.operate(|_rti, e| e.public_keys(routing_domain))
+    }
+    fn best_node_id(&self) -> Option<NodeId> {
         self.operate(|_rti, e| e.best_node_id())
+    }
+    fn best_public_key(&self, routing_domain: RoutingDomain) -> Option<PublicKey> {
+        self.operate(|_rti, e| e.best_public_key(routing_domain))
+    }
+
+    fn relay_ids(&self, routing_domain: RoutingDomain) -> Vec<NodeIdGroup> {
+        self.operate(|_rti, e| e.relay_ids(routing_domain))
     }
 
     fn update_node_status(&self, routing_domain: RoutingDomain, node_status: NodeStatus) {
@@ -58,13 +68,13 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
     // fn envelope_support(&self) -> Vec<u8> {
     //     self.operate(|_rti, e| e.envelope_support())
     // }
-    fn add_envelope_version(&self, envelope_version: u8) {
+    fn add_envelope_version(&self, envelope_version: EnvelopeVersion) {
         self.operate_mut(|_rti, e| e.add_envelope_version(envelope_version))
     }
     // fn set_envelope_support(&self, envelope_support: Vec<u8>) {
     //     self.operate_mut(|_rti, e| e.set_envelope_support(envelope_support))
     // }
-    fn best_envelope_version(&self) -> Option<u8> {
+    fn best_envelope_version(&self) -> Option<EnvelopeVersion> {
         self.operate(|_rti, e| e.best_envelope_version())
     }
     fn state_reason(&self, cur_ts: Timestamp) -> BucketEntryStateReason {
@@ -83,17 +93,17 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
     fn node_info(&self, routing_domain: RoutingDomain) -> Option<NodeInfo> {
         self.operate(|_rti, e| e.node_info(routing_domain).cloned())
     }
-    fn signed_node_info_has_valid_signature(&self, routing_domain: RoutingDomain) -> bool {
+    fn peer_info_has_valid_signature(&self, routing_domain: RoutingDomain) -> bool {
         self.operate(|_rti, e| {
-            e.signed_node_info(routing_domain)
-                .map(|sni| sni.has_any_signature())
+            e.get_peer_info(routing_domain)
+                .map(|pi| !pi.signatures().is_empty())
                 .unwrap_or(false)
         })
     }
     fn node_info_ts(&self, routing_domain: RoutingDomain) -> Timestamp {
         self.operate(|_rti, e| {
-            e.signed_node_info(routing_domain)
-                .map(|sni| sni.timestamp())
+            e.node_info(routing_domain)
+                .map(|ni| ni.timestamp())
                 .unwrap_or(0u64.into())
         })
     }
@@ -101,19 +111,20 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         self.operate(|rti, e| {
             let Some(our_node_info_ts) = rti
                 .get_published_peer_info(routing_domain)
-                .map(|pi| pi.signed_node_info().timestamp())
+                .map(|pi| pi.node_info().timestamp())
             else {
                 return false;
             };
             e.has_seen_our_node_info_ts(routing_domain, our_node_info_ts)
         })
     }
-    fn set_seen_our_node_info_ts(&self, routing_domain: RoutingDomain, seen_ts: Timestamp) {
-        self.operate_mut(|_rti, e| e.set_seen_our_node_info_ts(routing_domain, seen_ts));
+    fn set_seen_our_node_info_ts(
+        &self,
+        routing_domain: RoutingDomain,
+        seen_ts: Timestamp,
+    ) -> Option<Timestamp> {
+        self.operate_mut(|_rti, e| e.set_seen_our_node_info_ts(routing_domain, seen_ts))
     }
-    // fn network_class(&self, routing_domain: RoutingDomain) -> Option<NetworkClass> {
-    //     self.operate(|_rt, e| e.node_info(routing_domain).map(|n| n.network_class()))
-    // }
     // fn outbound_protocols(&self, routing_domain: RoutingDomain) -> Option<ProtocolTypeSet> {
     //     self.operate(|_rt, e| e.node_info(routing_domain).map(|n| n.outbound_protocols()))
     // }
@@ -121,38 +132,13 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
     //     self.operate(|_rt, e| e.node_info(routing_domain).map(|n| n.address_types()))
     // }
 
-    fn relay(&self, routing_domain: RoutingDomain) -> EyreResult<Option<FilteredNodeRef>> {
-        let Some(rpi) = self.operate(|rti, e| {
-            let Some(sni) = e.signed_node_info(routing_domain) else {
-                return Ok(None);
-            };
-            let Some(rpi) = sni.relay_peer_info(routing_domain) else {
-                return Ok(None);
-            };
-            // If relay is ourselves, then return None, because we can't relay through ourselves
-            // and to contact this node we should have had an existing inbound connection
-            if rti.routing_table().matches_own_node_id(rpi.node_ids()) {
-                bail!("Can't relay though ourselves");
-            }
-            Ok(Some(rpi))
-        })?
-        else {
-            return Ok(None);
-        };
-
-        // Register relay node and return noderef
-        self.with_inner_mut(|rti| {
-            let nr = rti.register_node_with_peer_info(rpi, false)?;
-            Ok(Some(nr))
-        })
-    }
     // DialInfo
     fn first_dial_info_detail(&self) -> Option<DialInfoDetail> {
         let routing_domain_set = self.routing_domain_set();
         let dial_info_filter = self.dial_info_filter();
         let sequencing = self.sequencing();
-        let (ordered, dial_info_filter) = dial_info_filter.apply_sequencing(sequencing);
-        let sort = ordered.then_some(DialInfoDetail::ordered_sequencing_sort);
+        let (ordering, dial_info_filter) = dial_info_filter.apply_sequencing(sequencing);
+        let sort = DialInfoDetail::get_ordering_sort(ordering);
 
         if dial_info_filter.is_dead() {
             return None;
@@ -163,7 +149,8 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         self.operate(|_rt, e| {
             for routing_domain in routing_domain_set {
                 if let Some(ni) = e.node_info(routing_domain) {
-                    if let Some(did) = ni.first_filtered_dial_info_detail(sort.as_ref(), &filter) {
+                    if let Some(did) = ni.first_filtered_dial_info_detail(sort.as_deref(), &filter)
+                    {
                         return Some(did);
                     }
                 }
@@ -176,8 +163,8 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         let routing_domain_set = self.routing_domain_set();
         let dial_info_filter = self.dial_info_filter();
         let sequencing = self.sequencing();
-        let (ordered, dial_info_filter) = dial_info_filter.apply_sequencing(sequencing);
-        let sort = ordered.then_some(DialInfoDetail::ordered_sequencing_sort);
+        let (ordering, dial_info_filter) = dial_info_filter.apply_sequencing(sequencing);
+        let sort = DialInfoDetail::get_ordering_sort(ordering);
 
         let mut out = Vec::new();
 
@@ -190,7 +177,7 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         self.operate(|_rt, e| {
             for routing_domain in routing_domain_set {
                 if let Some(ni) = e.node_info(routing_domain) {
-                    let mut dids = ni.filtered_dial_info_details(sort.as_ref(), &filter);
+                    let mut dids = ni.filtered_dial_info_details(sort.as_deref(), &filter);
                     out.append(&mut dids);
                 }
             }
@@ -206,13 +193,11 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
             // apply sequencing to filter and get sort
             let sequencing = self.sequencing();
             let filter = self.filter();
-            let (ordered, filter) = filter.apply_sequencing(sequencing);
+            let (ordering, filter) = filter.apply_sequencing(sequencing);
             let mut last_flows = e.last_flows(rti, true, filter);
 
-            if ordered {
-                last_flows.sort_by(|a, b| {
-                    ProtocolType::ordered_sequencing_sort(a.0.protocol_type(), b.0.protocol_type())
-                });
+            if let Some(sort) = ProtocolType::get_ordering_sort(ordering) {
+                last_flows.sort_by(|a, b| sort(&a.0.protocol_type(), &b.0.protocol_type()));
             }
 
             last_flows.first().map(|x| x.0)
@@ -227,13 +212,11 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
             // apply sequencing to filter and get sort
             let sequencing = self.sequencing();
             let filter = self.filter();
-            let (ordered, filter) = filter.apply_sequencing(sequencing);
+            let (ordering, filter) = filter.apply_sequencing(sequencing);
             let mut last_flows = e.last_flows(rti, true, filter);
 
-            if ordered {
-                last_flows.sort_by(|a, b| {
-                    ProtocolType::ordered_sequencing_sort(a.0.protocol_type(), b.0.protocol_type())
-                });
+            if let Some(sort) = ProtocolType::get_ordering_sort(ordering) {
+                last_flows.sort_by(|a, b| sort(&a.0.protocol_type(), &b.0.protocol_type()));
             }
 
             last_flows.into_iter().map(|x| x.0).collect()
@@ -262,21 +245,21 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
     fn is_relaying(&self, routing_domain: RoutingDomain) -> bool {
         self.operate(|rti, e| {
             let Some(relay_ids) = e
-                .signed_node_info(routing_domain)
-                .map(|sni| sni.relay_ids())
+                .node_info(routing_domain)
+                .map(|node_info| node_info.relay_ids())
             else {
                 return false;
             };
             let our_node_ids = rti.routing_table().node_ids();
-            our_node_ids.contains_any(&relay_ids)
+            our_node_ids.contains_any_from_slice(relay_ids.as_slice())
         })
     }
 
     fn has_any_dial_info(&self) -> bool {
         self.operate(|_rti, e| {
             for rtd in RoutingDomain::all() {
-                if let Some(sni) = e.signed_node_info(rtd) {
-                    if sni.has_any_dial_info() {
+                if let Some(ni) = e.node_info(rtd) {
+                    if ni.has_any_dial_info() {
                         return true;
                     }
                 }
@@ -286,11 +269,11 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
     }
 
     fn report_protected_connection_dropped(&self) {
-        self.stats_failed_to_send(Timestamp::now(), false);
+        self.stats_failed_to_send(Timestamp::now_non_decreasing(), false);
     }
 
     fn report_failed_route_test(&self) {
-        self.stats_failed_to_send(Timestamp::now(), false);
+        self.stats_failed_to_send(Timestamp::now_non_decreasing(), false);
     }
 
     fn stats_question_sent(
@@ -298,11 +281,11 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         ts: Timestamp,
         bytes: ByteCount,
         expects_answer: bool,
-        ordered: bool,
+        ordering: SequenceOrdering,
     ) {
         self.operate_mut(|rti, e| {
             rti.transfer_stats_accounting().add_up(bytes);
-            e.question_sent(ts, bytes, expects_answer, ordered);
+            e.question_sent(ts, bytes, expects_answer, ordering);
         })
     }
     fn stats_question_rcvd(&self, ts: Timestamp, bytes: ByteCount) {
@@ -322,18 +305,18 @@ pub(crate) trait NodeRefCommonTrait: NodeRefAccessorsTrait + NodeRefOperateTrait
         send_ts: Timestamp,
         recv_ts: Timestamp,
         bytes: ByteCount,
-        ordered: bool,
+        ordering: SequenceOrdering,
     ) {
         self.operate_mut(|rti, e| {
             rti.transfer_stats_accounting().add_down(bytes);
             rti.latency_stats_accounting()
-                .record_latency(recv_ts.saturating_sub(send_ts));
-            e.answer_rcvd(send_ts, recv_ts, bytes, ordered);
+                .record_latency(recv_ts.duration_since(send_ts));
+            e.answer_rcvd(send_ts, recv_ts, bytes, ordering);
         })
     }
-    fn stats_lost_answer(&self, ordered: bool) {
+    fn stats_lost_answer(&self, ordering: SequenceOrdering) {
         self.operate_mut(|_rti, e| {
-            e.lost_answer(ordered);
+            e.lost_answer(ordering);
         })
     }
     fn stats_failed_to_send(&self, ts: Timestamp, expects_answer: bool) {

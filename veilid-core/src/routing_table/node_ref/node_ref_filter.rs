@@ -60,10 +60,10 @@ impl NodeRefFilter {
     pub fn is_dead(&self) -> bool {
         self.dial_info_filter.is_dead() || self.routing_domain_set.is_empty()
     }
-    pub fn apply_sequencing(mut self, sequencing: Sequencing) -> (bool, Self) {
-        let (ordered, dif) = self.dial_info_filter.apply_sequencing(sequencing);
+    pub fn apply_sequencing(mut self, sequencing: Sequencing) -> (SequenceOrdering, Self) {
+        let (ordering, dif) = self.dial_info_filter.apply_sequencing(sequencing);
         self.dial_info_filter = dif;
-        (ordered, self)
+        (ordering, self)
     }
 }
 
@@ -118,5 +118,124 @@ impl From<Flow> for NodeRefFilter {
             routing_domain_set: RoutingDomainSet::all(),
             dial_info_filter: DialInfoFilter::from(other),
         }
+    }
+}
+
+impl fmt::Display for NodeRefFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut mods = vec![];
+        if self.dial_info_filter.protocol_type_set.is_empty() {
+            mods.push("no-protocol-type".to_string());
+        } else if self.dial_info_filter.protocol_type_set == ProtocolTypeSet::all() {
+            //
+        } else {
+            mods.extend(
+                self.dial_info_filter
+                    .protocol_type_set
+                    .iter()
+                    .map(|x| x.to_string()),
+            );
+        };
+        if self.dial_info_filter.address_type_set.is_empty() {
+            mods.push("no-address-type".to_string());
+        } else if self.dial_info_filter.address_type_set == AddressTypeSet::all() {
+            //
+        } else {
+            mods.extend(
+                self.dial_info_filter
+                    .address_type_set
+                    .iter()
+                    .map(|x| x.to_string()),
+            )
+        };
+        if self.routing_domain_set.is_empty() {
+            mods.push("no-routing-domain".to_string());
+        } else if self.routing_domain_set == RoutingDomainSet::all() {
+            //
+        } else {
+            mods.extend(self.routing_domain_set.iter().map(|x| x.to_string()))
+        };
+        let mods: String = mods.join("/");
+
+        write!(f, "{}", mods)
+    }
+}
+
+impl FromStr for NodeRefFilter {
+    type Err = VeilidAPIError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_ascii_lowercase();
+
+        if s.is_empty() || s == "all" {
+            return Ok(NodeRefFilter::new());
+        }
+
+        let mut ptset = ProtocolTypeSet::empty();
+        let mut ptnone = false;
+        let mut atset = AddressTypeSet::empty();
+        let mut atnone = false;
+        let mut rdset = RoutingDomainSet::empty();
+        let mut rdnone = false;
+        for m in s.split('/') {
+            if let Ok(pt) = ProtocolType::set_from_str(m) {
+                ptset |= pt;
+            } else if let Ok(at) = AddressType::set_from_str(m) {
+                atset |= at;
+            } else if let Ok(rd) = RoutingDomain::set_from_str(m) {
+                rdset |= rd;
+            } else if "no-protocol-type".starts_with(m) && m.len() >= 4 {
+                ptnone = true;
+            } else if "no-address-type".starts_with(m) && m.len() >= 4 {
+                atnone = true;
+            } else if "no-routing-domain".starts_with(m) && m.len() >= 4 {
+                rdnone = true;
+            } else {
+                return Err(VeilidAPIError::parse_error(
+                    "NodeRefFilter::from_str failed",
+                    s,
+                ));
+            }
+        }
+        if ptnone {
+            if !ptset.is_empty() {
+                return Err(VeilidAPIError::parse_error(
+                    "Invalid ProtocolType set in NodeRefFilter::from_str",
+                    s,
+                ));
+            }
+        } else if ptset.is_empty() {
+            ptset = ProtocolTypeSet::all();
+        }
+
+        if atnone {
+            if !atset.is_empty() {
+                return Err(VeilidAPIError::parse_error(
+                    "Invalid AddressType set in NodeRefFilter::from_str",
+                    s,
+                ));
+            }
+        } else if atset.is_empty() {
+            atset = AddressTypeSet::all();
+        }
+
+        if rdnone {
+            if !rdset.is_empty() {
+                return Err(VeilidAPIError::parse_error(
+                    "Invalid RoutingDomain set in NodeRefFilter::from_str",
+                    s,
+                ));
+            }
+        } else if rdset.is_empty() {
+            rdset = RoutingDomainSet::all();
+        }
+
+        Ok(NodeRefFilter {
+            routing_domain_set: rdset,
+            dial_info_filter: DialInfoFilter {
+                protocol_type_set: ptset,
+                address_type_set: atset,
+            },
+        })
     }
 }

@@ -25,7 +25,9 @@ impl RoutingTable {
 
             let mut filters = VecDeque::new();
             let filter = Box::new(
-                move |rti: &RoutingTableInner, opt_entry: Option<Arc<BucketEntry>>| {
+                move |rti: &RoutingTableInner,
+                      opt_entry: Option<Arc<BucketEntry>>,
+                      _cur_ts: Timestamp| {
                     // Exclude our own node
                     let Some(entry) = opt_entry else {
                         return false;
@@ -55,7 +57,7 @@ impl RoutingTable {
             let noderefs = self
                 .find_preferred_closest_nodes(
                     CLOSEST_PEERS_REQUEST_COUNT,
-                    self_node_id.into(),
+                    self_node_id.to_hash_coordinate(),
                     filters,
                     |_rti, entry: Option<Arc<BucketEntry>>| {
                         NodeRef::new(self.registry(), entry.unwrap().clone())

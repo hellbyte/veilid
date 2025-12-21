@@ -159,7 +159,7 @@ impl PeerMessages {
         chunk: &[u8],
     ) -> Option<Vec<u8>> {
         // Get the current timestamp
-        let cur_ts = get_timestamp();
+        let cur_ts = get_raw_timestamp();
 
         // Get the assembly this belongs to by its sequence number
         let mut ass = None;
@@ -216,7 +216,7 @@ struct AssemblyBufferUnlockedInner {
 ///   * duplication
 ///   * drops
 ///   * overlaps
-///     
+///
 /// AssemblyBuffer does not try to replicate TCP or other highly reliable protocols. Here are some
 /// of the design limitations to be aware of when using AssemblyBuffer:
 ///

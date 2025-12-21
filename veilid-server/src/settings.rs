@@ -64,6 +64,17 @@ pub fn load_default_config() -> EyreResult<config::Config> {
             listen_address: 'localhost:5148'
     "#;
 
+    #[cfg(not(feature = "enable-protocol-wss"))]
+    let protocol_wss_section = "";
+    #[cfg(feature = "enable-protocol-wss")]
+    let protocol_wss_section = r#"wss:
+                connect: true
+                listen: false
+                max_connections: 256
+                listen_address: ':5150'
+                path: 'ws'
+                # url: ''"#;
+
     let mut default_config = String::from(
         r#"---
 daemon:
@@ -83,7 +94,7 @@ logging:
         enabled: true
         level: 'info'
         ignore_log_targets: []
-    file: 
+    file:
         enabled: false
         path: ''
         append: true
@@ -133,14 +144,14 @@ core:
         max_connections_per_ip6_prefix: 32
         max_connections_per_ip6_prefix_size: 56
         max_connection_frequency_per_min: 128
-        client_allowlist_timeout_ms: 300000 
-        reverse_connection_receipt_time_ms: 5000 
-        hole_punch_receipt_time_ms: 5000 
+        client_allowlist_timeout_ms: 300000
+        reverse_connection_receipt_time_ms: 5000
+        hole_punch_receipt_time_ms: 5000
         network_key_password: null
         disable_capabilites: []
         routing_table:
-            node_id: null
-            node_id_secret: null
+            public_keys: null
+            secret_keys: null
             bootstrap: ['bootstrap-v1.veilid.net']
             bootstrap_keys: ['VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k','VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo','VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA']
             limit_over_attached: 64
@@ -148,7 +159,7 @@ core:
             limit_attached_strong: 16
             limit_attached_good: 8
             limit_attached_weak: 4
-        rpc: 
+        rpc:
             concurrency: 0
             queue_size: 1024
             max_timestamp_behind_ms: 10000
@@ -160,13 +171,14 @@ core:
             max_find_node_count: 20
             resolve_node_timeout_ms: 10000
             resolve_node_count: 1
-            resolve_node_fanout: 4
+            resolve_node_fanout: 5
             get_value_timeout_ms: 10000
             get_value_count: 3
-            get_value_fanout: 4
+            get_value_fanout: 5
             set_value_timeout_ms: 10000
             set_value_count: 5
-            set_value_fanout: 4
+            set_value_fanout: 5
+            consensus_width: 10
             min_peer_count: 20
             min_peer_refresh_time_ms: 60000
             validate_dial_info_receipt_time_ms: 2000
@@ -179,6 +191,8 @@ core:
             public_watch_limit: 32
             member_watch_limit: 8
             max_watch_expiration_ms: 600000
+            public_transaction_limit: 4
+            member_transaction_limit: 1
         upnp: false
         detect_address_changes: auto
         restricted_nat_retries: 0
@@ -186,17 +200,6 @@ core:
             certificate_path: '%CERTIFICATE_PATH%'
             private_key_path: '%PRIVATE_KEY_PATH%'
             connection_initial_timeout_ms: 2000
-        application:
-            https:
-                enabled: false
-                listen_address: ':443'
-                path: 'app'
-                # url: 'https://localhost'
-            http:
-                enabled: false
-                listen_address: ':80'
-                path: 'app'
-                # url: 'http://localhost'
         protocol:
             udp:
                 enabled: true
@@ -216,13 +219,7 @@ core:
                 listen_address: ':5150'
                 path: 'ws'
                 # url: 'ws://localhost:5150/ws'
-            wss:
-                connect: true
-                listen: false
-                max_connections: 256
-                listen_address: ':5150'
-                path: 'ws'
-                # url: ''
+            %PROTOCOL_WSS_SECTION%
         privacy:
             require_inbound_relay: false
         %PRIVACY_GEOLOCATION_SECTION%
@@ -262,6 +259,10 @@ core:
     .replace(
         "%VIRTUAL_NETWORK_SERVER_SECTION%",
         virtual_network_server_section,
+    )
+    .replace(
+        "%PROTOCOL_WSS_SECTION%",
+        protocol_wss_section,
     );
 
     let dek_password = if let Some(dek_password) = std::env::var_os("DEK_PASSWORD") {
@@ -519,6 +520,7 @@ pub struct Perfetto {
     pub path: String,
 }
 
+#[cfg(feature = "tokio-console")]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Console {
     pub enabled: bool,
@@ -581,28 +583,6 @@ pub struct Logging {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Https {
-    pub enabled: bool,
-    pub listen_address: NamedSocketAddrs,
-    pub path: PathBuf,
-    pub url: Option<ParsedUrl>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Http {
-    pub enabled: bool,
-    pub listen_address: NamedSocketAddrs,
-    pub path: PathBuf,
-    pub url: Option<ParsedUrl>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Application {
-    pub https: Https,
-    pub http: Http,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 pub struct Udp {
     pub enabled: bool,
     pub socket_pool_size: u32,
@@ -629,6 +609,7 @@ pub struct Ws {
     pub url: Option<ParsedUrl>,
 }
 
+#[cfg(feature = "enable-protocol-wss")]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Wss {
     pub connect: bool,
@@ -644,6 +625,7 @@ pub struct Protocol {
     pub udp: Udp,
     pub tcp: Tcp,
     pub ws: Ws,
+    #[cfg(feature = "enable-protocol-wss")]
     pub wss: Wss,
 }
 
@@ -684,6 +666,7 @@ pub struct Dht {
     pub set_value_timeout_ms: u32,
     pub set_value_count: u32,
     pub set_value_fanout: u32,
+    pub consensus_width: u32,
     pub min_peer_count: u32,
     pub min_peer_refresh_time_ms: u32,
     pub validate_dial_info_receipt_time_ms: u32,
@@ -696,14 +679,16 @@ pub struct Dht {
     pub public_watch_limit: u32,
     pub member_watch_limit: u32,
     pub max_watch_expiration_ms: u32,
+    pub public_transaction_limit: u32,
+    pub member_transaction_limit: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RoutingTable {
-    pub node_id: Option<veilid_core::TypedNodeIdGroup>,
-    pub node_id_secret: Option<veilid_core::TypedSecretKeyGroup>,
+    pub public_keys: Option<veilid_core::PublicKeyGroup>,
+    pub secret_keys: Option<veilid_core::SecretKeyGroup>,
     pub bootstrap: Vec<String>,
-    pub bootstrap_keys: Vec<veilid_core::TypedPublicKey>,
+    pub bootstrap_keys: Vec<veilid_core::PublicKey>,
     pub limit_over_attached: u32,
     pub limit_fully_attached: u32,
     pub limit_attached_strong: u32,
@@ -711,18 +696,111 @@ pub struct RoutingTable {
     pub limit_attached_weak: u32,
 }
 
-fn auto_bool_from_str(s: &str) -> Result<Option<bool>, String> {
-    match s {
-        "auto" => Ok(None),
-        "true" => Ok(Some(true)),
-        "false" => Ok(Some(false)),
-        _ => Err("Expected 'auto', 'true', or 'false'".to_owned()),
-    }
-}
+mod auto_bool {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-fn auto_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
-    let s: String = serde::de::Deserialize::deserialize(deserializer)?;
-    auto_bool_from_str(s.as_str()).map_err(serde::de::Error::custom)
+    pub fn from_str(s: &str) -> Result<Option<bool>, String> {
+        match s {
+            "auto" => Ok(None),
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            _ => Err("Expected 'auto', 'true', or 'false'".to_owned()),
+        }
+    }
+
+    pub fn serialize<S>(value: &Option<bool>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(value) = value {
+            value.to_string().serialize(s)
+        } else {
+            "auto".serialize(s)
+        }
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<bool>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: String = Deserialize::deserialize(d)?;
+        from_str(s.as_str()).map_err(serde::de::Error::custom)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde_test::{assert_tokens, Token};
+
+        #[test]
+        fn test_from_str() {
+            let s = "auto";
+            let b = from_str(s).unwrap();
+            assert_eq!(b, None);
+
+            let s = "true";
+            let b = from_str(s).unwrap();
+            assert_eq!(b, Some(true));
+
+            let s = "false";
+            let b = from_str(s).unwrap();
+            assert_eq!(b, Some(false));
+
+            let s = "invalid";
+            let b = from_str(s).unwrap_err();
+            assert_eq!(b, "Expected 'auto', 'true', or 'false'");
+        }
+
+        #[test]
+        fn test_serde_tokens() {
+            #[derive(Debug, Deserialize, Serialize, PartialEq)]
+            struct Foo {
+                #[serde(with = "super")]
+                pub prop: Option<bool>,
+            }
+
+            let obj = Foo { prop: Some(true) };
+            assert_tokens(
+                &obj,
+                &[
+                    Token::Struct {
+                        name: "Foo",
+                        len: 1,
+                    },
+                    Token::Str("prop"),
+                    Token::Str("true"),
+                    Token::StructEnd,
+                ],
+            );
+            let obj = Foo { prop: Some(false) };
+            assert_tokens(
+                &obj,
+                &[
+                    Token::Struct {
+                        name: "Foo",
+                        len: 1,
+                    },
+                    Token::Str("prop"),
+                    Token::Str("false"),
+                    Token::StructEnd,
+                ],
+            );
+
+            let obj = Foo { prop: None };
+            assert_tokens(
+                &obj,
+                &[
+                    Token::Struct {
+                        name: "Foo",
+                        len: 1,
+                    },
+                    Token::Str("prop"),
+                    Token::Str("auto"),
+                    Token::StructEnd,
+                ],
+            );
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -741,11 +819,10 @@ pub struct Network {
     pub rpc: Rpc,
     pub dht: Dht,
     pub upnp: bool,
-    #[serde(deserialize_with = "auto_bool")]
+    #[serde(with = "auto_bool")]
     pub detect_address_changes: Option<bool>,
     pub restricted_nat_retries: u32,
     pub tls: Tls,
-    pub application: Application,
     pub protocol: Protocol,
     pub privacy: Privacy,
     #[cfg(feature = "virtual-network")]
@@ -894,10 +971,10 @@ impl Settings {
         Ok(())
     }
 
-    pub fn read(&self) -> RwLockReadGuard<SettingsInner> {
+    pub fn read(&self) -> RwLockReadGuard<'_, SettingsInner> {
         self.inner.read()
     }
-    pub fn write(&self) -> RwLockWriteGuard<SettingsInner> {
+    pub fn write(&self) -> RwLockWriteGuard<'_, SettingsInner> {
         self.inner.write()
     }
 
@@ -1205,8 +1282,8 @@ impl Settings {
         set_config_value!(inner.core.network.reverse_connection_receipt_time_ms, value);
         set_config_value!(inner.core.network.hole_punch_receipt_time_ms, value);
         set_config_value!(inner.core.network.network_key_password, value);
-        set_config_value!(inner.core.network.routing_table.node_id, value);
-        set_config_value!(inner.core.network.routing_table.node_id_secret, value);
+        set_config_value!(inner.core.network.routing_table.public_keys, value);
+        set_config_value!(inner.core.network.routing_table.secret_keys, value);
         set_config_value!(inner.core.network.routing_table.bootstrap, value);
         set_config_value!(inner.core.network.routing_table.bootstrap_keys, value);
         set_config_value!(inner.core.network.routing_table.limit_over_attached, value);
@@ -1234,6 +1311,7 @@ impl Settings {
         set_config_value!(inner.core.network.dht.set_value_timeout_ms, value);
         set_config_value!(inner.core.network.dht.set_value_count, value);
         set_config_value!(inner.core.network.dht.set_value_fanout, value);
+        set_config_value!(inner.core.network.dht.consensus_width, value);
         set_config_value!(inner.core.network.dht.min_peer_count, value);
         set_config_value!(inner.core.network.dht.min_peer_refresh_time_ms, value);
         set_config_value!(
@@ -1255,24 +1333,18 @@ impl Settings {
         set_config_value!(inner.core.network.dht.public_watch_limit, value);
         set_config_value!(inner.core.network.dht.member_watch_limit, value);
         set_config_value!(inner.core.network.dht.max_watch_expiration_ms, value);
+        set_config_value!(inner.core.network.dht.public_transaction_limit, value);
+        set_config_value!(inner.core.network.dht.member_transaction_limit, value);
         set_config_value!(inner.core.network.upnp, value);
         set_config_value_custom!(
             inner.core.network.detect_address_changes,
             value,
-            auto_bool_from_str
+            auto_bool::from_str
         );
         set_config_value!(inner.core.network.restricted_nat_retries, value);
         set_config_value!(inner.core.network.tls.certificate_path, value);
         set_config_value!(inner.core.network.tls.private_key_path, value);
         set_config_value!(inner.core.network.tls.connection_initial_timeout_ms, value);
-        set_config_value!(inner.core.network.application.https.enabled, value);
-        set_config_value!(inner.core.network.application.https.listen_address, value);
-        set_config_value!(inner.core.network.application.https.path, value);
-        set_config_value!(inner.core.network.application.https.url, value);
-        set_config_value!(inner.core.network.application.http.enabled, value);
-        set_config_value!(inner.core.network.application.http.listen_address, value);
-        set_config_value!(inner.core.network.application.http.path, value);
-        set_config_value!(inner.core.network.application.http.url, value);
         set_config_value!(inner.core.network.protocol.udp.enabled, value);
         set_config_value!(inner.core.network.protocol.udp.socket_pool_size, value);
         set_config_value!(inner.core.network.protocol.udp.listen_address, value);
@@ -1288,12 +1360,17 @@ impl Settings {
         set_config_value!(inner.core.network.protocol.ws.listen_address, value);
         set_config_value!(inner.core.network.protocol.ws.path, value);
         set_config_value!(inner.core.network.protocol.ws.url, value);
-        set_config_value!(inner.core.network.protocol.wss.connect, value);
-        set_config_value!(inner.core.network.protocol.wss.listen, value);
-        set_config_value!(inner.core.network.protocol.wss.max_connections, value);
-        set_config_value!(inner.core.network.protocol.wss.listen_address, value);
-        set_config_value!(inner.core.network.protocol.wss.path, value);
-        set_config_value!(inner.core.network.protocol.wss.url, value);
+
+        cfg_if::cfg_if! {
+            if #[cfg(feature="enable-protocol-wss")] {
+                set_config_value!(inner.core.network.protocol.wss.connect, value);
+                set_config_value!(inner.core.network.protocol.wss.listen, value);
+                set_config_value!(inner.core.network.protocol.wss.max_connections, value);
+                set_config_value!(inner.core.network.protocol.wss.listen_address, value);
+                set_config_value!(inner.core.network.protocol.wss.path, value);
+                set_config_value!(inner.core.network.protocol.wss.url, value);
+            }
+        }
         set_config_value!(inner.core.network.privacy.require_inbound_relay, value);
         #[cfg(feature = "geolocation")]
         set_config_value!(inner.core.network.privacy.country_code_denylist, value);
@@ -1306,455 +1383,283 @@ impl Settings {
         Err(eyre!("settings key '{key}' not found"))
     }
 
-    pub fn get_core_config_callback(
+    pub fn get_core_config(
         &self,
         subnode: u16,
         subnode_offset: u16,
-    ) -> veilid_core::ConfigCallback {
+    ) -> Result<veilid_core::VeilidConfig, VeilidAPIError> {
         let inner = self.inner.clone();
 
-        Arc::new(move |key: String| {
-            let inner = inner.read();
+        let inner = inner.read();
 
-            let out: ConfigCallbackReturn = match key.as_str() {
-                "program_name" => Ok(Box::new(PROGRAM_NAME.to_owned())),
-                "namespace" => Ok(Box::new(subnode_namespace(subnode))),
-                "capabilities.disable" => {
+        let core_config = VeilidConfig {
+            program_name: PROGRAM_NAME.into(),
+            namespace: subnode_namespace(subnode),
+            capabilities: VeilidConfigCapabilities {
+                disable: {
                     let mut caps = Vec::<veilid_core::VeilidCapability>::new();
                     for c in &inner.core.capabilities.disable {
                         let cap = veilid_core::VeilidCapability::from_str(c.as_str())
                             .map_err(VeilidAPIError::generic)?;
                         caps.push(cap);
                     }
-                    Ok(Box::new(caps))
-                }
-                "protected_store.allow_insecure_fallback" => {
-                    Ok(Box::new(inner.core.protected_store.allow_insecure_fallback))
-                }
-                "protected_store.always_use_insecure_storage" => Ok(Box::new(
-                    inner.core.protected_store.always_use_insecure_storage,
-                )),
-                "protected_store.directory" => {
-                    Ok(Box::new(inner.core.protected_store.directory.clone()))
-                }
-                "protected_store.delete" => Ok(Box::new(inner.core.protected_store.delete)),
-                "protected_store.device_encryption_key_password" => Ok(Box::new(
-                    inner
-                        .core
-                        .protected_store
-                        .device_encryption_key_password
-                        .clone(),
-                )),
-                "protected_store.new_device_encryption_key_password" => Ok(Box::new(
-                    inner
-                        .core
-                        .protected_store
-                        .new_device_encryption_key_password
-                        .clone(),
-                )),
-
-                "table_store.directory" => Ok(Box::new(inner.core.table_store.directory.clone())),
-                "table_store.delete" => Ok(Box::new(inner.core.table_store.delete)),
-
-                "block_store.directory" => Ok(Box::new(inner.core.block_store.directory.clone())),
-                "block_store.delete" => Ok(Box::new(inner.core.block_store.delete)),
-
-                "network.connection_initial_timeout_ms" => {
-                    Ok(Box::new(inner.core.network.connection_initial_timeout_ms))
-                }
-                "network.connection_inactivity_timeout_ms" => Ok(Box::new(
-                    inner.core.network.connection_inactivity_timeout_ms,
-                )),
-                "network.max_connections_per_ip4" => {
-                    Ok(Box::new(inner.core.network.max_connections_per_ip4))
-                }
-                "network.max_connections_per_ip6_prefix" => {
-                    Ok(Box::new(inner.core.network.max_connections_per_ip6_prefix))
-                }
-                "network.max_connections_per_ip6_prefix_size" => Ok(Box::new(
-                    inner.core.network.max_connections_per_ip6_prefix_size,
-                )),
-                "network.max_connection_frequency_per_min" => Ok(Box::new(
-                    inner.core.network.max_connection_frequency_per_min,
-                )),
-                "network.client_allowlist_timeout_ms" => {
-                    Ok(Box::new(inner.core.network.client_allowlist_timeout_ms))
-                }
-                "network.reverse_connection_receipt_time_ms" => Ok(Box::new(
-                    inner.core.network.reverse_connection_receipt_time_ms,
-                )),
-                "network.hole_punch_receipt_time_ms" => {
-                    Ok(Box::new(inner.core.network.hole_punch_receipt_time_ms))
-                }
-                "network.network_key_password" => {
-                    Ok(Box::new(inner.core.network.network_key_password.clone()))
-                }
-                "network.routing_table.node_id" => Ok(Box::new(
-                    inner
+                    caps
+                },
+            },
+            protected_store: VeilidConfigProtectedStore {
+                allow_insecure_fallback: inner.core.protected_store.allow_insecure_fallback,
+                always_use_insecure_storage: inner.core.protected_store.always_use_insecure_storage,
+                directory: inner.core.protected_store.directory.clone(),
+                delete: inner.core.protected_store.delete,
+                device_encryption_key_password: inner
+                    .core
+                    .protected_store
+                    .device_encryption_key_password
+                    .clone(),
+                new_device_encryption_key_password: inner
+                    .core
+                    .protected_store
+                    .new_device_encryption_key_password
+                    .clone(),
+            },
+            table_store: VeilidConfigTableStore {
+                directory: inner.core.table_store.directory.clone(),
+                delete: inner.core.table_store.delete,
+            },
+            block_store: VeilidConfigBlockStore {
+                directory: inner.core.block_store.directory.clone(),
+                delete: inner.core.block_store.delete,
+            },
+            network: VeilidConfigNetwork {
+                connection_initial_timeout_ms: inner.core.network.connection_initial_timeout_ms,
+                connection_inactivity_timeout_ms: inner
+                    .core
+                    .network
+                    .connection_inactivity_timeout_ms,
+                max_connections_per_ip4: inner.core.network.max_connections_per_ip4,
+                max_connections_per_ip6_prefix: inner.core.network.max_connections_per_ip6_prefix,
+                max_connections_per_ip6_prefix_size: inner
+                    .core
+                    .network
+                    .max_connections_per_ip6_prefix_size,
+                max_connection_frequency_per_min: inner
+                    .core
+                    .network
+                    .max_connection_frequency_per_min,
+                client_allowlist_timeout_ms: inner.core.network.client_allowlist_timeout_ms,
+                reverse_connection_receipt_time_ms: inner
+                    .core
+                    .network
+                    .reverse_connection_receipt_time_ms,
+                hole_punch_receipt_time_ms: inner.core.network.hole_punch_receipt_time_ms,
+                network_key_password: inner.core.network.network_key_password.clone(),
+                routing_table: VeilidConfigRoutingTable {
+                    public_keys: inner
                         .core
                         .network
                         .routing_table
-                        .node_id
+                        .public_keys
                         .clone()
                         .unwrap_or_default(),
-                )),
-                "network.routing_table.node_id_secret" => Ok(Box::new(
-                    inner
+                    secret_keys: inner
                         .core
                         .network
                         .routing_table
-                        .node_id_secret
+                        .secret_keys
                         .clone()
                         .unwrap_or_default(),
-                )),
-                "network.routing_table.bootstrap" => {
-                    Ok(Box::new(inner.core.network.routing_table.bootstrap.clone()))
-                }
-                "network.routing_table.bootstrap_keys" => Ok(Box::new(
-                    inner.core.network.routing_table.bootstrap_keys.clone(),
-                )),
-                "network.routing_table.limit_over_attached" => Ok(Box::new(
-                    inner.core.network.routing_table.limit_over_attached,
-                )),
-                "network.routing_table.limit_fully_attached" => Ok(Box::new(
-                    inner.core.network.routing_table.limit_fully_attached,
-                )),
-                "network.routing_table.limit_attached_strong" => Ok(Box::new(
-                    inner.core.network.routing_table.limit_attached_strong,
-                )),
-                "network.routing_table.limit_attached_good" => Ok(Box::new(
-                    inner.core.network.routing_table.limit_attached_good,
-                )),
-                "network.routing_table.limit_attached_weak" => Ok(Box::new(
-                    inner.core.network.routing_table.limit_attached_weak,
-                )),
-                "network.rpc.concurrency" => Ok(Box::new(inner.core.network.rpc.concurrency)),
-                "network.rpc.queue_size" => Ok(Box::new(inner.core.network.rpc.queue_size)),
-                "network.rpc.max_timestamp_behind_ms" => {
-                    Ok(Box::new(inner.core.network.rpc.max_timestamp_behind_ms))
-                }
-                "network.rpc.max_timestamp_ahead_ms" => {
-                    Ok(Box::new(inner.core.network.rpc.max_timestamp_ahead_ms))
-                }
-                "network.rpc.timeout_ms" => Ok(Box::new(inner.core.network.rpc.timeout_ms)),
-                "network.rpc.max_route_hop_count" => {
-                    Ok(Box::new(inner.core.network.rpc.max_route_hop_count))
-                }
-                "network.rpc.default_route_hop_count" => {
-                    Ok(Box::new(inner.core.network.rpc.default_route_hop_count))
-                }
-                "network.dht.max_find_node_count" => {
-                    Ok(Box::new(inner.core.network.dht.max_find_node_count))
-                }
-                "network.dht.resolve_node_timeout_ms" => {
-                    Ok(Box::new(inner.core.network.dht.resolve_node_timeout_ms))
-                }
-                "network.dht.resolve_node_count" => {
-                    Ok(Box::new(inner.core.network.dht.resolve_node_count))
-                }
-                "network.dht.resolve_node_fanout" => {
-                    Ok(Box::new(inner.core.network.dht.resolve_node_fanout))
-                }
-                "network.dht.get_value_timeout_ms" => {
-                    Ok(Box::new(inner.core.network.dht.get_value_timeout_ms))
-                }
-                "network.dht.get_value_count" => {
-                    Ok(Box::new(inner.core.network.dht.get_value_count))
-                }
-                "network.dht.get_value_fanout" => {
-                    Ok(Box::new(inner.core.network.dht.get_value_fanout))
-                }
-                "network.dht.set_value_timeout_ms" => {
-                    Ok(Box::new(inner.core.network.dht.set_value_timeout_ms))
-                }
-                "network.dht.set_value_count" => {
-                    Ok(Box::new(inner.core.network.dht.set_value_count))
-                }
-                "network.dht.set_value_fanout" => {
-                    Ok(Box::new(inner.core.network.dht.set_value_fanout))
-                }
-                "network.dht.min_peer_count" => Ok(Box::new(inner.core.network.dht.min_peer_count)),
-                "network.dht.min_peer_refresh_time_ms" => {
-                    Ok(Box::new(inner.core.network.dht.min_peer_refresh_time_ms))
-                }
-                "network.dht.validate_dial_info_receipt_time_ms" => Ok(Box::new(
-                    inner.core.network.dht.validate_dial_info_receipt_time_ms,
-                )),
-                "network.dht.local_subkey_cache_size" => {
-                    Ok(Box::new(inner.core.network.dht.local_subkey_cache_size))
-                }
-                "network.dht.local_max_subkey_cache_memory_mb" => Ok(Box::new(
-                    inner.core.network.dht.local_max_subkey_cache_memory_mb,
-                )),
-                "network.dht.remote_subkey_cache_size" => {
-                    Ok(Box::new(inner.core.network.dht.remote_subkey_cache_size))
-                }
-                "network.dht.remote_max_records" => {
-                    Ok(Box::new(inner.core.network.dht.remote_max_records))
-                }
-                "network.dht.remote_max_subkey_cache_memory_mb" => Ok(Box::new(
-                    inner.core.network.dht.remote_max_subkey_cache_memory_mb,
-                )),
-                "network.dht.remote_max_storage_space_mb" => {
-                    Ok(Box::new(inner.core.network.dht.remote_max_storage_space_mb))
-                }
-                "network.dht.public_watch_limit" => {
-                    Ok(Box::new(inner.core.network.dht.public_watch_limit))
-                }
-                "network.dht.member_watch_limit" => {
-                    Ok(Box::new(inner.core.network.dht.member_watch_limit))
-                }
-                "network.dht.max_watch_expiration_ms" => {
-                    Ok(Box::new(inner.core.network.dht.max_watch_expiration_ms))
-                }
-                "network.upnp" => Ok(Box::new(inner.core.network.upnp)),
-                "network.detect_address_changes" => {
-                    Ok(Box::new(inner.core.network.detect_address_changes))
-                }
-                "network.restricted_nat_retries" => {
-                    Ok(Box::new(inner.core.network.restricted_nat_retries))
-                }
-                "network.tls.certificate_path" => {
-                    Ok(Box::new(inner.core.network.tls.certificate_path.clone()))
-                }
-                "network.tls.private_key_path" => {
-                    Ok(Box::new(inner.core.network.tls.private_key_path.clone()))
-                }
-                "network.tls.connection_initial_timeout_ms" => Ok(Box::new(
-                    inner.core.network.tls.connection_initial_timeout_ms,
-                )),
-                "network.application.https.enabled" => {
-                    Ok(Box::new(inner.core.network.application.https.enabled))
-                }
-                "network.application.https.listen_address" => Ok(Box::new(
-                    inner
+                    bootstrap: inner.core.network.routing_table.bootstrap.clone(),
+                    bootstrap_keys: inner.core.network.routing_table.bootstrap_keys.clone(),
+                    limit_over_attached: inner.core.network.routing_table.limit_over_attached,
+                    limit_fully_attached: inner.core.network.routing_table.limit_fully_attached,
+                    limit_attached_strong: inner.core.network.routing_table.limit_attached_strong,
+                    limit_attached_good: inner.core.network.routing_table.limit_attached_good,
+                    limit_attached_weak: inner.core.network.routing_table.limit_attached_weak,
+                },
+                rpc: VeilidConfigRPC {
+                    concurrency: inner.core.network.rpc.concurrency,
+                    queue_size: inner.core.network.rpc.queue_size,
+                    max_timestamp_behind_ms: inner.core.network.rpc.max_timestamp_behind_ms,
+                    max_timestamp_ahead_ms: inner.core.network.rpc.max_timestamp_ahead_ms,
+                    timeout_ms: inner.core.network.rpc.timeout_ms,
+                    max_route_hop_count: inner.core.network.rpc.max_route_hop_count,
+                    default_route_hop_count: inner.core.network.rpc.default_route_hop_count,
+                },
+                dht: VeilidConfigDHT {
+                    max_find_node_count: inner.core.network.dht.max_find_node_count,
+                    resolve_node_timeout_ms: inner.core.network.dht.resolve_node_timeout_ms,
+                    resolve_node_count: inner.core.network.dht.resolve_node_count,
+                    resolve_node_fanout: inner.core.network.dht.resolve_node_fanout,
+                    get_value_timeout_ms: inner.core.network.dht.get_value_timeout_ms,
+                    get_value_count: inner.core.network.dht.get_value_count,
+                    get_value_fanout: inner.core.network.dht.get_value_fanout,
+                    set_value_timeout_ms: inner.core.network.dht.set_value_timeout_ms,
+                    set_value_count: inner.core.network.dht.set_value_count,
+                    set_value_fanout: inner.core.network.dht.set_value_fanout,
+                    consensus_width: inner.core.network.dht.consensus_width,
+                    min_peer_count: inner.core.network.dht.min_peer_count,
+                    min_peer_refresh_time_ms: inner.core.network.dht.min_peer_refresh_time_ms,
+                    validate_dial_info_receipt_time_ms: inner
                         .core
                         .network
-                        .application
-                        .https
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.application.https.path" => Ok(Box::new(
-                    inner
+                        .dht
+                        .validate_dial_info_receipt_time_ms,
+                    local_subkey_cache_size: inner.core.network.dht.local_subkey_cache_size,
+                    local_max_subkey_cache_memory_mb: inner
                         .core
                         .network
-                        .application
-                        .https
-                        .path
-                        .to_string_lossy()
-                        .to_string(),
-                )),
-                "network.application.https.url" => {
-                    Ok(Box::new(match inner.core.network.application.https.url {
-                        Some(ref a) => Some(
-                            a.with_offset_port(subnode_offset)
-                                .map_err(VeilidAPIError::internal)
-                                .map(|x| x.urlstring.clone())?,
-                        ),
-                        None => None,
-                    }))
-                }
-                "network.application.http.enabled" => {
-                    Ok(Box::new(inner.core.network.application.http.enabled))
-                }
-                "network.application.http.listen_address" => Ok(Box::new(
-                    inner
+                        .dht
+                        .local_max_subkey_cache_memory_mb,
+                    remote_subkey_cache_size: inner.core.network.dht.remote_subkey_cache_size,
+                    remote_max_records: inner.core.network.dht.remote_max_records,
+                    remote_max_subkey_cache_memory_mb: inner
                         .core
                         .network
-                        .application
-                        .http
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.application.http.path" => Ok(Box::new(
-                    inner
+                        .dht
+                        .remote_max_subkey_cache_memory_mb,
+                    remote_max_storage_space_mb: inner.core.network.dht.remote_max_storage_space_mb,
+                    public_watch_limit: inner.core.network.dht.public_watch_limit,
+                    member_watch_limit: inner.core.network.dht.member_watch_limit,
+                    max_watch_expiration_ms: inner.core.network.dht.max_watch_expiration_ms,
+                    public_transaction_limit: inner.core.network.dht.public_transaction_limit,
+                    member_transaction_limit: inner.core.network.dht.member_transaction_limit,
+                },
+                upnp: inner.core.network.upnp,
+                detect_address_changes: inner.core.network.detect_address_changes,
+                restricted_nat_retries: inner.core.network.restricted_nat_retries,
+                tls: VeilidConfigTLS {
+                    certificate_path: inner.core.network.tls.certificate_path.clone(),
+                    private_key_path: inner.core.network.tls.private_key_path.clone(),
+                    connection_initial_timeout_ms: inner
                         .core
                         .network
-                        .application
-                        .http
-                        .path
-                        .to_string_lossy()
-                        .to_string(),
-                )),
-                "network.application.http.url" => {
-                    Ok(Box::new(match inner.core.network.application.http.url {
-                        Some(ref a) => Some(
-                            a.with_offset_port(subnode_offset)
-                                .map_err(VeilidAPIError::internal)
-                                .map(|x| x.urlstring.clone())?,
-                        ),
-                        None => None,
-                    }))
-                }
-                "network.protocol.udp.enabled" => {
-                    Ok(Box::new(inner.core.network.protocol.udp.enabled))
-                }
-                "network.protocol.udp.socket_pool_size" => {
-                    Ok(Box::new(inner.core.network.protocol.udp.socket_pool_size))
-                }
-                "network.protocol.udp.listen_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .udp
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.protocol.udp.public_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .udp
-                        .public_address
-                        .as_ref()
-                        .map(|a| a.name.clone()),
-                )),
-                "network.protocol.tcp.connect" => {
-                    Ok(Box::new(inner.core.network.protocol.tcp.connect))
-                }
-                "network.protocol.tcp.listen" => {
-                    Ok(Box::new(inner.core.network.protocol.tcp.listen))
-                }
-                "network.protocol.tcp.max_connections" => {
-                    Ok(Box::new(inner.core.network.protocol.tcp.max_connections))
-                }
-                "network.protocol.tcp.listen_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .tcp
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.protocol.tcp.public_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .tcp
-                        .public_address
-                        .as_ref()
-                        .map(|a| a.name.clone()),
-                )),
-                "network.protocol.ws.connect" => {
-                    Ok(Box::new(inner.core.network.protocol.ws.connect))
-                }
-                "network.protocol.ws.listen" => Ok(Box::new(inner.core.network.protocol.ws.listen)),
-                "network.protocol.ws.max_connections" => {
-                    Ok(Box::new(inner.core.network.protocol.ws.max_connections))
-                }
-                "network.protocol.ws.listen_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .ws
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.protocol.ws.path" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .ws
-                        .path
-                        .to_string_lossy()
-                        .to_string(),
-                )),
-                "network.protocol.ws.url" => {
-                    Ok(Box::new(match inner.core.network.protocol.ws.url {
-                        Some(ref a) => Some(
-                            a.with_offset_port(subnode_offset)
-                                .map_err(VeilidAPIError::internal)
-                                .map(|x| x.urlstring.clone())?,
-                        ),
-                        None => None,
-                    }))
-                }
-                "network.protocol.wss.connect" => {
-                    Ok(Box::new(inner.core.network.protocol.wss.connect))
-                }
-                "network.protocol.wss.listen" => {
-                    Ok(Box::new(inner.core.network.protocol.wss.listen))
-                }
-                "network.protocol.wss.max_connections" => {
-                    Ok(Box::new(inner.core.network.protocol.wss.max_connections))
-                }
-                "network.protocol.wss.listen_address" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .wss
-                        .listen_address
-                        .with_offset_port(subnode_offset)
-                        .map_err(VeilidAPIError::internal)?
-                        .name
-                        .clone(),
-                )),
-                "network.protocol.wss.path" => Ok(Box::new(
-                    inner
-                        .core
-                        .network
-                        .protocol
-                        .wss
-                        .path
-                        .to_string_lossy()
-                        .to_string(),
-                )),
-                "network.protocol.wss.url" => {
-                    Ok(Box::new(match inner.core.network.protocol.wss.url {
-                        Some(ref a) => Some(
-                            a.with_offset_port(subnode_offset)
-                                .map_err(VeilidAPIError::internal)
-                                .map(|x| x.urlstring.clone())?,
-                        ),
-                        None => None,
-                    }))
-                }
-                "network.privacy.require_inbound_relay" => {
-                    Ok(Box::new(inner.core.network.privacy.require_inbound_relay))
-                }
-                #[cfg(feature = "geolocation")]
-                "network.privacy.country_code_denylist" => Ok(Box::new(
-                    inner.core.network.privacy.country_code_denylist.clone(),
-                )),
+                        .tls
+                        .connection_initial_timeout_ms,
+                },
+                protocol: VeilidConfigProtocol {
+                    udp: VeilidConfigUDP {
+                        enabled: inner.core.network.protocol.udp.enabled,
+                        socket_pool_size: inner.core.network.protocol.udp.socket_pool_size,
+                        listen_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .udp
+                            .listen_address
+                            .with_offset_port(subnode_offset)
+                            .map_err(VeilidAPIError::internal)?
+                            .name
+                            .clone(),
+                        public_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .udp
+                            .public_address
+                            .as_ref()
+                            .map(|a| a.name.clone()),
+                    },
+                    tcp: VeilidConfigTCP {
+                        connect: inner.core.network.protocol.tcp.connect,
+                        listen: inner.core.network.protocol.tcp.listen,
+                        max_connections: inner.core.network.protocol.tcp.max_connections,
+                        listen_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .tcp
+                            .listen_address
+                            .with_offset_port(subnode_offset)
+                            .map_err(VeilidAPIError::internal)?
+                            .name
+                            .clone(),
+                        public_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .tcp
+                            .public_address
+                            .as_ref()
+                            .map(|a| a.name.clone()),
+                    },
+                    ws: VeilidConfigWS {
+                        connect: inner.core.network.protocol.ws.connect,
+                        listen: inner.core.network.protocol.ws.listen,
+                        max_connections: inner.core.network.protocol.ws.max_connections,
+                        listen_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .ws
+                            .listen_address
+                            .with_offset_port(subnode_offset)
+                            .map_err(VeilidAPIError::internal)?
+                            .name
+                            .clone(),
+                        path: inner
+                            .core
+                            .network
+                            .protocol
+                            .ws
+                            .path
+                            .to_string_lossy()
+                            .to_string(),
+                        url: match inner.core.network.protocol.ws.url {
+                            Some(ref a) => Some(
+                                a.with_offset_port(subnode_offset)
+                                    .map_err(VeilidAPIError::internal)
+                                    .map(|x| x.urlstring.clone())?,
+                            ),
+                            None => None,
+                        },
+                    },
+                    #[cfg(feature = "enable-protocol-wss")]
+                    wss: VeilidConfigWSS {
+                        connect: inner.core.network.protocol.wss.connect,
+                        listen: inner.core.network.protocol.wss.listen,
+                        max_connections: inner.core.network.protocol.wss.max_connections,
+                        listen_address: inner
+                            .core
+                            .network
+                            .protocol
+                            .wss
+                            .listen_address
+                            .with_offset_port(subnode_offset)
+                            .map_err(VeilidAPIError::internal)?
+                            .name
+                            .clone(),
+                        path: inner
+                            .core
+                            .network
+                            .protocol
+                            .wss
+                            .path
+                            .to_string_lossy()
+                            .to_string(),
+                        url: match inner.core.network.protocol.wss.url {
+                            Some(ref a) => Some(
+                                a.with_offset_port(subnode_offset)
+                                    .map_err(VeilidAPIError::internal)
+                                    .map(|x| x.urlstring.clone())?,
+                            ),
+                            None => None,
+                        },
+                    },
+                },
+                privacy: VeilidConfigPrivacy {
+                    require_inbound_relay: inner.core.network.privacy.require_inbound_relay,
+                    #[cfg(feature = "geolocation")]
+                    country_code_denylist: inner.core.network.privacy.country_code_denylist.clone(),
+                },
                 #[cfg(feature = "virtual-network")]
-                "network.virtual_network.enabled" => {
-                    Ok(Box::new(inner.core.network.virtual_network.enabled))
-                }
-                #[cfg(feature = "virtual-network")]
-                "network.virtual_network.server_address" => Ok(Box::new(
-                    inner.core.network.virtual_network.server_address.clone(),
-                )),
+                virtual_network: VeilidConfigVirtualNetwork {
+                    enabled: inner.core.network.virtual_network.enabled,
+                    server_address: inner.core.network.virtual_network.server_address.clone(),
+                },
+            },
+        };
 
-                _ => Err(VeilidAPIError::generic(format!(
-                    "config key '{}' doesn't exist",
-                    key
-                ))),
-            };
-            out
-        })
+        Ok(core_config)
     }
 }
 
@@ -1885,8 +1790,8 @@ mod tests {
         assert_eq!(s.core.network.reverse_connection_receipt_time_ms, 5_000u32);
         assert_eq!(s.core.network.hole_punch_receipt_time_ms, 5_000u32);
         assert_eq!(s.core.network.network_key_password, None);
-        assert_eq!(s.core.network.routing_table.node_id, None);
-        assert_eq!(s.core.network.routing_table.node_id_secret, None);
+        assert_eq!(s.core.network.routing_table.public_keys, None);
+        assert_eq!(s.core.network.routing_table.secret_keys, None);
         //
         assert_eq!(
             s.core.network.routing_table.bootstrap,
@@ -1895,12 +1800,9 @@ mod tests {
         assert_eq!(
             s.core.network.routing_table.bootstrap_keys,
             vec![
-                TypedPublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k")
-                    .unwrap(),
-                TypedPublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo")
-                    .unwrap(),
-                TypedPublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA")
-                    .unwrap(),
+                PublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k").unwrap(),
+                PublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo").unwrap(),
+                PublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA").unwrap(),
             ]
         );
         //
@@ -1915,13 +1817,14 @@ mod tests {
         assert_eq!(s.core.network.dht.max_find_node_count, 20u32);
         assert_eq!(s.core.network.dht.resolve_node_timeout_ms, 10_000u32);
         assert_eq!(s.core.network.dht.resolve_node_count, 1u32);
-        assert_eq!(s.core.network.dht.resolve_node_fanout, 4u32);
+        assert_eq!(s.core.network.dht.resolve_node_fanout, 5u32);
         assert_eq!(s.core.network.dht.get_value_timeout_ms, 10_000u32);
         assert_eq!(s.core.network.dht.get_value_count, 3u32);
-        assert_eq!(s.core.network.dht.get_value_fanout, 4u32);
+        assert_eq!(s.core.network.dht.get_value_fanout, 5u32);
         assert_eq!(s.core.network.dht.set_value_timeout_ms, 10_000u32);
         assert_eq!(s.core.network.dht.set_value_count, 5u32);
-        assert_eq!(s.core.network.dht.set_value_fanout, 4u32);
+        assert_eq!(s.core.network.dht.set_value_fanout, 5u32);
+        assert_eq!(s.core.network.dht.consensus_width, 10u32);
         assert_eq!(s.core.network.dht.min_peer_count, 20u32);
         assert_eq!(s.core.network.dht.min_peer_refresh_time_ms, 60_000u32);
         assert_eq!(
@@ -1931,6 +1834,8 @@ mod tests {
         assert_eq!(s.core.network.dht.public_watch_limit, 32u32);
         assert_eq!(s.core.network.dht.member_watch_limit, 8u32);
         assert_eq!(s.core.network.dht.max_watch_expiration_ms, 600_000u32);
+        assert_eq!(s.core.network.dht.public_transaction_limit, 4u32);
+        assert_eq!(s.core.network.dht.member_transaction_limit, 1u32);
         //
         assert!(!s.core.network.upnp);
         assert_eq!(s.core.network.detect_address_changes, None);
@@ -1950,28 +1855,6 @@ mod tests {
         );
         assert_eq!(s.core.network.tls.connection_initial_timeout_ms, 2_000u32);
         //
-        assert!(!s.core.network.application.https.enabled);
-        assert_eq!(s.core.network.application.https.listen_address.name, ":443");
-        assert_eq!(
-            s.core.network.application.https.listen_address.addrs,
-            listen_address_to_socket_addrs(":443").unwrap()
-        );
-        assert_eq!(
-            s.core.network.application.https.path,
-            std::path::PathBuf::from("app")
-        );
-        assert_eq!(s.core.network.application.https.url, None);
-        assert!(!s.core.network.application.http.enabled);
-        assert_eq!(s.core.network.application.http.listen_address.name, ":80");
-        assert_eq!(
-            s.core.network.application.http.listen_address.addrs,
-            listen_address_to_socket_addrs(":80").unwrap()
-        );
-        assert_eq!(
-            s.core.network.application.http.path,
-            std::path::PathBuf::from("app")
-        );
-        assert_eq!(s.core.network.application.http.url, None);
         //
         let valid_socket_addrs = [
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 5150),
@@ -2013,19 +1896,23 @@ mod tests {
         );
         assert_eq!(s.core.network.protocol.ws.url, None);
         //
-        assert!(s.core.network.protocol.wss.connect);
-        assert!(!s.core.network.protocol.wss.listen);
-        assert_eq!(s.core.network.protocol.wss.max_connections, 256);
-        assert_eq!(s.core.network.protocol.wss.listen_address.name, ":5150");
-        for addr in &s.core.network.protocol.wss.listen_address.addrs {
-            assert!(valid_socket_addrs.contains(addr));
+        cfg_if::cfg_if! {
+            if #[cfg(feature="enable-protocol-wss")] {
+                assert!(s.core.network.protocol.wss.connect);
+                assert!(!s.core.network.protocol.wss.listen);
+                assert_eq!(s.core.network.protocol.wss.max_connections, 256);
+                assert_eq!(s.core.network.protocol.wss.listen_address.name, ":5150");
+                for addr in &s.core.network.protocol.wss.listen_address.addrs {
+                    assert!(valid_socket_addrs.contains(addr));
+                }
+                assert!(!s.core.network.protocol.wss.listen_address.addrs.is_empty());
+                assert_eq!(
+                    s.core.network.protocol.wss.path,
+                    std::path::PathBuf::from("ws")
+                );
+                assert_eq!(s.core.network.protocol.wss.url, None);
+            }
         }
-        assert!(!s.core.network.protocol.wss.listen_address.addrs.is_empty());
-        assert_eq!(
-            s.core.network.protocol.wss.path,
-            std::path::PathBuf::from("ws")
-        );
-        assert_eq!(s.core.network.protocol.wss.url, None);
         //
         assert!(!s.core.network.privacy.require_inbound_relay);
         #[cfg(feature = "geolocation")]

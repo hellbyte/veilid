@@ -13,7 +13,7 @@ enum OfflineSubkeyWriteResult {
 
 #[derive(Debug)]
 struct WorkItem {
-    record_key: TypedRecordKey,
+    opaque_record_key: OpaqueRecordKey,
     safety_selection: SafetySelection,
     subkeys: ValueSubkeyRangeSet,
 }
@@ -31,36 +31,42 @@ impl StorageManager {
     async fn write_single_offline_subkey(
         &self,
         stop_token: StopToken,
-        key: TypedRecordKey,
-        subkey: ValueSubkey,
+        subkey_lock: &StorageManagerSubkeyLockGuard,
         safety_selection: SafetySelection,
     ) -> EyreResult<OfflineSubkeyWriteResult> {
+        let opaque_record_key = subkey_lock.record();
+        let subkey = subkey_lock.subkey();
+
         if !self.dht_is_online() {
             // Cancel this operation because we're offline
             return Ok(OfflineSubkeyWriteResult::Cancelled);
         };
-        let get_result = {
-            let mut inner = self.inner.lock().await;
-            self.handle_get_local_value_inner(&mut inner, key, subkey, true)
-                .await
-        };
+        let get_result = self
+            .handle_get_single_local_value(&opaque_record_key, subkey, true)
+            .await;
         let Ok(get_result) = get_result else {
-            veilid_log!(self debug "Offline subkey write had no subkey result: {}:{}", key, subkey);
+            veilid_log!(self debug "Offline subkey write had no subkey result: {}:{}", opaque_record_key, subkey);
             // drop this one
             return Ok(OfflineSubkeyWriteResult::Dropped);
         };
         let Some(value) = get_result.opt_value else {
-            veilid_log!(self debug "Offline subkey write had no subkey value: {}:{}", key, subkey);
+            veilid_log!(self debug "Offline subkey write had no subkey value: {}:{}", opaque_record_key, subkey);
             // drop this one
             return Ok(OfflineSubkeyWriteResult::Dropped);
         };
         let Some(descriptor) = get_result.opt_descriptor else {
-            veilid_log!(self debug "Offline subkey write had no descriptor: {}:{}", key, subkey);
+            veilid_log!(self debug "Offline subkey write had no descriptor: {}:{}", opaque_record_key, subkey);
             return Ok(OfflineSubkeyWriteResult::Dropped);
         };
-        veilid_log!(self debug "Offline subkey write: {}:{} len={}", key, subkey, value.value_data().data().len());
+        veilid_log!(self debug "Offline subkey write: {}:{} len={}", opaque_record_key, subkey, value.value_data().data().len());
         let osvres = self
-            .outbound_set_value(key, subkey, safety_selection, value.clone(), descriptor)
+            .outbound_set_value(
+                &opaque_record_key,
+                subkey,
+                safety_selection,
+                value.clone(),
+                descriptor,
+            )
             .await;
         match osvres {
             Ok(res_rx) => {
@@ -76,14 +82,9 @@ impl StorageManager {
                             // Set the new value if it differs from what was asked to set
                             if result.signed_value_data.value_data() != value.value_data() {
                                 // Record the newer value and send and update since it is different than what we just set
-                                let mut inner = self.inner.lock().await;
-
-                                self.handle_set_local_value_inner(
-                                    &mut inner,
-                                    key,
-                                    subkey,
+                                self.handle_set_single_local_value_with_subkey_lock(
+                                    subkey_lock,
                                     result.signed_value_data.clone(),
-                                    InboundWatchUpdateMode::UpdateAll,
                                 )
                                 .await?;
                             }
@@ -91,16 +92,16 @@ impl StorageManager {
                             return Ok(OfflineSubkeyWriteResult::Finished(result));
                         }
                         Err(e) => {
-                            veilid_log!(self debug "failed to get offline subkey write result: {}:{} {}", key, subkey, e);
+                            veilid_log!(self debug "failed to get offline subkey write result: {}:{} {}", opaque_record_key, subkey, e);
                             return Ok(OfflineSubkeyWriteResult::Cancelled);
                         }
                     }
                 }
-                veilid_log!(self debug "writing offline subkey did not complete {}:{}", key, subkey);
+                veilid_log!(self debug "writing offline subkey did not complete {}:{}", opaque_record_key, subkey);
                 return Ok(OfflineSubkeyWriteResult::Cancelled);
             }
             Err(e) => {
-                veilid_log!(self debug "failed to write offline subkey: {}:{} {}", key, subkey, e);
+                veilid_log!(self debug "failed to write offline subkey: {}:{} {}", opaque_record_key, subkey, e);
                 return Ok(OfflineSubkeyWriteResult::Cancelled);
             }
         }
@@ -121,12 +122,20 @@ impl StorageManager {
                 break;
             }
 
+            let subkey_lock = self
+                .record_lock_table
+                .lock_subkey(
+                    work_item.opaque_record_key.clone(),
+                    subkey,
+                    StorageManagerSubkeyLockPurpose::Set,
+                )
+                .await;
+
             let result = match self
                 .write_single_offline_subkey(
                     stop_token.clone(),
-                    work_item.record_key,
-                    subkey,
-                    work_item.safety_selection,
+                    &subkey_lock,
+                    work_item.safety_selection.clone(),
                 )
                 .await?
             {
@@ -143,8 +152,11 @@ impl StorageManager {
             };
 
             // Process non-partial setvalue result
-            let was_offline =
-                self.check_fanout_set_offline(work_item.record_key, subkey, &result.fanout_result);
+            let was_offline = self.check_fanout_finished_without_consensus(
+                &work_item.opaque_record_key,
+                subkey,
+                &result.fanout_result,
+            );
             if !was_offline {
                 written_subkeys.insert(subkey);
             }
@@ -161,46 +173,46 @@ impl StorageManager {
     // Process all results
     #[instrument(level = "trace", target = "stor", skip_all)]
     async fn process_single_result(&self, result: WorkItemResult) {
-        let consensus_count = self
-            .config()
-            .with(|c| c.network.dht.set_value_count as usize);
-
-        let mut inner = self.inner.lock().await;
+        let consensus_width = self.config().network.dht.consensus_width as usize;
 
         // Debug print the result
         veilid_log!(self debug "Offline write result: {:?}", result);
 
         // Mark the offline subkey write as no longer in-flight
         let subkeys_still_offline = result.work_item.subkeys.difference(&result.written_subkeys);
-        self.finish_offline_subkey_writes_inner(
-            &mut inner,
-            result.work_item.record_key,
+        self.finish_offline_subkey_writes(
+            &result.work_item.opaque_record_key,
             result.written_subkeys,
             subkeys_still_offline,
         );
 
         // Keep the list of nodes that returned a value for later reference
-        let crypto = self.crypto();
-        let vcrypto = crypto.get(result.work_item.record_key.kind).unwrap();
-
-        Self::process_fanout_results_inner(
-            &mut inner,
-            &vcrypto,
-            result.work_item.record_key,
+        let existed = match self.process_fanout_results(
+            result.work_item.opaque_record_key.clone(),
             result.fanout_results.into_iter().map(|x| (x.0, x.1)),
             true,
-            consensus_count,
-        );
+            consensus_width,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                veilid_log!(self error "Error processing fanout results for offline subkey write: {}", e);
+                return;
+            }
+        };
+
+        if !existed {
+            veilid_log!(self debug "Offline subkey write succeeded but local record was deleted: {}", result.work_item.opaque_record_key);
+        }
     }
 
     // Get the next available work item
-    async fn get_next_work_item(&self) -> Option<WorkItem> {
-        let mut inner = self.inner.lock().await;
+    fn get_next_work_item(&self) -> Option<WorkItem> {
+        let mut inner = self.inner.lock();
 
         // Find first offline subkey write record
         // That doesn't have the maximum number of concurrent
         // in-flight subkeys right now
-        for (record_key, osw) in &mut inner.offline_subkey_writes {
+        for (opaque_record_key, osw) in &mut inner.offline_subkey_writes {
             if osw.subkeys_in_flight.len() < OFFLINE_SUBKEY_WRITES_SUBKEY_CHUNK_SIZE {
                 // Get first subkey to process that is not already in-flight
                 for sk in osw.subkeys.iter() {
@@ -210,8 +222,8 @@ impl StorageManager {
                         osw.subkeys_in_flight.insert(sk);
                         // And return a work item for it
                         return Some(WorkItem {
-                            record_key: *record_key,
-                            safety_selection: osw.safety_selection,
+                            opaque_record_key: opaque_record_key.clone(),
+                            safety_selection: osw.safety_selection.clone(),
                             subkeys: ValueSubkeyRangeSet::single(sk),
                         });
                     }
@@ -236,7 +248,7 @@ impl StorageManager {
             {
                 async move {
                     let storage_manager = registry.storage_manager();
-                    storage_manager.get_next_work_item().await.map(|x| (x, ()))
+                    storage_manager.get_next_work_item().map(|x| (x, ()))
                 }
             }
         });
@@ -270,8 +282,7 @@ impl StorageManager {
 
         // Ensure nothing is left in-flight when returning even due to an error
         {
-            let mut inner = self.inner.lock().await;
-            inner.offline_subkey_writes.retain(|_, v| {
+            self.inner.lock().offline_subkey_writes.retain(|_, v| {
                 v.subkeys = v.subkeys.union(&mem::take(&mut v.subkeys_in_flight));
                 !v.subkeys.is_empty()
             });

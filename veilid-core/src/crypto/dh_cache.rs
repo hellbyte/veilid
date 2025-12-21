@@ -1,14 +1,51 @@
 use super::*;
 use crate::*;
 
-// Diffie-Hellman key exchange cache
-#[derive(Serialize, Deserialize, PartialEq, Eq, Hash)]
+// Diffie-Hellman key agreement cache
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct DHCacheKey {
     pub key: PublicKey,
     pub secret: SecretKey,
 }
 
-#[derive(Serialize, Deserialize)]
+impl fmt::Display for DHCacheKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.key, self.secret)
+    }
+}
+
+impl FromStr for DHCacheKey {
+    type Err = VeilidAPIError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some((pks, sks)) = s.split_once('.') else {
+            apibail_parse_error!("s", s);
+        };
+        let key = PublicKey::from_str(pks)?;
+        let secret = SecretKey::from_str(sks)?;
+        Ok(DHCacheKey { key, secret })
+    }
+}
+
+impl<'de> Deserialize<'de> for DHCacheKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(de::Error::custom)
+    }
+}
+
+impl Serialize for DHCacheKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DHCacheValue {
     pub shared_secret: SharedSecret,
 }
@@ -17,29 +54,9 @@ pub type DHCache = LruCache<DHCacheKey, DHCacheValue>;
 pub const DH_CACHE_SIZE: usize = 4096;
 
 pub fn cache_to_bytes(cache: &DHCache) -> Vec<u8> {
-    let cnt: usize = cache.len();
-    let mut out: Vec<u8> = Vec::with_capacity(cnt * (32 + 32 + 32));
-    for e in cache.iter() {
-        out.extend(&e.0.key.bytes);
-        out.extend(&e.0.secret.bytes);
-        out.extend(&e.1.shared_secret.bytes);
-    }
-    let mut rev: Vec<u8> = Vec::with_capacity(out.len());
-    for d in out.chunks(32 + 32 + 32).rev() {
-        rev.extend(d);
-    }
-    rev
+    serialize_json_bytes(cache)
 }
 
-pub fn bytes_to_cache(bytes: &[u8], cache: &mut DHCache) {
-    for d in bytes.chunks(32 + 32 + 32) {
-        let k = DHCacheKey {
-            key: PublicKey::new(d[0..32].try_into().expect("asdf")),
-            secret: SecretKey::new(d[32..64].try_into().expect("asdf")),
-        };
-        let v = DHCacheValue {
-            shared_secret: SharedSecret::new(d[64..96].try_into().expect("asdf")),
-        };
-        cache.insert(k, v);
-    }
+pub fn bytes_to_cache(bytes: &[u8]) -> EyreResult<DHCache> {
+    deserialize_json_bytes(bytes).wrap_err("cache format invalid")
 }

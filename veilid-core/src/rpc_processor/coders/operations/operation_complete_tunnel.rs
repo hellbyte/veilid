@@ -18,7 +18,7 @@ impl RPCOperationCompleteTunnelQ {
             endpoint,
         }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
@@ -44,20 +44,18 @@ impl RPCOperationCompleteTunnelQ {
         reader: &veilid_capnp::operation_complete_tunnel_q::Reader,
     ) -> Result<Self, RPCError> {
         let id = TunnelId::new(reader.get_id());
-        let local_mode = match reader.get_local_mode().map_err(RPCError::protocol)? {
+        let local_mode = match reader.get_local_mode()? {
             veilid_capnp::TunnelEndpointMode::Raw => TunnelMode::Raw,
             veilid_capnp::TunnelEndpointMode::Turn => TunnelMode::Turn,
         };
         let depth = reader.get_depth();
-        let te_reader = reader.get_endpoint().map_err(RPCError::protocol)?;
+        if !reader.has_endpoint() {
+            return Err(RPCError::ignore);
+        }
+        let te_reader = reader.get_endpoint()?;
         let endpoint = decode_tunnel_endpoint(&te_reader)?;
 
-        Ok(Self {
-            id,
-            local_mode,
-            depth,
-            endpoint,
-        })
+        Ok(Self::new(id, local_mode, depth, endpoint))
     }
     pub fn encode(
         &self,
@@ -92,21 +90,21 @@ impl RPCOperationCompleteTunnelA {
     pub fn new_error(error: TunnelError) -> Self {
         Self::Error(error)
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
     pub fn decode(
         reader: &veilid_capnp::operation_complete_tunnel_a::Reader,
     ) -> Result<Self, RPCError> {
-        match reader.which().map_err(RPCError::protocol)? {
+        match reader.which()? {
             veilid_capnp::operation_complete_tunnel_a::Which::Tunnel(r) => {
-                let ft_reader = r.map_err(RPCError::protocol)?;
+                let ft_reader = r?;
                 let full_tunnel = decode_full_tunnel(&ft_reader)?;
                 Ok(Self::Tunnel(full_tunnel))
             }
             veilid_capnp::operation_complete_tunnel_a::Which::Error(r) => {
-                let tunnel_error = decode_tunnel_error(r.map_err(RPCError::protocol)?);
+                let tunnel_error = decode_tunnel_error(r?);
                 Ok(Self::Error(tunnel_error))
             }
         }

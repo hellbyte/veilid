@@ -1,6 +1,9 @@
-mod fixtures;
-#[doc(hidden)]
+pub mod fixtures;
 pub mod test_serialize_json;
-mod test_types;
-mod test_types_dht;
-mod test_types_dht_schema;
+
+use test_serialize_json::*;
+
+#[expect(clippy::unused_async)]
+pub async fn test_all() {
+    test_serialize_json();
+}

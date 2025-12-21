@@ -42,7 +42,7 @@ impl RPCProcessor {
                 // Because this exits before calling 'question()',
                 // a failure to find a routing domain constitutes a send failure
                 // Record the send failure on both the node and its relay
-                let send_ts = Timestamp::now();
+                let send_ts = Timestamp::now_non_decreasing();
                 if let Some(node) = &opt_node {
                     self.record_send_failure(RPCKind::Question, send_ts, node.clone(), None, None);
                 }
@@ -72,13 +72,13 @@ impl RPCProcessor {
 
         // Send the info request
         let waitable_reply =
-            network_result_try!(self.question(dest.clone(), question, None).await?);
+            network_result_try!(self.question(dest.clone(), question, None, None).await?);
 
         // Note what kind of ping this was and to what peer scope
         let send_data_method = waitable_reply.context.send_data_result.clone();
 
         // Keep the reply private route that was used to return with the answer
-        let reply_private_route = waitable_reply.context.reply_private_route;
+        let reply_private_route = waitable_reply.context.reply_private_route.clone();
 
         // Wait for reply
         let (msg, latency) = match self.wait_for_reply(waitable_reply, debug_string).await? {
@@ -219,6 +219,7 @@ impl RPCProcessor {
         self.answer(
             msg,
             RPCAnswer::new(RPCAnswerDetail::StatusA(Box::new(status_a))),
+            None,
         )
         .await
     }

@@ -89,6 +89,7 @@ impl fmt::Display for VeilidLogLevel {
 /// A VeilidCore log message with optional backtrace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 pub struct VeilidLog {
     pub log_level: VeilidLogLevel,
     pub message: String,

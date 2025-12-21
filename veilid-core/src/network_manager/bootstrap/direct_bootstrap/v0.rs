@@ -41,6 +41,7 @@ impl NetworkManager {
             ProtocolType::UDP,
             ProtocolType::TCP,
             ProtocolType::WS,
+            #[cfg(feature = "enable-protocol-wss")]
             ProtocolType::WSS,
         ];
 
@@ -49,7 +50,7 @@ impl NetworkManager {
         let mut nodes_proto_v6 = [0usize, 0usize, 0usize, 0usize];
 
         let filter = Box::new(
-            move |rti: &RoutingTableInner, entry: Option<Arc<BucketEntry>>| {
+            move |rti: &RoutingTableInner, entry: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let entry = entry.unwrap();
                 entry.with(rti, |_rti, e| {
                     // skip nodes on our local network here
@@ -63,16 +64,9 @@ impl NetworkManager {
                     }
 
                     // Only nodes with direct publicinternet node info
-                    let Some(signed_node_info) = e.signed_node_info(RoutingDomain::PublicInternet)
-                    else {
+                    let Some(node_info) = e.node_info(RoutingDomain::PublicInternet) else {
                         return false;
                     };
-
-                    // Only direct node info
-                    let SignedNodeInfo::Direct(signed_direct_node_info) = signed_node_info else {
-                        return false;
-                    };
-                    let node_info = signed_direct_node_info.node_info();
 
                     // Bootstraps must have -only- inbound capable network class and direct dialinfo
                     if !node_info.is_fully_direct_inbound() {

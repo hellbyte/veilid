@@ -5,6 +5,10 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 @immutable
 class ValueSubkeyRange extends Equatable {
+  final int low;
+
+  final int high;
+
   const ValueSubkeyRange({
     required this.low,
     required this.high,
@@ -12,14 +16,18 @@ class ValueSubkeyRange extends Equatable {
 
   factory ValueSubkeyRange.single(int val) =>
       ValueSubkeyRange(low: val, high: val);
+
   factory ValueSubkeyRange.make(int low, int high) =>
       ValueSubkeyRange(low: low, high: high);
+
   factory ValueSubkeyRange.fromIntPair((int, int) pair) =>
       ValueSubkeyRange(low: pair.$1, high: pair.$2);
+
   factory ValueSubkeyRange.fromIntList(List<int> intlist) {
     assert(intlist.length == 2, 'range must be a two item list');
     return ValueSubkeyRange(low: intlist[0], high: intlist[1]);
   }
+
   factory ValueSubkeyRange.fromJson(dynamic json) =>
       ValueSubkeyRange.fromIntList((json as List<dynamic>).cast<int>());
 
@@ -27,9 +35,6 @@ class ValueSubkeyRange extends Equatable {
 
   @override
   List<Object> get props => [low, high];
-
-  final int low;
-  final int high;
 }
 
 extension ValueSubkeyRangeExt on ValueSubkeyRange {

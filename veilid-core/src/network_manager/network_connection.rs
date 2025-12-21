@@ -3,6 +3,8 @@ use futures_util::{FutureExt, StreamExt};
 use std::{io, sync::Arc};
 use stop_token::prelude::*;
 
+impl_veilid_log_facility!("net");
+
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
         // No accept support for WASM
@@ -109,7 +111,7 @@ pub(crate) struct NetworkConnection {
     ref_count: usize,
 }
 
-impl_veilid_component_registry_accessor!(NetworkConnection);
+impl_veilid_component_accessors!(NetworkConnection);
 
 impl fmt::Debug for NetworkConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -152,7 +154,7 @@ impl NetworkConnection {
             opt_dial_info: None,
             flow,
             processor: None,
-            established_time: Timestamp::now(),
+            established_time: Timestamp::now_non_decreasing(),
             stats: Arc::new(Mutex::new(NetworkConnectionStats {
                 last_message_sent_time: None,
                 last_message_recv_time: None,
@@ -210,7 +212,7 @@ impl NetworkConnection {
             opt_dial_info,
             flow,
             processor: Some(processor),
-            established_time: Timestamp::now(),
+            established_time: Timestamp::now_non_decreasing(),
             stats,
             sender,
             stop_source: Some(stop_source),
@@ -280,7 +282,7 @@ impl NetworkConnection {
         stats: Arc<Mutex<NetworkConnectionStats>>,
         message: Vec<u8>,
     ) -> io::Result<NetworkResult<()>> {
-        let ts = Timestamp::now();
+        let ts = Timestamp::now_non_decreasing();
         network_result_try!(protocol_connection.send(message).await?);
 
         let mut stats = stats.lock();
@@ -294,7 +296,7 @@ impl NetworkConnection {
         protocol_connection: &ProtocolNetworkConnection,
         stats: Arc<Mutex<NetworkConnectionStats>>,
     ) -> io::Result<NetworkResult<Vec<u8>>> {
-        let ts = Timestamp::now();
+        let ts = Timestamp::now_non_decreasing();
         let out = network_result_try!(protocol_connection.recv().await?);
 
         let mut stats = stats.lock();
@@ -425,7 +427,9 @@ impl NetworkConnection {
 
                                     // Pass received messages up to the network manager for processing
                                     if let Err(e) = network_manager
-                                        .on_recv_envelope(message.as_mut_slice(), flow)
+                                        .on_recv_envelope(message.as_mut_slice(), flow).measure_debug(TimestampDuration::new_ms(500), |x| {
+                                            veilid_log!(registry debug "on_recv_envelope: {} for {} ", x, protocol_connection.flow());
+                                        })
                                         .await
                                     {
                                         veilid_log!(registry debug "failed to process received envelope: {}", e);

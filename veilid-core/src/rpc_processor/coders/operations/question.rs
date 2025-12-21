@@ -10,9 +10,7 @@ impl RPCQuestion {
     pub fn new(respond_to: RespondTo, detail: RPCQuestionDetail) -> Self {
         Self { respond_to, detail }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
-        let crypto = validate_context.crypto();
-        self.respond_to.validate(&crypto)?;
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         self.detail.validate(validate_context)
     }
     pub fn respond_to(&self) -> &RespondTo {
@@ -54,6 +52,8 @@ pub(in crate::rpc_processor) enum RPCQuestionDetail {
     SetValueQ(Box<RPCOperationSetValueQ>),
     WatchValueQ(Box<RPCOperationWatchValueQ>),
     InspectValueQ(Box<RPCOperationInspectValueQ>),
+    TransactBeginQ(Box<RPCOperationTransactBeginQ>),
+    TransactCommandQ(Box<RPCOperationTransactCommandQ>),
     #[cfg(feature = "unstable-blockstore")]
     SupplyBlockQ(Box<RPCOperationSupplyBlockQ>),
     #[cfg(feature = "unstable-blockstore")]
@@ -76,6 +76,8 @@ impl RPCQuestionDetail {
             RPCQuestionDetail::SetValueQ(_) => "SetValueQ",
             RPCQuestionDetail::WatchValueQ(_) => "WatchValueQ",
             RPCQuestionDetail::InspectValueQ(_) => "InspectValueQ",
+            RPCQuestionDetail::TransactBeginQ(_) => "TransactBeginQ",
+            RPCQuestionDetail::TransactCommandQ(_) => "TransactCommandQ",
             #[cfg(feature = "unstable-blockstore")]
             RPCQuestionDetail::SupplyBlockQ(_) => "SupplyBlockQ",
             #[cfg(feature = "unstable-blockstore")]
@@ -88,7 +90,7 @@ impl RPCQuestionDetail {
             RPCQuestionDetail::CancelTunnelQ(_) => "CancelTunnelQ",
         }
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         match self {
             RPCQuestionDetail::StatusQ(r) => r.validate(validate_context),
             RPCQuestionDetail::FindNodeQ(r) => r.validate(validate_context),
@@ -97,6 +99,8 @@ impl RPCQuestionDetail {
             RPCQuestionDetail::SetValueQ(r) => r.validate(validate_context),
             RPCQuestionDetail::WatchValueQ(r) => r.validate(validate_context),
             RPCQuestionDetail::InspectValueQ(r) => r.validate(validate_context),
+            RPCQuestionDetail::TransactBeginQ(r) => r.validate(validate_context),
+            RPCQuestionDetail::TransactCommandQ(r) => r.validate(validate_context),
             #[cfg(feature = "unstable-blockstore")]
             RPCQuestionDetail::SupplyBlockQ(r) => r.validate(validate_context),
             #[cfg(feature = "unstable-blockstore")]
@@ -114,70 +118,80 @@ impl RPCQuestionDetail {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::question::detail::Reader,
     ) -> Result<RPCQuestionDetail, RPCError> {
-        let which_reader = reader.which().map_err(RPCError::protocol)?;
+        let which_reader = reader.which()?;
         let out = match which_reader {
             veilid_capnp::question::detail::StatusQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationStatusQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::StatusQ(Box::new(out))
             }
             veilid_capnp::question::detail::FindNodeQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationFindNodeQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::FindNodeQ(Box::new(out))
             }
             veilid_capnp::question::detail::Which::AppCallQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationAppCallQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::AppCallQ(Box::new(out))
             }
             veilid_capnp::question::detail::GetValueQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationGetValueQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::GetValueQ(Box::new(out))
             }
             veilid_capnp::question::detail::SetValueQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationSetValueQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::SetValueQ(Box::new(out))
             }
             veilid_capnp::question::detail::WatchValueQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationWatchValueQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::WatchValueQ(Box::new(out))
             }
             veilid_capnp::question::detail::InspectValueQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationInspectValueQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::InspectValueQ(Box::new(out))
             }
+            veilid_capnp::question::detail::TransactBeginQ(r) => {
+                let op_reader = r?;
+                let out = RPCOperationTransactBeginQ::decode(decode_context, &op_reader)?;
+                RPCQuestionDetail::TransactBeginQ(Box::new(out))
+            }
+            veilid_capnp::question::detail::TransactCommandQ(r) => {
+                let op_reader = r?;
+                let out = RPCOperationTransactCommandQ::decode(decode_context, &op_reader)?;
+                RPCQuestionDetail::TransactCommandQ(Box::new(out))
+            }
             #[cfg(feature = "unstable-blockstore")]
             veilid_capnp::question::detail::SupplyBlockQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationSupplyBlockQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::SupplyBlockQ(Box::new(out))
             }
             #[cfg(feature = "unstable-blockstore")]
             veilid_capnp::question::detail::FindBlockQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationFindBlockQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::FindBlockQ(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::question::detail::StartTunnelQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationStartTunnelQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::StartTunnelQ(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::question::detail::CompleteTunnelQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationCompleteTunnelQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::CompleteTunnelQ(Box::new(out))
             }
             #[cfg(feature = "unstable-tunnels")]
             veilid_capnp::question::detail::CancelTunnelQ(r) => {
-                let op_reader = r.map_err(RPCError::protocol)?;
+                let op_reader = r?;
                 let out = RPCOperationCancelTunnelQ::decode(decode_context, &op_reader)?;
                 RPCQuestionDetail::CancelTunnelQ(Box::new(out))
             }
@@ -199,6 +213,12 @@ impl RPCQuestionDetail {
             }
             RPCQuestionDetail::InspectValueQ(d) => {
                 d.encode(&mut builder.reborrow().init_inspect_value_q())
+            }
+            RPCQuestionDetail::TransactBeginQ(d) => {
+                d.encode(&mut builder.reborrow().init_transact_begin_q())
+            }
+            RPCQuestionDetail::TransactCommandQ(d) => {
+                d.encode(&mut builder.reborrow().init_transact_command_q())
             }
             #[cfg(feature = "unstable-blockstore")]
             RPCQuestionDetail::SupplyBlockQ(d) => {

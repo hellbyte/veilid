@@ -1,6 +1,7 @@
 import { expect } from '@wdio/globals';
 
 import {
+  DEBUGGING,
   veilidCoreInitConfig,
   veilidCoreStartupConfig,
 } from './utils/veilid-config';
@@ -13,11 +14,13 @@ const TABLE_COLS = 1;
 
 describe('VeilidTable', () => {
   before('veilid startup', async () => {
-    veilidClient.initializeCore(veilidCoreInitConfig);
+    await veilidClient.initializeCore(veilidCoreInitConfig);
     await veilidClient.startupCore((_update) => {
-      // if (_update.kind === 'Log') {
-      //   console.log(_update.message);
-      // }
+      if (DEBUGGING) {
+        if (_update.kind === 'Log') {
+          console.log(_update.message);
+        }
+      }
     }, veilidCoreStartupConfig);
   });
 
@@ -30,9 +33,7 @@ describe('VeilidTable', () => {
     await table.openTable();
 
     const keys = await table.getKeys(0);
-    expect(keys.length).toBe(0);
-
-    table.free();
+    await expect(keys.length).toBe(0);
   });
 
   describe('table operations', () => {
@@ -43,13 +44,9 @@ describe('VeilidTable', () => {
       await table.openTable();
     });
 
-    after('free table', async () => {
-      table.free();
-    });
-
     it('should have no keys', async () => {
       const keys = await table.getKeys(0);
-      expect(keys.length).toBe(0);
+      await expect(keys.length).toBe(0);
     });
 
     describe('store/load', () => {
@@ -66,37 +63,37 @@ describe('VeilidTable', () => {
 
       it('should load value', async () => {
         const storedValue = await table.load(0, textEncoder.encode(key));
-        expect(storedValue).toBeDefined();
-        expect(textDecoder.decode(storedValue!)).toBe(value);
+        await expect(storedValue).toBeDefined();
+        await expect(textDecoder.decode(storedValue)).toBe(value);
       });
 
       it('should have key in list of keys', async () => {
         const keys = await table.getKeys(0);
         const decodedKeys = keys.map((key) => textDecoder.decode(key));
-        expect(decodedKeys).toEqual([key]);
+        await expect(decodedKeys).toEqual([key]);
       });
     });
 
     describe('transactions', () => {
       it('should commit a transaction', async () => {
-        let transaction = await table.createTransaction();
+        const transaction = await table.createTransaction();
 
         const key = 'tranaction-key🔥';
         const first = 'first🅱';
         const second = 'second✔';
         const third = 'third📢';
 
-        transaction.store(
+        await transaction.store(
           0,
           textEncoder.encode(key),
           textEncoder.encode(first)
         );
-        transaction.store(
+        await transaction.store(
           0,
           textEncoder.encode(key),
           textEncoder.encode(second)
         );
-        transaction.store(
+        await transaction.store(
           0,
           textEncoder.encode(key),
           textEncoder.encode(third)
@@ -105,10 +102,8 @@ describe('VeilidTable', () => {
         await transaction.commit();
 
         const storedValue = await table.load(0, textEncoder.encode(key));
-        expect(storedValue).toBeDefined();
-        expect(textDecoder.decode(storedValue!)).toBe(third);
-
-        transaction.free();
+        await expect(storedValue).toBeDefined();
+        await expect(textDecoder.decode(storedValue)).toBe(third);
       });
     });
   });

@@ -13,7 +13,11 @@ impl RoutingTable {
         let mut out = String::new();
         let inner = self.inner.read();
         out += &format!("Node Ids: {}\n", self.node_ids());
-        out += &format!("Version: {}\n", veilid_version_string());
+        out += &format!(
+            "Version: {}{}\n",
+            veilid_version_string(),
+            if cfg!(debug_assertions) { "-debug" } else { "" }
+        );
         out += &format!("Features: {:?}\n", veilid_features());
         out += &format!(
             "Self Transfer Stats:\n{}",
@@ -24,18 +28,31 @@ impl RoutingTable {
     }
 
     pub fn debug_info_dialinfo(&self) -> String {
-        let ldis = self.dial_info_details(RoutingDomain::LocalNetwork);
-        let gdis = self.dial_info_details(RoutingDomain::PublicInternet);
         let mut out = String::new();
 
-        out += "Local Network Dial Info Details:\n";
-        for (n, ldi) in ldis.iter().enumerate() {
-            out += &indent_all_string(&format!("{:>2}: {}\n", n, ldi));
+        for rd in RoutingDomainSet::all() {
+            out += &format!("{:?}:\n", rd);
+
+            let mut rdout = String::new();
+            rdout += "Dial Info Details:\n";
+            let ldis = self.dial_info_details(rd);
+            for (n, ldi) in ldis.iter().enumerate() {
+                rdout += &indent_all_string(&format!("{:>2}: {}\n", n, ldi));
+            }
+            rdout += &format!(
+                "Routing Domain State:\n{:?}\n",
+                self.routing_domain_state(rd)
+            );
+            rdout += "Routing Domain Relays:\n";
+            for (n, rdr) in self.relays(rd).iter().enumerate() {
+                rdout += &indent_all_string(&format!("{:>2}: {:?}\n", n, rdr));
+            }
+            rdout += "Routing Domain Details:\n";
+            rdout += &self.routing_domain_debug(rd, true);
+
+            out += &(indent_all_string(&rdout) + "\n");
         }
-        out += "Public Internet Dial Info Details:\n";
-        for (n, gdi) in gdis.iter().enumerate() {
-            out += &indent_all_string(&format!("{:>2}: {}\n", n, gdi));
-        }
+
         out
     }
 
@@ -59,13 +76,14 @@ impl RoutingTable {
     fn format_state_reason(state_reason: BucketEntryStateReason) -> &'static str {
         match state_reason {
             BucketEntryStateReason::Punished(p) => match p {
+                PunishmentReason::Manual => "PMANUL",
                 PunishmentReason::FailedToDecryptEnvelopeBody => "PCRYPT",
                 PunishmentReason::FailedToDecodeEnvelope => "PDECEN",
                 PunishmentReason::ShortPacket => "PSHORT",
                 PunishmentReason::InvalidFraming => "PFRAME",
                 PunishmentReason::FailedToDecodeOperation => "PDECOP",
                 PunishmentReason::WrongSenderPeerInfo => "PSPBAD",
-                PunishmentReason::FailedToVerifySenderPeerInfo => "PSPVER",
+                // PunishmentReason::FailedToVerifySenderPeerInfo => "PSPVER",
                 PunishmentReason::FailedToRegisterSenderPeerInfo => "PSPREG",
                 //
             },
@@ -115,7 +133,7 @@ impl RoutingTable {
             .rpc_stats
             .last_question_ts
             .as_ref()
-            .map(|l| cur_ts.saturating_sub(*l).to_string())
+            .map(|l| cur_ts.duration_since(*l).to_string())
             .unwrap_or_else(|| "???".to_string());
 
         let since_last_seen = e
@@ -123,7 +141,7 @@ impl RoutingTable {
             .rpc_stats
             .last_seen_ts
             .as_ref()
-            .map(|l| cur_ts.saturating_sub(*l).to_string())
+            .map(|l| cur_ts.duration_since(*l).to_string())
             .unwrap_or_else(|| "???".to_string());
 
         #[allow(unused_mut)]
@@ -203,7 +221,7 @@ impl RoutingTable {
             let mut b = 0;
             let blen = inner.buckets[ck].len();
             while b < blen {
-                let filtered_entries: Vec<(&NodeId, &Arc<BucketEntry>)> = inner.buckets[ck][b]
+                let filtered_entries: Vec<(&BareNodeId, &Arc<BucketEntry>)> = inner.buckets[ck][b]
                     .entries()
                     .filter(|e| {
                         let cap_match = e.1.with(inner, |_rti, e| {
@@ -217,18 +235,25 @@ impl RoutingTable {
                 if !filtered_entries.is_empty() {
                     out += &format!("{} Bucket #{}:\n", ck, b);
                     for e in filtered_entries {
-                        let node = *e.0;
+                        let node = e.0.clone();
 
                         let can_be_relay = e.1.with(inner, |_rti, e| relay_node_filter(e));
                         let is_relay = inner
-                            .relay_node(RoutingDomain::PublicInternet)
-                            .map(|r| r.same_bucket_entry(e.1))
-                            .unwrap_or(false);
+                            .relays(RoutingDomain::PublicInternet)
+                            .iter()
+                            .find_map(|r| {
+                                if r.relay_node.same_bucket_entry(e.1) {
+                                    Some(true)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_default();
 
                         let is_relaying =
                             e.1.with(inner, |_rti, e| {
-                                e.signed_node_info(RoutingDomain::PublicInternet)
-                                    .map(|sni| sni.relay_ids().contains(&our_node_id))
+                                e.node_info(RoutingDomain::PublicInternet)
+                                    .map(|ni| ni.relay_ids().contains(&our_node_id))
                             })
                             .unwrap_or(false);
                         let relay_tag = format!(
@@ -245,7 +270,7 @@ impl RoutingTable {
 
                         out += "    ";
                         out += &e.1.with(inner, |_rti, e| {
-                            let node_id_str = TypedNodeId::new(*ck, node).to_string();
+                            let node_id_str = NodeId::new(*ck, node).to_string();
                             Self::format_entry(cur_ts, &node_id_str, e, &relay_tag)
                         });
                         out += "\n";
@@ -272,8 +297,8 @@ impl RoutingTable {
         let mut relaying_count = 0usize;
 
         let mut filters = VecDeque::new();
-        filters.push_front(
-            Box::new(|rti: &RoutingTableInner, e: Option<Arc<BucketEntry>>| {
+        filters.push_front(Box::new(
+            |rti: &RoutingTableInner, e: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
                 let Some(e) = e else {
                     return false;
                 };
@@ -282,8 +307,8 @@ impl RoutingTable {
                 });
                 let state = e.with(rti, |_rti, e| e.state(cur_ts));
                 state >= min_state && cap_match
-            }) as RoutingTableEntryFilter,
-        );
+            },
+        ) as RoutingTableEntryFilter);
         let nodes = self.find_preferred_fastest_nodes(
             node_count,
             filters,
@@ -296,16 +321,24 @@ impl RoutingTable {
         for node in nodes {
             let can_be_relay = node.operate(|_rti, e| relay_node_filter(e));
             let is_relay = self
-                .relay_node(RoutingDomain::PublicInternet)
-                .map(|r| r.same_entry(&node))
-                .unwrap_or(false);
+                .relays(RoutingDomain::PublicInternet)
+                .iter()
+                .find_map(|r| {
+                    if r.relay_node.same_entry(&node) {
+                        Some(true)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
 
             let is_relaying = node
                 .operate(|_rti, e| {
-                    e.signed_node_info(RoutingDomain::PublicInternet)
-                        .map(|sni| sni.relay_ids().contains_any(&our_node_ids))
+                    e.node_info(RoutingDomain::PublicInternet)
+                        .map(|ni| our_node_ids.contains_any_from_slice(&ni.relay_ids()))
                 })
                 .unwrap_or(false);
+
             let relay_tag = format!(
                 "{}{}",
                 if is_relay {

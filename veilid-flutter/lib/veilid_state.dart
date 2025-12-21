@@ -188,7 +188,7 @@ sealed class PeerStats with _$PeerStats {
 @freezed
 sealed class PeerTableData with _$PeerTableData {
   const factory PeerTableData({
-    required List<TypedKey> nodeIds,
+    required List<NodeId> nodeIds,
     required String peerAddress,
     required PeerStats peerStats,
   }) = _PeerTableData;
@@ -209,35 +209,37 @@ sealed class VeilidUpdate with _$VeilidUpdate {
   }) = VeilidLog;
   const factory VeilidUpdate.appMessage({
     @Uint8ListJsonConverter.jsIsArray() required Uint8List message,
-    TypedKey? sender,
+    PublicKey? sender,
     String? routeId,
   }) = VeilidAppMessage;
   const factory VeilidUpdate.appCall({
     @Uint8ListJsonConverter.jsIsArray() required Uint8List message,
     required String callId,
-    TypedKey? sender,
+    PublicKey? sender,
     String? routeId,
   }) = VeilidAppCall;
-  const factory VeilidUpdate.attachment(
-      {required AttachmentState state,
-      required bool publicInternetReady,
-      required bool localNetworkReady,
-      required TimestampDuration uptime,
-      required TimestampDuration? attachedUptime}) = VeilidUpdateAttachment;
-  const factory VeilidUpdate.network(
-      {required bool started,
-      required BigInt bpsDown,
-      required BigInt bpsUp,
-      required List<PeerTableData> peers}) = VeilidUpdateNetwork;
-  const factory VeilidUpdate.config({
-    required VeilidConfig config,
-  }) = VeilidUpdateConfig;
+  const factory VeilidUpdate.attachment({
+    required AttachmentState state,
+    required bool publicInternetReady,
+    required bool localNetworkReady,
+    required TimestampDuration uptime,
+    required TimestampDuration? attachedUptime,
+  }) = VeilidUpdateAttachment;
+  const factory VeilidUpdate.network({
+    required bool started,
+    required BigInt bpsDown,
+    required BigInt bpsUp,
+    required List<PeerTableData> peers,
+    required List<NodeId> nodeIds,
+  }) = VeilidUpdateNetwork;
+  const factory VeilidUpdate.config({required VeilidConfig config}) =
+      VeilidUpdateConfig;
   const factory VeilidUpdate.routeChange({
     required List<String> deadRoutes,
     required List<String> deadRemoteRoutes,
   }) = VeilidUpdateRouteChange;
   const factory VeilidUpdate.valueChange({
-    required TypedKey key,
+    required RecordKey key,
     required List<ValueSubkeyRange> subkeys,
     required int count,
     required ValueData? value,
@@ -252,12 +254,13 @@ sealed class VeilidUpdate with _$VeilidUpdate {
 
 @freezed
 sealed class VeilidStateAttachment with _$VeilidStateAttachment {
-  const factory VeilidStateAttachment(
-      {required AttachmentState state,
-      required bool publicInternetReady,
-      required bool localNetworkReady,
-      required TimestampDuration uptime,
-      required TimestampDuration? attachedUptime}) = _VeilidStateAttachment;
+  const factory VeilidStateAttachment({
+    required AttachmentState state,
+    required bool publicInternetReady,
+    required bool localNetworkReady,
+    required TimestampDuration uptime,
+    required TimestampDuration? attachedUptime,
+  }) = _VeilidStateAttachment;
 
   factory VeilidStateAttachment.fromJson(dynamic json) =>
       _$VeilidStateAttachmentFromJson(json as Map<String, dynamic>);
@@ -268,11 +271,12 @@ sealed class VeilidStateAttachment with _$VeilidStateAttachment {
 
 @freezed
 sealed class VeilidStateNetwork with _$VeilidStateNetwork {
-  const factory VeilidStateNetwork(
-      {required bool started,
-      required BigInt bpsDown,
-      required BigInt bpsUp,
-      required List<PeerTableData> peers}) = _VeilidStateNetwork;
+  const factory VeilidStateNetwork({
+    required bool started,
+    required BigInt bpsDown,
+    required BigInt bpsUp,
+    required List<PeerTableData> peers,
+  }) = _VeilidStateNetwork;
 
   factory VeilidStateNetwork.fromJson(dynamic json) =>
       _$VeilidStateNetworkFromJson(json as Map<String, dynamic>);
@@ -283,9 +287,8 @@ sealed class VeilidStateNetwork with _$VeilidStateNetwork {
 
 @freezed
 sealed class VeilidStateConfig with _$VeilidStateConfig {
-  const factory VeilidStateConfig({
-    required VeilidConfig config,
-  }) = _VeilidStateConfig;
+  const factory VeilidStateConfig({required VeilidConfig config}) =
+      _VeilidStateConfig;
 
   factory VeilidStateConfig.fromJson(dynamic json) =>
       _$VeilidStateConfigFromJson(json as Map<String, dynamic>);

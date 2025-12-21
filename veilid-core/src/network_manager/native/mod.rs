@@ -34,8 +34,8 @@ use std::path::{Path, PathBuf};
 impl_veilid_log_facility!("net");
 
 pub const MAX_DIAL_INFO_FAILURE_COUNT: usize = 100;
-pub const UPDATE_OUTBOUND_ONLY_NETWORK_CLASS_PERIOD_SECS: u32 = 10;
-pub const UPDATE_NETWORK_CLASS_TASK_TICK_PERIOD_SECS: u32 = 1;
+pub const UPDATE_OUTBOUND_ONLY_DIAL_INFO_PERIOD_SECS: u32 = 10;
+pub const UPDATE_DIAL_INFO_TASK_TICK_PERIOD_SECS: u32 = 1;
 pub const NETWORK_INTERFACES_TASK_TICK_PERIOD_SECS: u32 = 1;
 pub const UPNP_TASK_TICK_PERIOD_SECS: u32 = 1;
 pub const HOLE_PUNCH_TTL: u32 = 3;
@@ -43,39 +43,37 @@ pub const PEEK_DETECT_LEN: usize = 64;
 
 cfg_if! {
     if #[cfg(all(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 9;
-    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
         const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 8;
-    } else  {
+    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
         const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 7;
+    } else  {
+        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 6;
     }
 }
 pub const PUBLIC_INTERNET_CAPABILITIES: [VeilidCapability; PUBLIC_INTERNET_CAPABILITIES_LEN] = [
-    CAP_ROUTE,
+    VEILID_CAPABILITY_ROUTE,
     #[cfg(feature = "unstable-tunnels")]
-    CAP_TUNNEL,
-    CAP_SIGNAL,
-    CAP_RELAY,
-    CAP_VALIDATE_DIAL_INFO,
-    CAP_DHT,
-    CAP_DHT_WATCH,
-    CAP_APPMESSAGE,
+    VEILID_CAPABILITY_TUNNEL,
+    VEILID_CAPABILITY_SIGNAL,
+    VEILID_CAPABILITY_RELAY,
+    VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
+    VEILID_CAPABILITY_DHT,
+    VEILID_CAPABILITY_APPMESSAGE,
     #[cfg(feature = "unstable-blockstore")]
-    CAP_BLOCKSTORE,
+    VEILID_CAPABILITY_BLOCKSTORE,
 ];
 
 #[cfg(feature = "unstable-blockstore")]
-const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 5;
-#[cfg(not(feature = "unstable-blockstore"))]
 const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 4;
+#[cfg(not(feature = "unstable-blockstore"))]
+const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 3;
 
 pub const LOCAL_NETWORK_CAPABILITIES: [VeilidCapability; LOCAL_NETWORK_CAPABILITIES_LEN] = [
-    CAP_RELAY,
-    CAP_DHT,
-    CAP_DHT_WATCH,
-    CAP_APPMESSAGE,
+    VEILID_CAPABILITY_RELAY,
+    VEILID_CAPABILITY_DHT,
+    VEILID_CAPABILITY_APPMESSAGE,
     #[cfg(feature = "unstable-blockstore")]
-    CAP_BLOCKSTORE,
+    VEILID_CAPABILITY_BLOCKSTORE,
 ];
 
 pub const MAX_CAPABILITIES: usize = 64;
@@ -90,7 +88,7 @@ struct NetworkInner {
     /// which may indicate the network is down for that domain
     dial_info_failure_count: BTreeMap<RoutingDomain, usize>,
     /// if we need to redo the publicinternet network class
-    needs_update_network_class: bool,
+    needs_update_dial_info: bool,
     /// result of resolving 'auto'/None detect_address_changes mode
     resolved_detect_address_changes: bool,
     /// the next time we are allowed to check for better dialinfo when we are OutboundOnly
@@ -101,12 +99,8 @@ struct NetworkInner {
     stop_source: Option<StopSource>,
     /// Actual bound addresses per protocol
     bound_address_per_protocol: BTreeMap<ProtocolType, Vec<SocketAddr>>,
-    /// mapping of protocol handlers to accept messages from a set of bound socket addresses
+    /// mapping of protocol handlers to accept or send messages from a set of bound socket addresses
     udp_protocol_handlers: BTreeMap<SocketAddr, RawUdpProtocolHandler>,
-    /// outbound udp protocol handler for udpv4
-    default_udpv4_protocol_handler: Option<RawUdpProtocolHandler>,
-    /// outbound udp protocol handler for udpv6
-    default_udpv6_protocol_handler: Option<RawUdpProtocolHandler>,
     /// TLS handling socket controller
     tls_acceptor: Option<TlsAcceptor>,
     /// Multiplexer record for protocols on low level TCP sockets
@@ -116,7 +110,7 @@ struct NetworkInner {
     /// set of statically configured protocols with public dialinfo
     static_public_dial_info: ProtocolTypeSet,
     /// Network state
-    network_state: Option<NetworkState>,
+    network_state: Option<Arc<NetworkState>>,
 }
 
 pub(super) struct NetworkUnlockedInner {
@@ -127,7 +121,7 @@ pub(super) struct NetworkUnlockedInner {
     interfaces: NetworkInterfaces,
 
     // Background processes
-    update_network_class_task: TickTask<EyreReport>,
+    update_dial_info_task: TickTask<EyreReport>,
     network_interfaces_task: TickTask<EyreReport>,
     upnp_task: TickTask<EyreReport>,
     network_task_lock: AsyncMutex<()>,
@@ -143,7 +137,7 @@ pub(super) struct Network {
     unlocked_inner: Arc<NetworkUnlockedInner>,
 }
 
-impl_veilid_component_registry_accessor!(Network);
+impl_veilid_component_accessors!(Network);
 
 impl core::ops::Deref for Network {
     type Target = NetworkUnlockedInner;
@@ -158,15 +152,13 @@ impl Network {
         NetworkInner {
             network_needs_restart: false,
             dial_info_failure_count: BTreeMap::new(),
-            needs_update_network_class: false,
+            needs_update_dial_info: false,
             resolved_detect_address_changes: false,
             next_outbound_only_dial_info_check: Timestamp::default(),
             join_handles: Vec::new(),
             stop_source: None,
             bound_address_per_protocol: BTreeMap::new(),
             udp_protocol_handlers: BTreeMap::new(),
-            default_udpv4_protocol_handler: None,
-            default_udpv6_protocol_handler: None,
             tls_acceptor: None,
             listener_states: BTreeMap::new(),
             preferred_local_addresses: BTreeMap::new(),
@@ -179,9 +171,9 @@ impl Network {
         NetworkUnlockedInner {
             startup_lock: StartupLock::new(),
             interfaces: NetworkInterfaces::new(),
-            update_network_class_task: TickTask::new(
-                "update_network_class_task",
-                UPDATE_NETWORK_CLASS_TASK_TICK_PERIOD_SECS,
+            update_dial_info_task: TickTask::new(
+                "update_dial_info_task",
+                UPDATE_DIAL_INFO_TASK_TICK_PERIOD_SECS,
             ),
             network_interfaces_task: TickTask::new(
                 "network_interfaces_task",
@@ -235,26 +227,25 @@ impl Network {
 
     fn load_server_config(&self) -> io::Result<ServerConfig> {
         let config = self.config();
-        let c = config.get();
         //
         veilid_log!(self trace
             "loading certificate from {}",
-            c.network.tls.certificate_path
+            config.network.tls.certificate_path
         );
-        let certs = Self::load_certs(&PathBuf::from(&c.network.tls.certificate_path))?;
+        let certs = Self::load_certs(&PathBuf::from(&config.network.tls.certificate_path))?;
         veilid_log!(self trace "loaded {} certificates", certs.len());
         if certs.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Certificates at {} could not be loaded.\nEnsure it is in PEM format, beginning with '-----BEGIN CERTIFICATE-----'",c.network.tls.certificate_path)));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Certificates at {} could not be loaded.\nEnsure it is in PEM format, beginning with '-----BEGIN CERTIFICATE-----'",config.network.tls.certificate_path)));
         }
         //
         veilid_log!(self trace
             "loading private key from {}",
-            c.network.tls.private_key_path
+            config.network.tls.private_key_path
         );
-        let mut keys = Self::load_keys(&PathBuf::from(&c.network.tls.private_key_path))?;
+        let mut keys = Self::load_keys(&PathBuf::from(&config.network.tls.private_key_path))?;
         veilid_log!(self trace "loaded {} keys", keys.len());
         if keys.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Private key at {} could not be loaded.\nEnsure it is unencrypted and in RSA or PKCS8 format, beginning with '-----BEGIN RSA PRIVATE KEY-----' or '-----BEGIN PRIVATE KEY-----'",c.network.tls.private_key_path)));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Private key at {} could not be loaded.\nEnsure it is unencrypted and in RSA or PKCS8 format, beginning with '-----BEGIN RSA PRIVATE KEY-----' or '-----BEGIN PRIVATE KEY-----'",config.network.tls.private_key_path)));
         }
 
         let config = ServerConfig::builder()
@@ -275,16 +266,16 @@ impl Network {
         if !from.ip().is_unspecified() {
             vec![from]
         } else {
-            let addrs = self
-                .last_network_state()
+            self.last_network_state()
                 .unwrap()
-                .stable_interface_addresses;
-            addrs
+                .interface_addresses
                 .iter()
                 .filter_map(|a| {
                     // We create sockets that are only ipv6 or ipv6 (not dual, so only translate matching unspecified address)
-                    if (a.is_ipv4() && from.is_ipv4()) || (a.is_ipv6() && from.is_ipv6()) {
-                        Some(SocketAddr::new(*a, from.port()))
+                    if (a.ip().is_ipv4() && from.ip().is_ipv4())
+                        || (a.ip().is_ipv6() && from.ip().is_ipv6())
+                    {
+                        Some(SocketAddr::new(a.ip(), from.port()))
                     } else {
                         None
                     }
@@ -322,7 +313,10 @@ impl Network {
             .routing_domain_for_address(dial_info.address());
 
         let network_result = pin_future_closure!(fut).await?;
-        if matches!(network_result, NetworkResult::NoConnection(_)) {
+        if matches!(
+            network_result,
+            NetworkResult::NoConnection(_) | NetworkResult::Timeout
+        ) {
             // Dial info failure
             self.network_manager()
                 .address_filter()
@@ -373,9 +367,7 @@ impl Network {
             dial_info.clone(),
             async move {
                 let data_len = data.len();
-                let connect_timeout_ms = self
-                    .config()
-                    .with(|c| c.network.connection_initial_timeout_ms);
+                let connect_timeout_ms = self.config().network.connection_initial_timeout_ms;
 
                 if self
                     .network_manager()
@@ -412,7 +404,19 @@ impl Network {
                         .wrap_err("connect failure")?);
                         network_result_try!(pnc.send(data).await.wrap_err("send failure")?);
                     }
-                    ProtocolType::WS | ProtocolType::WSS => {
+                    ProtocolType::WS => {
+                        let pnc = network_result_try!(WebsocketProtocolHandler::connect(
+                            self.registry(),
+                            None,
+                            &dial_info,
+                            connect_timeout_ms
+                        )
+                        .await
+                        .wrap_err("connect failure")?);
+                        network_result_try!(pnc.send(data).await.wrap_err("send failure")?);
+                    }
+                    #[cfg(feature = "enable-protocol-wss")]
+                    ProtocolType::WSS => {
                         let pnc = network_result_try!(WebsocketProtocolHandler::connect(
                             self.registry(),
                             None,
@@ -453,9 +457,7 @@ impl Network {
             dial_info.clone(),
             async move {
                 let data_len = data.len();
-                let connect_timeout_ms = self
-                    .config()
-                    .with(|c| c.network.connection_initial_timeout_ms);
+                let connect_timeout_ms = self.config().network.connection_initial_timeout_ms;
 
                 if self
                     .network_manager()
@@ -466,6 +468,7 @@ impl Network {
                 }
 
                 match dial_info.protocol_type() {
+                    // Connectionless protocols
                     ProtocolType::UDP => {
                         let peer_socket_addr = dial_info.to_socket_addr();
                         let h = RawUdpProtocolHandler::new_unspecified_bound_handler(
@@ -506,7 +509,8 @@ impl Network {
                         out.resize(recv_len, 0u8);
                         Ok(NetworkResult::Value(out))
                     }
-                    ProtocolType::TCP | ProtocolType::WS | ProtocolType::WSS => {
+                    // Connection-oriented protocols
+                    _ => {
                         let pnc = network_result_try!(match dial_info.protocol_type() {
                             ProtocolType::UDP => unreachable!(),
                             ProtocolType::TCP => {
@@ -520,7 +524,18 @@ impl Network {
                                 .await
                                 .wrap_err("connect failure")?
                             }
-                            ProtocolType::WS | ProtocolType::WSS => {
+                            ProtocolType::WS => {
+                                WebsocketProtocolHandler::connect(
+                                    self.registry(),
+                                    None,
+                                    &dial_info,
+                                    connect_timeout_ms,
+                                )
+                                .await
+                                .wrap_err("connect failure")?
+                            }
+                            #[cfg(feature = "enable-protocol-wss")]
+                            ProtocolType::WSS => {
                                 WebsocketProtocolHandler::connect(
                                     self.registry(),
                                     None,
@@ -581,7 +596,7 @@ impl Network {
                 network_result_value_or_log!(self ph.clone()
                     .send_message(data.clone(), peer_socket_addr)
                     .await
-                    .wrap_err("sending data to existing connection")? => [ format!(": data.len={}, flow={:?}", data.len(), flow) ]
+                    .wrap_err("sending data to existing flow")? => [ format!(": data.len={}, flow={:?}", data.len(), flow) ]
                     { return Ok(SendDataToExistingFlowResult::NotSent(data)); } );
 
                 // Network accounting
@@ -743,8 +758,8 @@ impl Network {
 
     pub async fn startup_internal(&self) -> EyreResult<StartupDisposition> {
         // Get the initial network state snapshot
-        // Caution: this -must- happen first because we use unwrap() in last_network_state()
-        let network_state = self.make_network_state().await?;
+        // Caution: this -must- happen first because we use unwrap()
+        let network_state = self.refresh_network_state().await?.unwrap();
 
         // Resolve 'auto'/None config fo detect_address_changes
         let resolved_detect_address_changes = {
@@ -753,11 +768,8 @@ impl Network {
             // Create the shutdown stopper
             inner.stop_source = Some(StopSource::new());
 
-            // Store the first network state snapshot
-            inner.network_state = Some(network_state.clone());
-
             // Process the detect_address_changes 'auto' mode
-            let detect_address_changes = self.config().with(|c| c.network.detect_address_changes);
+            let detect_address_changes = self.config().network.detect_address_changes;
             if let Some(detect_address_changes) = detect_address_changes {
                 inner.resolved_detect_address_changes = detect_address_changes;
                 if inner.resolved_detect_address_changes {
@@ -769,13 +781,13 @@ impl Network {
                 // Check for publicly routable IPv4 and IPv6 addresses
                 let mut global_ipv4 = false;
                 let mut global_ipv6 = false;
-                for siaddr in network_state.stable_interface_addresses {
-                    if Address::from_ip_addr(siaddr).is_global() {
+                for siaddr in network_state.interface_addresses.iter() {
+                    if Address::from_ip_addr(siaddr.ip()).is_global() {
                         match siaddr {
-                            IpAddr::V4(_ipv4_addr) => {
+                            IfAddr::V4(_) => {
                                 global_ipv4 = true;
                             }
-                            IpAddr::V6(_ipv6_addr) => {
+                            IfAddr::V6(_) => {
                                 global_ipv6 = true;
                             }
                         }
@@ -795,101 +807,109 @@ impl Network {
 
         // Start editing routing table
         let routing_table = self.routing_table();
-        let mut editor_public_internet = routing_table.edit_public_internet_routing_domain();
-        let mut editor_local_network = routing_table.edit_local_network_routing_domain();
+        let confirmed_public_internet;
 
-        // Setup network
-        editor_local_network.set_local_networks(network_state.local_networks);
-        editor_local_network.setup_network(
-            network_state.protocol_config.outbound,
-            network_state.protocol_config.inbound,
-            network_state.protocol_config.family_local,
-            network_state.protocol_config.local_network_capabilities,
-            true,
-        );
-
-        let confirmed_public_internet = !resolved_detect_address_changes
-            || self
-                .config()
-                .with(|c| c.network.privacy.require_inbound_relay);
-        editor_public_internet.setup_network(
-            network_state.protocol_config.outbound,
-            network_state.protocol_config.inbound,
-            network_state.protocol_config.family_global,
-            network_state.protocol_config.public_internet_capabilities,
-            confirmed_public_internet,
-        );
-
-        // Start listeners
-        if network_state
-            .protocol_config
-            .inbound
-            .contains(ProtocolType::UDP)
+        // Guard to limit lifetime of editors
         {
-            let res = self.bind_udp_protocol_handlers().await;
-            if !matches!(res, Ok(StartupDisposition::Success)) {
-                return res;
-            }
-        }
-        if network_state
-            .protocol_config
-            .inbound
-            .contains(ProtocolType::WS)
-        {
-            let res = self.start_ws_listeners().await;
-            if !matches!(res, Ok(StartupDisposition::Success)) {
-                return res;
-            }
-        }
-        if network_state
-            .protocol_config
-            .inbound
-            .contains(ProtocolType::WSS)
-        {
-            let res = self.start_wss_listeners().await;
-            if !matches!(res, Ok(StartupDisposition::Success)) {
-                return res;
-            }
-        }
-        if network_state
-            .protocol_config
-            .inbound
-            .contains(ProtocolType::TCP)
-        {
-            let res = self.start_tcp_listeners().await;
-            if !matches!(res, Ok(StartupDisposition::Success)) {
-                return res;
-            }
-        }
+            let mut editor_public_internet = routing_table.edit_public_internet_routing_domain();
+            let mut editor_local_network = routing_table.edit_local_network_routing_domain();
 
-        // Register all dialinfo
-        self.register_all_dial_info(&mut editor_public_internet, &mut editor_local_network)
-            .await?;
+            // Setup network
+            editor_local_network
+                .set_interface_addresses(network_state.interface_addresses.as_ref().clone());
+            editor_local_network.setup_network(
+                network_state.protocol_config.outbound,
+                network_state.protocol_config.inbound,
+                network_state.protocol_config.family_local,
+                network_state
+                    .protocol_config
+                    .local_network_capabilities
+                    .clone(),
+                true,
+            );
 
-        // Commit routing domain edits
-        if editor_public_internet.commit(true).await {
-            editor_public_internet.publish();
-        }
-        if editor_local_network.commit(true).await {
-            editor_local_network.publish();
+            confirmed_public_internet = !resolved_detect_address_changes
+                || self.config().network.privacy.require_inbound_relay;
+            editor_public_internet
+                .set_interface_addresses(network_state.interface_addresses.as_ref().clone());
+            editor_public_internet.setup_network(
+                network_state.protocol_config.outbound,
+                network_state.protocol_config.inbound,
+                network_state.protocol_config.family_global,
+                network_state
+                    .protocol_config
+                    .public_internet_capabilities
+                    .clone(),
+                confirmed_public_internet,
+            );
+
+            // Start listeners
+            if network_state
+                .protocol_config
+                .inbound
+                .contains(ProtocolType::UDP)
+            {
+                let res = self.bind_udp_protocol_handlers().await;
+                if !matches!(res, Ok(StartupDisposition::Success)) {
+                    return res;
+                }
+            }
+            if network_state
+                .protocol_config
+                .inbound
+                .contains(ProtocolType::WS)
+            {
+                let res = self.start_ws_listeners().await;
+                if !matches!(res, Ok(StartupDisposition::Success)) {
+                    return res;
+                }
+            }
+
+            #[cfg(feature = "enable-protocol-wss")]
+            if network_state
+                .protocol_config
+                .inbound
+                .contains(ProtocolType::WSS)
+            {
+                let res = self.start_wss_listeners().await;
+                if !matches!(res, Ok(StartupDisposition::Success)) {
+                    return res;
+                }
+            }
+            if network_state
+                .protocol_config
+                .inbound
+                .contains(ProtocolType::TCP)
+            {
+                let res = self.start_tcp_listeners().await;
+                if !matches!(res, Ok(StartupDisposition::Success)) {
+                    return res;
+                }
+            }
+
+            // Register all dialinfo
+            self.register_all_dial_info(&mut editor_public_internet, &mut editor_local_network)
+                .await?;
+
+            // Commit routing domain edits
+            if editor_public_internet.commit(true).await {
+                editor_public_internet.publish();
+            }
+            if editor_local_network.commit(true).await {
+                editor_local_network.publish();
+            }
         }
 
         if !confirmed_public_internet {
             // Update public internet network class if we haven't confirmed it
-            self.trigger_update_network_class(RoutingDomain::PublicInternet);
+            self.trigger_update_dial_info(RoutingDomain::PublicInternet);
         } else {
             // Warn if we have no public dialinfo, because we're not going to magically find some
             // with detect_address_changes turned off. Skip the warning if require_inbound_relay is
             // enabled, this option intentionally disables publishing any dialinfo.
             let pi = routing_table.get_current_peer_info(RoutingDomain::PublicInternet);
-            if !pi.signed_node_info().has_any_dial_info()
-                && !self
-                    .registry
-                    .config()
-                    .get()
-                    .network
-                    .privacy
-                    .require_inbound_relay
+            if !pi.node_info().has_any_dial_info()
+                && !self.config().network.privacy.require_inbound_relay
             {
                 veilid_log!(self warn
                     "This node has no valid public dial info.\nConfigure this node with a static public IP address and correct firewall rules."
@@ -924,6 +944,7 @@ impl Network {
             self.register_ws_dial_info(editor_public_internet, editor_local_network)
                 .await?;
         }
+        #[cfg(feature = "enable-protocol-wss")]
         if protocol_config.inbound.contains(ProtocolType::WSS) {
             self.register_wss_dial_info(editor_public_internet, editor_local_network)
                 .await?;
@@ -1023,13 +1044,13 @@ impl Network {
 
     //////////////////////////////////////////
 
-    pub fn needs_update_network_class(&self) -> bool {
+    pub fn needs_update_dial_info(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
             veilid_log!(self debug "ignoring due to not started up");
             return false;
         };
 
-        self.inner.lock().needs_update_network_class
+        self.inner.lock().needs_update_dial_info
     }
 
     pub fn resolved_detect_address_changes(&self) -> bool {
@@ -1041,7 +1062,7 @@ impl Network {
         self.inner.lock().resolved_detect_address_changes
     }
 
-    pub fn trigger_update_network_class(&self, routing_domain: RoutingDomain) {
+    pub fn trigger_update_dial_info(&self, routing_domain: RoutingDomain) {
         let Ok(_guard) = self.startup_lock.enter() else {
             veilid_log!(self debug "ignoring due to not started up");
             return;
@@ -1050,6 +1071,6 @@ impl Network {
         if !matches!(routing_domain, RoutingDomain::PublicInternet) {
             return;
         }
-        self.inner.lock().needs_update_network_class = true;
+        self.inner.lock().needs_update_dial_info = true;
     }
 }

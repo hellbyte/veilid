@@ -3,7 +3,7 @@ use super::*;
 pub async fn test_envelope_round_trip(
     envelope_version: EnvelopeVersion,
     vcrypto: &AsyncCryptoSystemGuard<'_>,
-    network_key: Option<SharedSecret>,
+    network_key: Option<BareSharedSecret>,
 ) {
     let crypto = vcrypto.crypto();
     if network_key.is_some() {
@@ -18,16 +18,25 @@ pub async fn test_envelope_round_trip(
     // Create envelope
     let ts = Timestamp::from(0x12345678ABCDEF69u64);
     let nonce = vcrypto.random_nonce().await;
-    let (sender_id, sender_secret) = vcrypto.generate_keypair().await.into_split();
-    let (recipient_id, recipient_secret) = vcrypto.generate_keypair().await.into_split();
-    let envelope = Envelope::new(
-        envelope_version,
-        vcrypto.kind(),
-        ts,
-        nonce,
-        sender_id.into(),
-        recipient_id.into(),
-    );
+    let (sender_public_key, sender_secret) = vcrypto.generate_keypair().await.into_split();
+    let sender_id = crypto
+        .routing_table()
+        .generate_node_id(&sender_public_key)
+        .expect("should generate node id");
+    let (recipient_public_key, recipient_secret) = vcrypto.generate_keypair().await.into_split();
+    let recipient_id = crypto
+        .routing_table()
+        .generate_node_id(&recipient_public_key)
+        .expect("should generate node id");
+    let envelope = match envelope_version {
+        ENVELOPE_VERSION_ENV0 => {
+            Envelope::try_new_env0(&crypto, vcrypto.kind(), ts, nonce, sender_id, recipient_id)
+                .expect("should create envelope")
+        }
+        _ => {
+            panic!("unsupported envelope version");
+        }
+    };
 
     // Create arbitrary body
     let body = b"This is an arbitrary body";
@@ -35,14 +44,17 @@ pub async fn test_envelope_round_trip(
     // Serialize to bytes
     let enc_data = envelope
         .to_encrypted_data(&crypto, body, &sender_secret, &network_key)
+        .await
         .expect("failed to encrypt data");
 
     // Deserialize from bytes
-    let envelope2 = Envelope::from_signed_data(&crypto, &enc_data, &network_key)
+    let envelope2 = Envelope::try_from_signed_data(&crypto, &enc_data, &network_key)
+        .await
         .expect("failed to deserialize envelope from data");
 
     let body2 = envelope2
         .decrypt_body(&crypto, &enc_data, &recipient_secret, &network_key)
+        .await
         .expect("failed to decrypt envelope body");
 
     // Compare envelope and body
@@ -54,19 +66,23 @@ pub async fn test_envelope_round_trip(
     let mut mod_enc_data = enc_data.clone();
     mod_enc_data[enc_data_len - 1] ^= 0x80u8;
     assert!(
-        Envelope::from_signed_data(&crypto, &mod_enc_data, &network_key).is_err(),
+        Envelope::try_from_signed_data(&crypto, &mod_enc_data, &network_key)
+            .await
+            .is_err(),
         "should have failed to decode envelope with modified signature"
     );
     let mut mod_enc_data2 = enc_data.clone();
     mod_enc_data2[enc_data_len - 65] ^= 0x80u8;
     assert!(
-        Envelope::from_signed_data(&crypto, &mod_enc_data2, &network_key).is_err(),
+        Envelope::try_from_signed_data(&crypto, &mod_enc_data2, &network_key)
+            .await
+            .is_err(),
         "should have failed to decode envelope with modified data"
     );
 }
 
 pub async fn test_receipt_round_trip(
-    envelope_version: EnvelopeVersion,
+    receipt_version: ReceiptVersion,
     vcrypto: &AsyncCryptoSystemGuard<'_>,
 ) {
     let crypto = vcrypto.crypto();
@@ -76,15 +92,20 @@ pub async fn test_receipt_round_trip(
 
     // Create receipt
     let nonce = vcrypto.random_nonce().await;
-    let (sender_id, sender_secret) = vcrypto.generate_keypair().await.into_split();
-    let receipt = Receipt::try_new(
-        envelope_version,
-        vcrypto.kind(),
-        nonce,
-        sender_id.into(),
-        body,
-    )
-    .expect("should not fail");
+    let (sender_public_key, sender_secret) = vcrypto.generate_keypair().await.into_split();
+    let sender_id = crypto
+        .routing_table()
+        .generate_node_id(&sender_public_key)
+        .expect("should generate node id");
+    let receipt = match receipt_version {
+        RECEIPT_VERSION_RCP0 => {
+            Receipt::try_new_rcp0(&crypto, vcrypto.kind(), nonce, sender_id, body)
+                .expect("should not fail")
+        }
+        _ => {
+            panic!("unsupported receipt version");
+        }
+    };
 
     // Serialize to bytes
     let mut enc_data = receipt
@@ -92,12 +113,12 @@ pub async fn test_receipt_round_trip(
         .expect("failed to make signed data");
 
     // Deserialize from bytes
-    let receipt2 = Receipt::from_signed_data(&crypto, &enc_data)
+    let receipt2 = Receipt::try_from_signed_data(&crypto, &enc_data)
         .expect("failed to deserialize envelope from data");
 
     // Should not validate even when a single bit is changed
     enc_data[5] = 0x01;
-    let _ = Receipt::from_signed_data(&crypto, &enc_data)
+    let _ = Receipt::try_from_signed_data(&crypto, &enc_data)
         .expect_err("should have failed to decrypt using wrong secret");
 
     // Compare receipts
@@ -114,9 +135,21 @@ pub async fn test_all() {
             let vcrypto = crypto.get_async(v).unwrap();
 
             test_envelope_round_trip(ev, &vcrypto, None).await;
-            test_envelope_round_trip(ev, &vcrypto, Some(vcrypto.random_shared_secret().await))
-                .await;
-            test_receipt_round_trip(ev, &vcrypto).await;
+            test_envelope_round_trip(
+                ev,
+                &vcrypto,
+                Some(vcrypto.random_shared_secret().await.into_value()),
+            )
+            .await;
+        }
+    }
+
+    // Test versions
+    for rv in VALID_RECEIPT_VERSIONS {
+        for v in VALID_CRYPTO_KINDS {
+            let vcrypto = crypto.get_async(v).unwrap();
+
+            test_receipt_round_trip(rv, &vcrypto).await;
         }
     }
 

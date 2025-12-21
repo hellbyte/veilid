@@ -1,12 +1,14 @@
 use super::*;
 use veilid_api::VeilidAPIResult;
 
-#[derive(Clone, Default, PartialOrd, PartialEq, Eq, Ord, Serialize, Deserialize, JsonSchema)]
+/// A DHT value and its metadata
+#[derive(Clone, PartialOrd, PartialEq, Eq, Ord, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     derive(Tsify),
-    tsify(into_wasm_abi)
+    tsify(from_wasm_abi, into_wasm_abi)
 )]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct ValueData {
     /// An increasing sequence number to time-order the DHT record changes
@@ -27,6 +29,7 @@ pub struct ValueData {
 
     /// The public identity key of the writer of the data
     #[schemars(with = "String")]
+    #[serde(with = "public_key_try_untyped_vld0")]
     writer: PublicKey,
 }
 
@@ -38,7 +41,7 @@ impl ValueData {
             apibail_generic!("invalid size");
         }
         Ok(Self {
-            seq: 0,
+            seq: ValueSeqNum::ZERO,
             data,
             writer,
         })
@@ -48,10 +51,22 @@ impl ValueData {
         data: Vec<u8>,
         writer: PublicKey,
     ) -> VeilidAPIResult<Self> {
+        if seq.is_none() {
+            apibail_generic!("invalid sequence number");
+        }
         if data.len() > Self::MAX_LEN {
             apibail_generic!("invalid size");
         }
         Ok(Self { seq, data, writer })
+    }
+
+    pub fn ref_writer(&self) -> &PublicKey {
+        &self.writer
+    }
+
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     #[must_use]
@@ -59,13 +74,8 @@ impl ValueData {
         self.seq
     }
 
-    pub fn writer(&self) -> &PublicKey {
-        &self.writer
-    }
-
-    #[must_use]
-    pub fn data(&self) -> &[u8] {
-        &self.data
+    pub fn writer(&self) -> PublicKey {
+        self.writer.clone()
     }
 
     #[must_use]
@@ -82,39 +92,48 @@ impl ValueData {
 impl fmt::Debug for ValueData {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("ValueData")
-            .field("seq", &self.seq)
+            .field("seq", &u32::from(self.seq))
             .field("data", &print_data(&self.data, Some(64)))
             .field("writer", &self.writer)
             .finish()
     }
 }
 
+impl fmt::Display for ValueData {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            fmt,
+            "seq={},len(data)={},writer={}",
+            self.seq,
+            self.data.len(),
+            self.writer
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::tests::fixtures::*;
 
     #[test]
     fn value_data_ok() {
-        assert!(ValueData::new(vec![0; ValueData::MAX_LEN], PublicKey { bytes: [0; 32] }).is_ok());
+        assert!(ValueData::new(vec![0; ValueData::MAX_LEN], fix_fake_public_key()).is_ok());
         assert!(ValueData::new_with_seq(
-            0,
+            ValueSeqNum::ZERO,
             vec![0; ValueData::MAX_LEN],
-            PublicKey { bytes: [0; 32] }
+            fix_fake_public_key()
         )
         .is_ok());
     }
 
     #[test]
     fn value_data_too_long() {
-        assert!(ValueData::new(
-            vec![0; ValueData::MAX_LEN + 1],
-            PublicKey { bytes: [0; 32] }
-        )
-        .is_err());
+        assert!(ValueData::new(vec![0; ValueData::MAX_LEN + 1], fix_fake_public_key()).is_err());
         assert!(ValueData::new_with_seq(
-            0,
+            ValueSeqNum::ZERO,
             vec![0; ValueData::MAX_LEN + 1],
-            PublicKey { bytes: [0; 32] }
+            fix_fake_public_key()
         )
         .is_err());
     }

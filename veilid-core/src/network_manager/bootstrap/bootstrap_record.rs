@@ -4,8 +4,8 @@ impl_veilid_log_facility!("net");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BootstrapRecord {
-    node_ids: TypedNodeIdGroup,
-    envelope_support: Vec<u8>,
+    public_keys: PublicKeyGroup,
+    envelope_support: Vec<EnvelopeVersion>,
     dial_info_details: Vec<DialInfoDetail>,
     timestamp_secs: Option<u64>,
     extra: Vec<String>,
@@ -13,8 +13,8 @@ pub struct BootstrapRecord {
 
 impl BootstrapRecord {
     pub fn new(
-        node_ids: TypedNodeIdGroup,
-        mut envelope_support: Vec<u8>,
+        public_keys: PublicKeyGroup,
+        mut envelope_support: Vec<EnvelopeVersion>,
         mut dial_info_details: Vec<DialInfoDetail>,
         timestamp_secs: Option<u64>,
         extra: Vec<String>,
@@ -23,7 +23,7 @@ impl BootstrapRecord {
         dial_info_details.sort();
 
         Self {
-            node_ids,
+            public_keys,
             envelope_support,
             dial_info_details,
             timestamp_secs,
@@ -31,10 +31,10 @@ impl BootstrapRecord {
         }
     }
 
-    pub fn node_ids(&self) -> &TypedNodeIdGroup {
-        &self.node_ids
+    pub fn public_keys(&self) -> &PublicKeyGroup {
+        &self.public_keys
     }
-    pub fn envelope_support(&self) -> &[u8] {
+    pub fn envelope_support(&self) -> &[EnvelopeVersion] {
         &self.envelope_support
     }
     pub fn dial_info_details(&self) -> &[DialInfoDetail] {
@@ -49,7 +49,7 @@ impl BootstrapRecord {
     }
 
     pub fn merge(&mut self, other: BootstrapRecord) {
-        self.node_ids.add_all(&other.node_ids);
+        self.public_keys.add_all_from_slice(&other.public_keys);
         for x in other.envelope_support {
             if !self.envelope_support.contains(&x) {
                 self.envelope_support.push(x);
@@ -82,12 +82,18 @@ impl BootstrapRecord {
         let valid_envelope_versions = self
             .envelope_support()
             .iter()
-            .map(|x| x.to_string())
+            .map(|x| {
+                if x.bytes()[0..3] == *b"ENV" {
+                    x.to_string().split_off(3)
+                } else {
+                    x.to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join(",");
 
-        let node_ids = self
-            .node_ids
+        let public_keys = self
+            .public_keys
             .iter()
             .map(|x| x.to_string())
             .collect::<Vec<_>>()
@@ -123,7 +129,7 @@ impl BootstrapRecord {
         let vcommon = format!(
             "|{}|{}|{}|{}",
             valid_envelope_versions,
-            node_ids,
+            public_keys,
             some_hostname.as_ref().unwrap(),
             short_urls.join(",")
         );
@@ -143,7 +149,7 @@ impl BootstrapRecord {
         &self,
         network_manager: &NetworkManager,
         dial_info_converter: &dyn DialInfoConverter,
-        signing_key_pair: TypedKeyPair,
+        signing_key_pair: KeyPair,
     ) -> EyreResult<String> {
         let vcommon = self.to_vcommon_string(dial_info_converter).await?;
         let ts = if let Some(ts) = self.timestamp_secs() {
@@ -155,19 +161,20 @@ impl BootstrapRecord {
 
         let crypto = network_manager.crypto();
 
-        let sig = match crypto.generate_signatures(v1.as_bytes(), &[signing_key_pair], |kp, sig| {
-            TypedSignature::new(kp.kind, sig).to_string()
-        }) {
-            Ok(v) => {
-                let Some(sig) = v.first().cloned() else {
-                    bail!("No signature generated");
-                };
-                sig
-            }
-            Err(e) => {
-                bail!("Failed to generate signature: {}", e);
-            }
-        };
+        let sig =
+            match crypto.generate_signatures(v1.as_bytes(), &[signing_key_pair], |_kp, sig| {
+                sig.to_string()
+            }) {
+                Ok(v) => {
+                    let Some(sig) = v.first().cloned() else {
+                        bail!("No signature generated");
+                    };
+                    sig
+                }
+                Err(e) => {
+                    bail!("Failed to generate signature: {}", e);
+                }
+            };
 
         v1 += &sig;
         Ok(v1)
@@ -226,7 +233,7 @@ impl BootstrapRecord {
         network_manager: &NetworkManager,
         dial_info_converter: &dyn DialInfoConverter,
         record_str: &str,
-        signing_keys: &[TypedPublicKey],
+        signing_keys: &[PublicKey],
     ) -> EyreResult<Option<BootstrapRecord>> {
         // All formats split on '|' character
         let fields: Vec<String> = record_str
@@ -294,14 +301,26 @@ impl BootstrapRecord {
         let mut envelope_support = Vec::new();
         for ess in fields[1].split(',') {
             let ess = ess.trim();
-            let es = match ess.parse::<u8>() {
-                Ok(v) => v,
-                Err(e) => {
-                    bail!(
-                        "invalid envelope version specified in bootstrap node txt record: {}",
-                        e
-                    );
+
+            let es = if ess.len() == 1 {
+                let mut envb: [u8; 4] = *b"ENV0";
+                envb[3] = ess.as_bytes()[0];
+                EnvelopeVersion::from(envb)
+            } else if ess.len() == 4 {
+                match ess.parse::<EnvelopeVersion>() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        bail!(
+                            "invalid envelope version fourcc specified in bootstrap v0 node txt record: {}",
+                            e
+                        );
+                    }
                 }
+            } else {
+                bail!(
+                    "invalid envelope version length specified in bootstrap v0 node txt record: {}",
+                    ess
+                );
             };
             envelope_support.push(es);
         }
@@ -309,20 +328,20 @@ impl BootstrapRecord {
         envelope_support.dedup();
 
         // Node Id
-        let mut node_ids = TypedNodeIdGroup::new();
-        for node_id_str in fields[2].split(',') {
-            let node_id_str = node_id_str.trim();
-            let node_id = match TypedNodeId::from_str(node_id_str) {
+        let mut public_keys = PublicKeyGroup::new();
+        for public_key_str in fields[2].split(',') {
+            let public_key_str = public_key_str.trim();
+            let public_key = match PublicKey::from_str(public_key_str) {
                 Ok(v) => v,
                 Err(e) => {
                     bail!(
-                        "Invalid node id in bootstrap node record {}: {}",
-                        node_id_str,
+                        "Invalid public key in bootstrap node record {}: {}",
+                        public_key_str,
                         e
                     );
                 }
             };
-            node_ids.add(node_id);
+            public_keys.add(public_key);
         }
 
         // Hostname
@@ -353,7 +372,7 @@ impl BootstrapRecord {
         }
 
         Ok(Some(BootstrapRecord::new(
-            node_ids,
+            public_keys,
             envelope_support,
             dial_info_details,
             None,
@@ -376,7 +395,7 @@ impl BootstrapRecord {
         dial_info_converter: &dyn DialInfoConverter,
         record_str: &str,
         fields: &[String],
-        signing_keys: &[TypedPublicKey],
+        signing_keys: &[PublicKey],
     ) -> EyreResult<Option<BootstrapRecord>> {
         if fields.len() < 7 {
             bail!("invalid number of fields in bootstrap v1 txt record");
@@ -384,8 +403,8 @@ impl BootstrapRecord {
 
         // Get signature from last record
         let sigstring = fields.last().unwrap();
-        let sig = TypedSignature::from_str(sigstring)
-            .wrap_err("invalid signature for bootstrap v1 record")?;
+        let sig =
+            Signature::from_str(sigstring).wrap_err("invalid signature for bootstrap v1 record")?;
 
         // Get slice that was signed
         let signed_str = &record_str[0..record_str.len() - sigstring.len()];
@@ -393,13 +412,13 @@ impl BootstrapRecord {
         // Validate signature against any signing keys if we have them
         if !signing_keys.is_empty() {
             let mut validated = false;
-            for key in signing_keys.iter().copied() {
+            for key in signing_keys {
                 if let Some(valid_keys) = network_manager.crypto().verify_signatures(
-                    &[key],
+                    std::slice::from_ref(key),
                     signed_str.as_bytes(),
-                    &[sig],
+                    std::slice::from_ref(&sig),
                 )? {
-                    if valid_keys.contains(&key) {
+                    if valid_keys.contains(key) {
                         validated = true;
                         break;
                     }
@@ -417,35 +436,47 @@ impl BootstrapRecord {
         let mut envelope_support = Vec::new();
         for ess in fields[1].split(',') {
             let ess = ess.trim();
-            let es = match ess.parse::<u8>() {
-                Ok(v) => v,
-                Err(e) => {
-                    bail!(
-                        "invalid envelope version specified in bootstrap node txt record: {}",
-                        e
-                    );
+
+            let es = if ess.len() == 1 {
+                let mut envb: [u8; 4] = *b"ENV0";
+                envb[3] = ess.as_bytes()[0];
+                EnvelopeVersion::from(envb)
+            } else if ess.len() == 4 {
+                match ess.parse::<EnvelopeVersion>() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        bail!(
+                            "invalid envelope version fourcc specified in bootstrap v1 node txt record: {}",
+                            e
+                        );
+                    }
                 }
+            } else {
+                bail!(
+                    "invalid envelope version length specified in bootstrap v1 node txt record: {}",
+                    ess
+                );
             };
             envelope_support.push(es);
         }
         envelope_support.sort();
         envelope_support.dedup();
 
-        // Node Id
-        let mut node_ids = TypedNodeIdGroup::new();
-        for node_id_str in fields[2].split(',') {
-            let node_id_str = node_id_str.trim();
-            let node_id = match TypedNodeId::from_str(node_id_str) {
+        // Public Keys
+        let mut public_keys = PublicKeyGroup::new();
+        for public_key_str in fields[2].split(',') {
+            let public_key_str = public_key_str.trim();
+            let public_key = match PublicKey::from_str(public_key_str) {
                 Ok(v) => v,
                 Err(e) => {
                     bail!(
-                        "Invalid node id in bootstrap node record {}: {}",
-                        node_id_str,
+                        "Invalid public key in bootstrap node record {}: {}",
+                        public_key_str,
                         e
                     );
                 }
             };
-            node_ids.add(node_id);
+            public_keys.add(public_key);
         }
 
         // Hostname
@@ -482,7 +513,7 @@ impl BootstrapRecord {
         let extra = fields[6..fields.len() - 1].to_vec();
 
         Ok(Some(BootstrapRecord::new(
-            node_ids,
+            public_keys,
             envelope_support,
             dial_info_details,
             Some(secs_u64),

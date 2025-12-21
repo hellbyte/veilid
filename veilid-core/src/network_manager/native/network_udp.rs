@@ -5,9 +5,7 @@ impl Network {
     #[instrument(level = "trace", skip_all)]
     pub(super) async fn create_udp_listener_tasks(&self) -> EyreResult<()> {
         // Spawn socket tasks
-        let mut task_count = self
-            .config()
-            .with(|c| c.network.protocol.udp.socket_pool_size);
+        let mut task_count = self.config().network.protocol.udp.socket_pool_size;
         if task_count == 0 {
             task_count = get_concurrency() / 2;
             if task_count == 0 {
@@ -67,7 +65,9 @@ impl Network {
 
                                     // Pass it up for processing
                                     if let Err(e) = network_manager
-                                        .on_recv_envelope(&mut data[..size], flow)
+                                        .on_recv_envelope(&mut data[..size], flow).measure_debug(TimestampDuration::new_ms(500), |x| {
+                                            veilid_log!(network_manager debug "on_recv_envelope: {} for {}", x, flow);
+                                        })
                                         .await
                                     {
                                         veilid_log!(network_manager debug "failed to process received udp envelope: {}", e);
@@ -126,17 +126,61 @@ impl Network {
         inner
             .udp_protocol_handlers
             .insert(addr, protocol_handler.clone());
-        if addr.is_ipv4() && inner.default_udpv4_protocol_handler.is_none() {
-            inner.default_udpv4_protocol_handler = Some(protocol_handler);
-        } else if addr.is_ipv6() && inner.default_udpv6_protocol_handler.is_none() {
-            inner.default_udpv6_protocol_handler = Some(protocol_handler);
-        }
 
         Ok(true)
     }
 
     #[instrument(level = "trace", skip_all)]
-    pub(super) async fn create_udp_protocol_handlers(
+    pub(super) async fn create_outbound_udp_protocol_handlers(&self) -> EyreResult<bool> {
+        let enable_ipv4 = self.last_network_state().unwrap().enable_ipv4;
+        if enable_ipv4 {
+            let has_ipv4_handler = self
+                .inner
+                .lock()
+                .udp_protocol_handlers
+                .iter()
+                .any(|x| x.0.is_ipv4());
+            if !has_ipv4_handler {
+                // Needs ipv4 handler for outbound but we aren't listening on it, so make a random one
+                let bound = self
+                    .create_udp_protocol_handler(SocketAddr::V4(SocketAddrV4::new(
+                        Ipv4Addr::UNSPECIFIED,
+                        0,
+                    )))
+                    .await?;
+                if !bound {
+                    bail!("unable to bind ipv4 default udp handler");
+                }
+            }
+        }
+        let enable_ipv6 = self.last_network_state().unwrap().enable_ipv6;
+        if enable_ipv6 {
+            let has_ipv6_handler = self
+                .inner
+                .lock()
+                .udp_protocol_handlers
+                .iter()
+                .any(|x| x.0.is_ipv6());
+            if !has_ipv6_handler {
+                // Needs ipv6 handler for outbound but we aren't listening on it, so make a random one
+                let bound = self
+                    .create_udp_protocol_handler(SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::UNSPECIFIED,
+                        0,
+                        0,
+                        0,
+                    )))
+                    .await?;
+                if !bound {
+                    bail!("unable to bind ipv6 default udp handler");
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    #[instrument(level = "trace", skip_all)]
+    pub(super) async fn create_inbound_udp_protocol_handlers(
         &self,
         bind_set: NetworkBindSet,
     ) -> EyreResult<bool> {

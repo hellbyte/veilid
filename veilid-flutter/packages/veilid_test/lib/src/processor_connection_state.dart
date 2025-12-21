@@ -1,9 +1,7 @@
 import 'package:veilid/veilid.dart';
 
 class ProcessorConnectionState {
-  ProcessorConnectionState();
-
-  VeilidStateAttachment attachment = VeilidStateAttachment(
+  var attachment = VeilidStateAttachment(
       localNetworkReady: false,
       publicInternetReady: false,
       state: AttachmentState.detached,
@@ -11,8 +9,11 @@ class ProcessorConnectionState {
         value: BigInt.zero,
       ),
       attachedUptime: null);
-  VeilidStateNetwork network = VeilidStateNetwork(
+
+  var network = VeilidStateNetwork(
       bpsDown: BigInt.zero, bpsUp: BigInt.zero, started: false, peers: []);
+
+  ProcessorConnectionState();
 
   bool get isAttached => !(attachment.state == AttachmentState.detached ||
       attachment.state == AttachmentState.detaching ||

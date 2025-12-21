@@ -17,7 +17,7 @@ impl fmt::Debug for RawTcpNetworkConnection {
     }
 }
 
-impl_veilid_component_registry_accessor!(RawTcpNetworkConnection);
+impl_veilid_component_accessors!(RawTcpNetworkConnection);
 
 impl RawTcpNetworkConnection {
     pub fn new(registry: VeilidComponentRegistry, flow: Flow, stream: AsyncPeekStream) -> Self {
@@ -119,20 +119,18 @@ where
     connection_initial_timeout_ms: u32,
 }
 
-impl_veilid_component_registry_accessor!(RawTcpProtocolHandler);
+impl_veilid_component_accessors!(RawTcpProtocolHandler);
 
 impl RawTcpProtocolHandler {
     pub fn new(registry: VeilidComponentRegistry) -> Self {
-        let connection_initial_timeout_ms = registry
-            .config()
-            .with(|c| c.network.connection_initial_timeout_ms);
+        let connection_initial_timeout_ms = registry.config().network.connection_initial_timeout_ms;
         Self {
             registry,
             connection_initial_timeout_ms,
         }
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
+    #[instrument(level = "trace", target = "protocol", ret, err, skip(self, ps))]
     async fn on_accept_async(
         self,
         ps: AsyncPeekStream,
@@ -174,7 +172,7 @@ impl RawTcpProtocolHandler {
         Ok(Some(conn))
     }
 
-    #[instrument(level = "trace", target = "protocol", err)]
+    #[instrument(level = "trace", target = "protocol", skip(registry), ret, err)]
     pub async fn connect(
         registry: VeilidComponentRegistry,
         local_address: Option<SocketAddr>,

@@ -13,13 +13,17 @@ pub struct ProtectedStore {
 
 impl_veilid_component!(ProtectedStore);
 
+fn map_js_error_generic<M: ToString>(message: M) -> impl FnOnce(JsValue) -> VeilidAPIError {
+    move |x| VeilidAPIError::generic(format!("{}: {}", message.to_string(), map_jsvalue_error(x)))
+}
+
 impl ProtectedStore {
     pub(crate) fn new(registry: VeilidComponentRegistry) -> Self {
         Self { registry }
     }
 
-    #[instrument(level = "trace", skip(self), err)]
-    pub fn delete_all(&self) -> EyreResult<()> {
+    #[instrument(level = "trace", skip(self))]
+    pub fn delete_all(&self) {
         for kpsk in &KNOWN_PROTECTED_STORE_KEYS {
             if let Err(e) = self.remove_user_secret(kpsk) {
                 veilid_log!(self error "failed to delete protected store key '{}': {}", kpsk, e);
@@ -27,13 +31,12 @@ impl ProtectedStore {
                 veilid_log!(self debug "deleted protected store key '{}'", kpsk);
             }
         }
-        Ok(())
     }
 
     #[instrument(level = "debug", skip(self), err)]
     async fn init_async(&self) -> EyreResult<()> {
-        if self.config().with(|c| c.protected_store.delete) {
-            self.delete_all()?;
+        if self.config().protected_store.delete {
+            self.delete_all();
         }
 
         Ok(())
@@ -52,11 +55,10 @@ impl ProtectedStore {
 
     fn browser_key_name(&self, key: &str) -> String {
         let config = self.config();
-        let c = config.get();
-        if c.namespace.is_empty() {
+        if config.namespace.is_empty() {
             format!("__veilid_protected_store_{}", key)
         } else {
-            format!("__veilid_protected_store_{}_{}", c.namespace, key)
+            format!("__veilid_protected_store_{}_{}", config.namespace, key)
         }
     }
 
@@ -65,23 +67,22 @@ impl ProtectedStore {
         &self,
         key: K,
         value: V,
-    ) -> EyreResult<bool> {
+    ) -> VeilidAPIResult<bool> {
         if is_browser() {
             let win = match window() {
                 Some(w) => w,
                 None => {
-                    bail!("failed to get window");
+                    apibail_generic!("failed to get window");
                 }
             };
 
             let ls = match win
                 .local_storage()
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception getting local storage")?
+                .map_err(map_js_error_generic("exception getting local storage"))?
             {
                 Some(l) => l,
                 None => {
-                    bail!("failed to get local storage");
+                    apibail_generic!("failed to get local storage");
                 }
             };
 
@@ -89,13 +90,11 @@ impl ProtectedStore {
 
             let prev = ls
                 .get_item(&vkey)
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception_thrown")?
+                .map_err(map_js_error_generic("exception thrown"))?
                 .is_some();
 
             ls.set_item(&vkey, value.as_ref())
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception_thrown")?;
+                .map_err(map_js_error_generic("exception thrown"))?;
 
             Ok(prev)
         } else {
@@ -107,47 +106,45 @@ impl ProtectedStore {
     pub fn load_user_secret_string<K: AsRef<str> + fmt::Debug>(
         &self,
         key: K,
-    ) -> EyreResult<Option<String>> {
+    ) -> VeilidAPIResult<Option<String>> {
         if is_browser() {
             let win = match window() {
                 Some(w) => w,
                 None => {
-                    bail!("failed to get window");
+                    apibail_generic!("failed to get window");
                 }
             };
 
             let ls = match win
                 .local_storage()
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception getting local storage")?
+                .map_err(map_js_error_generic("exception getting local storage"))?
             {
                 Some(l) => l,
                 None => {
-                    bail!("failed to get local storage");
+                    apibail_generic!("failed to get local storage");
                 }
             };
 
             let vkey = self.browser_key_name(key.as_ref());
             ls.get_item(&vkey)
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception_thrown")
+                .map_err(map_js_error_generic("exception thrown"))
         } else {
             unimplemented!();
         }
     }
 
     #[instrument(level = "trace", skip(self, value))]
-    pub fn save_user_secret_json<K, T>(&self, key: K, value: &T) -> EyreResult<bool>
+    pub fn save_user_secret_json<K, T>(&self, key: K, value: &T) -> VeilidAPIResult<bool>
     where
         K: AsRef<str> + fmt::Debug,
         T: serde::Serialize,
     {
-        let v = serde_json::to_vec(value)?;
+        let v = serde_json::to_vec(value).map_err(VeilidAPIError::generic)?;
         self.save_user_secret(key, &v)
     }
 
     #[instrument(level = "trace", skip(self))]
-    pub fn load_user_secret_json<K, T>(&self, key: K) -> EyreResult<Option<T>>
+    pub fn load_user_secret_json<K, T>(&self, key: K) -> VeilidAPIResult<Option<T>>
     where
         K: AsRef<str> + fmt::Debug,
         T: for<'de> serde::de::Deserialize<'de>,
@@ -160,7 +157,7 @@ impl ProtectedStore {
             }
         };
 
-        let obj = serde_json::from_slice(&b)?;
+        let obj = serde_json::from_slice(&b).map_err(VeilidAPIError::generic)?;
         Ok(Some(obj))
     }
 
@@ -169,7 +166,7 @@ impl ProtectedStore {
         &self,
         key: K,
         value: &[u8],
-    ) -> EyreResult<bool> {
+    ) -> VeilidAPIResult<bool> {
         let mut s = BASE64URL_NOPAD.encode(value);
         s.push('!');
 
@@ -180,7 +177,7 @@ impl ProtectedStore {
     pub fn load_user_secret<K: AsRef<str> + fmt::Debug>(
         &self,
         key: K,
-    ) -> EyreResult<Option<Vec<u8>>> {
+    ) -> VeilidAPIResult<Option<Vec<u8>>> {
         let mut s = match self.load_user_secret_string(key)? {
             Some(s) => s,
             None => {
@@ -189,7 +186,7 @@ impl ProtectedStore {
         };
 
         if s.pop() != Some('!') {
-            bail!("User secret is not a buffer");
+            apibail_generic!("User secret is not a buffer");
         }
 
         let mut bytes = Vec::<u8>::new();
@@ -199,35 +196,34 @@ impl ProtectedStore {
                 bytes.resize(l, 0u8);
             }
             Err(_) => {
-                bail!("Failed to decode");
+                apibail_generic!("Failed to decode");
             }
         }
 
         let res = BASE64URL_NOPAD.decode_mut(s.as_bytes(), &mut bytes);
         match res {
             Ok(_) => Ok(Some(bytes)),
-            Err(_) => bail!("Failed to decode"),
+            Err(_) => apibail_generic!("Failed to decode"),
         }
     }
 
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub fn remove_user_secret<K: AsRef<str> + fmt::Debug>(&self, key: K) -> EyreResult<bool> {
+    pub fn remove_user_secret<K: AsRef<str> + fmt::Debug>(&self, key: K) -> VeilidAPIResult<bool> {
         if is_browser() {
             let win = match window() {
                 Some(w) => w,
                 None => {
-                    bail!("failed to get window");
+                    apibail_generic!("failed to get window");
                 }
             };
 
             let ls = match win
                 .local_storage()
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception getting local storage")?
+                .map_err(map_js_error_generic("exception getting local storage"))?
             {
                 Some(l) => l,
                 None => {
-                    bail!("failed to get local storage");
+                    apibail_generic!("failed to get local storage");
                 }
             };
 
@@ -235,13 +231,11 @@ impl ProtectedStore {
 
             match ls
                 .get_item(&vkey)
-                .map_err(map_jsvalue_error)
-                .wrap_err("exception_thrown")?
+                .map_err(map_js_error_generic("exception thrown"))?
             {
                 Some(_) => {
                     ls.delete(&vkey)
-                        .map_err(map_jsvalue_error)
-                        .wrap_err("exception_thrown")?;
+                        .map_err(map_js_error_generic("exception thrown"))?;
                     Ok(true)
                 }
                 None => Ok(false),

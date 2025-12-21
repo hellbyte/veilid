@@ -67,7 +67,7 @@ pub const TXT_LOOKUP_CACHE_SIZE: usize = 256;
 /// Duration that TXT lookups are valid in the cache (5 minutes, <= the DNS record expiration timeout)
 pub const TXT_LOOKUP_EXPIRATION: TimestampDuration = TimestampDuration::new_secs(300);
 /// Maximum size for a message is the same as the maximum size for an Envelope
-pub const MAX_MESSAGE_SIZE: usize = MAX_ENVELOPE_SIZE;
+pub const MAX_MESSAGE_SIZE: usize = ENV0_MAX_ENVELOPE_SIZE;
 /// Statistics table size for tracking performance by IP address
 pub const IPADDR_TABLE_SIZE: usize = 1024;
 /// Eviction time for ip addresses from statistics tables (5 minutes)
@@ -111,12 +111,32 @@ impl SendDataResult {
                 Some(ncm) if ncm.is_direct()
             )
     }
-    pub fn is_ordered(&self) -> bool {
-        self.unique_flow.flow.protocol_type().is_ordered()
+    pub fn sequence_ordering(&self) -> SequenceOrdering {
+        self.unique_flow.flow.protocol_type().sequence_ordering()
     }
 
     pub fn unique_flow(&self) -> UniqueFlow {
         self.unique_flow
+    }
+}
+
+impl fmt::Display for SendDataResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "flow={}{}{}",
+            self.unique_flow.flow,
+            if let Some(cm) = &self.opt_contact_method {
+                format!(" contact_method={}", cm)
+            } else {
+                "".to_string()
+            },
+            if let Some(cm) = &self.opt_relayed_contact_method {
+                format!(" relayed_contact_method={}", cm)
+            } else {
+                "".to_string()
+            }
+        )
     }
 }
 
@@ -126,15 +146,48 @@ pub enum NodeContactMethodKind {
     /// Connection should have already existed
     Existing,
     /// Contact the node directly
-    Direct(DialInfo),
+    Direct { target_di: DialInfo },
     /// Request via signal the node connect back directly (relay, target)
-    SignalReverse(FilteredNodeRef, FilteredNodeRef),
+    SignalReverse {
+        relay_nr: FilteredNodeRef,
+        target_nr: FilteredNodeRef,
+    },
     /// Request via signal the node negotiate a hole punch (relay, target)
-    SignalHolePunch(FilteredNodeRef, FilteredNodeRef),
+    SignalHolePunch {
+        relay_nr: FilteredNodeRef,
+        target_nr: FilteredNodeRef,
+    },
     /// Must use an inbound relay to reach the node
-    InboundRelay(FilteredNodeRef),
+    InboundRelay { relay_nr: FilteredNodeRef },
     /// Must use outbound relay to reach the node
-    OutboundRelay(FilteredNodeRef),
+    OutboundRelay { relay_nr: FilteredNodeRef },
+}
+
+impl fmt::Display for NodeContactMethodKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeContactMethodKind::Existing => write!(f, "Existing"),
+            NodeContactMethodKind::Direct { target_di } => write!(f, "Direct({})", target_di),
+            NodeContactMethodKind::SignalReverse {
+                relay_nr,
+                target_nr,
+            } => write!(f, "SignalReverse(relay={}, target={})", relay_nr, target_nr),
+            NodeContactMethodKind::SignalHolePunch {
+                relay_nr,
+                target_nr,
+            } => write!(
+                f,
+                "SignalHolePunch(relay={}, target={})",
+                relay_nr, target_nr
+            ),
+            NodeContactMethodKind::InboundRelay { relay_nr } => {
+                write!(f, "InboundRelay(relay={})", relay_nr)
+            }
+            NodeContactMethodKind::OutboundRelay { relay_nr } => {
+                write!(f, "OutboundRelay(relay={})", relay_nr)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -145,20 +198,23 @@ pub struct NodeContactMethod {
 
 impl NodeContactMethod {
     pub fn is_direct(&self) -> bool {
-        matches!(self.ncm_kind, NodeContactMethodKind::Direct(_))
+        matches!(
+            self.ncm_kind,
+            NodeContactMethodKind::Direct { target_di: _ }
+        )
     }
     pub fn direct_dial_info(&self) -> Option<DialInfo> {
         match &self.ncm_kind {
-            NodeContactMethodKind::Direct(v) => Some(v.clone()),
+            NodeContactMethodKind::Direct { target_di } => Some(target_di.clone()),
             _ => None,
         }
     }
-    // pub fn kind(&self) -> &NodeContactMethodKind {
-    //     &self.ncm_kind
-    // }
-    // pub fn into_kind(self) -> NodeContactMethodKind {
-    //     self.ncm_kind
-    // }
+}
+
+impl fmt::Display for NodeContactMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.ncm_kind)
+    }
 }
 
 enum SendDataToExistingFlowResult {
@@ -193,9 +249,10 @@ impl Default for NetworkManagerStartupContext {
 #[derive(Debug)]
 struct NetworkManagerInner {
     stats: NetworkManagerStats,
-    client_allowlist: LruCache<TypedNodeId, ClientAllowlistEntry>,
+    client_allowlist: LruCache<NodeId, ClientAllowlistEntry>,
     node_contact_method_cache: NodeContactMethodCache,
     address_check: Option<AddressCheck>,
+    tick_subscription: Option<EventBusSubscription>,
     peer_info_change_subscription: Option<EventBusSubscription>,
     socket_address_change_subscription: Option<EventBusSubscription>,
 
@@ -223,7 +280,7 @@ pub(crate) struct NetworkManager {
     address_filter_task: TickTask<EyreReport>,
 
     // Network key
-    network_key: Option<SharedSecret>,
+    network_key: Option<BareSharedSecret>,
 
     // Startup context
     startup_context: NetworkManagerStartupContext,
@@ -256,6 +313,7 @@ impl NetworkManager {
             client_allowlist: LruCache::new_unbounded(),
             node_contact_method_cache: NodeContactMethodCache::new(),
             address_check: None,
+            tick_subscription: None,
             peer_info_change_subscription: None,
             socket_address_change_subscription: None,
             txt_lookup_cache: LruCache::new(TXT_LOOKUP_CACHE_SIZE),
@@ -275,8 +333,7 @@ impl NetworkManager {
             let config = registry.config();
             let crypto = registry.crypto();
 
-            let c = config.get();
-            let network_key_password = c.network.network_key_password.clone();
+            let network_key_password = config.network.network_key_password.clone();
             let network_key = if let Some(network_key_password) = network_key_password {
                 if !network_key_password.is_empty() {
                     veilid_log!(registry info "Using network key");
@@ -286,9 +343,11 @@ impl NetworkManager {
                     Some(
                         bcs.derive_shared_secret(
                             network_key_password.as_bytes(),
-                            &bcs.generate_hash(network_key_password.as_bytes()).bytes,
+                            bcs.generate_hash(network_key_password.as_bytes())
+                                .ref_value(),
                         )
-                        .expect("failed to derive network key"),
+                        .expect("failed to derive network key")
+                        .value(),
                     )
                 } else {
                     None
@@ -303,11 +362,10 @@ impl NetworkManager {
         // make local copy of node id for easy access
         let (concurrency, queue_size) = {
             let config = registry.config();
-            let c = config.get();
 
             // set up channel
-            let mut concurrency = c.network.rpc.concurrency;
-            let queue_size = c.network.rpc.queue_size;
+            let mut concurrency = config.network.rpc.concurrency;
+            let queue_size = config.network.rpc.queue_size;
             if concurrency == 0 {
                 concurrency = get_concurrency();
                 if concurrency == 0 {
@@ -392,7 +450,13 @@ impl NetworkManager {
     }
 
     #[expect(clippy::unused_async)]
-    async fn pre_terminate_async(&self) {}
+    async fn pre_terminate_async(&self) {
+        // Ensure things have shut down
+        assert!(
+            self.startup_context.startup_lock.is_shut_down(),
+            "should have shut down by now"
+        );
+    }
 
     #[instrument(level = "debug", skip_all)]
     async fn terminate_async(&self) {}
@@ -421,21 +485,6 @@ impl NetworkManager {
         // Startup relay workers
         self.startup_relay_workers()?;
 
-        // Register event handlers
-        let peer_info_change_subscription =
-            impl_subscribe_event_bus!(self, Self, peer_info_change_event_handler);
-
-        let socket_address_change_subscription =
-            impl_subscribe_event_bus!(self, Self, socket_address_change_event_handler);
-
-        {
-            let mut inner = self.inner.lock();
-            let address_check = AddressCheck::new(net.clone());
-            inner.address_check = Some(address_check);
-            inner.peer_info_change_subscription = Some(peer_info_change_subscription);
-            inner.socket_address_change_subscription = Some(socket_address_change_subscription);
-        }
-
         // Start network components
         connection_manager.startup()?;
         match net.startup().await? {
@@ -445,7 +494,30 @@ impl NetworkManager {
             }
         }
 
+        // Set up address filter
+        {
+            let mut inner = self.inner.lock();
+            let address_check = AddressCheck::new(net.clone());
+            inner.address_check = Some(address_check);
+        }
+
         receipt_manager.startup()?;
+
+        // Register event handlers
+        let tick_subscription = impl_subscribe_event_bus_async!(self, Self, tick_event_handler);
+
+        let peer_info_change_subscription =
+            impl_subscribe_event_bus!(self, Self, peer_info_change_event_handler);
+
+        let socket_address_change_subscription =
+            impl_subscribe_event_bus!(self, Self, socket_address_change_event_handler);
+
+        {
+            let mut inner = self.inner.lock();
+            inner.tick_subscription = Some(tick_subscription);
+            inner.peer_info_change_subscription = Some(peer_info_change_subscription);
+            inner.socket_address_change_subscription = Some(socket_address_change_subscription);
+        }
 
         veilid_log!(self trace "NetworkManager::internal_startup end");
 
@@ -477,14 +549,20 @@ impl NetworkManager {
         // Shutdown event bus subscriptions and address check
         {
             let mut inner = self.inner.lock();
+            if let Some(sub) = inner.tick_subscription.take() {
+                self.event_bus().unsubscribe(sub);
+            }
             if let Some(sub) = inner.socket_address_change_subscription.take() {
                 self.event_bus().unsubscribe(sub);
             }
             if let Some(sub) = inner.peer_info_change_subscription.take() {
                 self.event_bus().unsubscribe(sub);
             }
-            inner.address_check = None;
         }
+
+        // Cancel all tasks
+        veilid_log!(self debug "stopping network manager tasks");
+        self.cancel_tasks().await;
 
         // Shutdown relay workers
         self.shutdown_relay_workers().await;
@@ -496,6 +574,12 @@ impl NetworkManager {
             let components = self.components.read().clone();
             if let Some(components) = components {
                 components.net.shutdown().await;
+
+                {
+                    let mut inner = self.inner.lock();
+                    inner.address_check = None;
+                }
+
                 components.receipt_manager.shutdown().await;
                 components.connection_manager.shutdown().await;
             }
@@ -511,10 +595,6 @@ impl NetworkManager {
 
     #[instrument(level = "debug", skip_all)]
     pub async fn shutdown(&self) {
-        // Cancel all tasks
-        veilid_log!(self debug "stopping network manager tasks");
-        self.cancel_tasks().await;
-
         // Proceed with shutdown
         veilid_log!(self debug "starting network manager shutdown");
         let guard = self
@@ -531,27 +611,27 @@ impl NetworkManager {
     }
 
     #[expect(dead_code)]
-    pub fn update_client_allowlist(&self, client: TypedNodeId) {
+    pub fn update_client_allowlist(&self, client: NodeId) {
         let mut inner = self.inner.lock();
         match inner.client_allowlist.entry(client) {
             hashlink::lru_cache::Entry::Occupied(mut entry) => {
-                entry.get_mut().last_seen_ts = Timestamp::now()
+                entry.get_mut().last_seen_ts = Timestamp::now_non_decreasing()
             }
             hashlink::lru_cache::Entry::Vacant(entry) => {
                 entry.insert(ClientAllowlistEntry {
-                    last_seen_ts: Timestamp::now(),
+                    last_seen_ts: Timestamp::now_non_decreasing(),
                 });
             }
         }
     }
 
     #[instrument(level = "trace", skip(self), ret)]
-    pub fn check_client_allowlist(&self, client: TypedNodeId) -> bool {
+    pub fn check_client_allowlist(&self, client: NodeId) -> bool {
         let mut inner = self.inner.lock();
 
         match inner.client_allowlist.entry(client) {
             hashlink::lru_cache::Entry::Occupied(mut entry) => {
-                entry.get_mut().last_seen_ts = Timestamp::now();
+                entry.get_mut().last_seen_ts = Timestamp::now_non_decreasing();
                 true
             }
             hashlink::lru_cache::Entry::Vacant(_) => false,
@@ -559,12 +639,10 @@ impl NetworkManager {
     }
 
     pub fn purge_client_allowlist(&self) {
-        let timeout_ms = self
-            .config()
-            .with(|c| c.network.client_allowlist_timeout_ms);
+        let timeout_ms = self.config().network.client_allowlist_timeout_ms;
         let mut inner = self.inner.lock();
         let cutoff_timestamp =
-            Timestamp::now() - TimestampDuration::new((timeout_ms as u64) * 1000u64);
+            Timestamp::now().earlier(TimestampDuration::new_ms(timeout_ms as u64));
         // Remove clients from the allowlist that haven't been since since our allowlist timeout
         while inner
             .client_allowlist
@@ -593,9 +671,10 @@ impl NetworkManager {
 
     /// Generates a multi-shot/normal receipt
     #[instrument(level = "trace", skip(self, extra_data, callback))]
+    #[expect(dead_code)]
     pub fn generate_receipt<D: AsRef<[u8]>>(
         &self,
-        expiration_us: TimestampDuration,
+        expiration_duration: TimestampDuration,
         expected_returns: u32,
         extra_data: D,
         callback: impl ReceiptCallback,
@@ -612,21 +691,25 @@ impl NetworkManager {
 
         let nonce = vcrypto.random_nonce();
         let node_id = routing_table.node_id(vcrypto.kind());
-        let node_id_secret = routing_table.node_id_secret_key(vcrypto.kind());
+        let secret_key = routing_table.secret_key(vcrypto.kind());
 
-        let receipt = Receipt::try_new(
-            best_envelope_version(),
-            node_id.kind,
-            nonce,
-            node_id.value,
-            extra_data,
-        )?;
+        // Encode envelope
+        let version = best_receipt_version();
+        let receipt = match version {
+            RECEIPT_VERSION_RCP0 => {
+                Receipt::try_new_rcp0(&crypto, node_id.kind(), nonce, node_id, extra_data)?
+            }
+            _ => {
+                bail!("unsupported receipt version: {:?}", version);
+            }
+        };
+
         let out = receipt
-            .to_signed_data(&crypto, &node_id_secret)
+            .to_signed_data(&crypto, &secret_key)
             .wrap_err("failed to generate signed receipt")?;
 
         // Record the receipt for later
-        let exp_ts = Timestamp::now() + expiration_us;
+        let exp_ts = Timestamp::now_non_decreasing().later(expiration_duration);
         receipt_manager.record_receipt(receipt, exp_ts, expected_returns, callback);
 
         Ok(out)
@@ -636,7 +719,7 @@ impl NetworkManager {
     #[instrument(level = "trace", skip(self, extra_data))]
     pub fn generate_single_shot_receipt<D: AsRef<[u8]>>(
         &self,
-        expiration_us: TimestampDuration,
+        expiration_duration: TimestampDuration,
         extra_data: D,
     ) -> EyreResult<(Vec<u8>, EventualValueFuture<ReceiptEvent>)> {
         let Ok(_guard) = self.startup_context.startup_lock.enter() else {
@@ -652,21 +735,25 @@ impl NetworkManager {
 
         let nonce = vcrypto.random_nonce();
         let node_id = routing_table.node_id(vcrypto.kind());
-        let node_id_secret = routing_table.node_id_secret_key(vcrypto.kind());
+        let secret_key = routing_table.secret_key(vcrypto.kind());
 
-        let receipt = Receipt::try_new(
-            best_envelope_version(),
-            node_id.kind,
-            nonce,
-            node_id.value,
-            extra_data,
-        )?;
+        let version = best_receipt_version();
+
+        let receipt = match version {
+            RECEIPT_VERSION_RCP0 => {
+                Receipt::try_new_rcp0(&crypto, node_id.kind(), nonce, node_id, extra_data)?
+            }
+            _ => {
+                bail!("unsupported receipt version: {:?}", version);
+            }
+        };
+
         let out = receipt
-            .to_signed_data(&crypto, &node_id_secret)
+            .to_signed_data(&crypto, &secret_key)
             .wrap_err("failed to generate signed receipt")?;
 
         // Record the receipt for later
-        let exp_ts = Timestamp::now() + expiration_us;
+        let exp_ts = Timestamp::now_non_decreasing().later(expiration_duration);
         let eventual = SingleShotEventual::new(Some(ReceiptEvent::Cancelled));
         let instance = eventual.instance();
         receipt_manager.record_single_shot_receipt(receipt, exp_ts, eventual);
@@ -687,7 +774,7 @@ impl NetworkManager {
         let receipt_manager = self.receipt_manager();
         let crypto = self.crypto();
 
-        let receipt = match Receipt::from_signed_data(&crypto, receipt_data.as_ref()) {
+        let receipt = match Receipt::try_from_signed_data(&crypto, receipt_data.as_ref()) {
             Err(e) => {
                 return NetworkResult::invalid_message(e.to_string());
             }
@@ -713,7 +800,7 @@ impl NetworkManager {
         let receipt_manager = self.receipt_manager();
         let crypto = self.crypto();
 
-        let receipt = match Receipt::from_signed_data(&crypto, receipt_data.as_ref()) {
+        let receipt = match Receipt::try_from_signed_data(&crypto, receipt_data.as_ref()) {
             Err(e) => {
                 return NetworkResult::invalid_message(e.to_string());
             }
@@ -738,7 +825,7 @@ impl NetworkManager {
         let receipt_manager = self.receipt_manager();
         let crypto = self.crypto();
 
-        let receipt = match Receipt::from_signed_data(&crypto, receipt_data.as_ref()) {
+        let receipt = match Receipt::try_from_signed_data(&crypto, receipt_data.as_ref()) {
             Err(e) => {
                 return NetworkResult::invalid_message(e.to_string());
             }
@@ -764,7 +851,7 @@ impl NetworkManager {
         let receipt_manager = self.receipt_manager();
         let crypto = self.crypto();
 
-        let receipt = match Receipt::from_signed_data(&crypto, receipt_data.as_ref()) {
+        let receipt = match Receipt::try_from_signed_data(&crypto, receipt_data.as_ref()) {
             Err(e) => {
                 return NetworkResult::invalid_message(e.to_string());
             }
@@ -805,9 +892,11 @@ impl NetworkManager {
                 };
 
                 // Restrict reverse connection to same sequencing requirement as inbound signal
-                if signal_flow.protocol_type().is_ordered() {
-                    peer_nr.set_sequencing(Sequencing::EnsureOrdered);
-                }
+                let sequencing = signal_flow
+                    .protocol_type()
+                    .sequence_ordering()
+                    .strict_sequencing();
+                peer_nr.set_sequencing(sequencing);
 
                 // Make a reverse connection to the peer and send the receipt to it
                 rpc.rpc_call_return_receipt(Destination::direct(peer_nr), receipt)
@@ -872,37 +961,53 @@ impl NetworkManager {
 
     /// Builds an envelope for sending over the network
     #[instrument(level = "trace", target = "net", skip_all)]
-    fn build_envelope<B: AsRef<[u8]>>(
+    async fn build_envelope<B: AsRef<[u8]>>(
         &self,
-        dest_node_id: TypedNodeId,
-        version: u8,
+        timestamp: Timestamp,
+        dest_node_id: NodeId,
+        version: EnvelopeVersion,
         body: B,
     ) -> EyreResult<Vec<u8>> {
         // DH to get encryption key
         let routing_table = self.routing_table();
         let crypto = self.crypto();
-        let Some(vcrypto) = crypto.get(dest_node_id.kind) else {
+        let Some(vcrypto) = crypto.get_async(dest_node_id.kind()) else {
             bail!("should not have a destination with incompatible crypto here");
         };
 
         let node_id = routing_table.node_id(vcrypto.kind());
-        let node_id_secret = routing_table.node_id_secret_key(vcrypto.kind());
+        let secret_key = routing_table.secret_key(vcrypto.kind());
 
-        // Get timestamp, nonce
-        let ts = Timestamp::now();
-        let nonce = vcrypto.random_nonce();
+        // Get nonce
+        let nonce = vcrypto
+            .random_nonce()
+            .measure_debug(
+                TimestampDuration::new_ms(100),
+                veilid_log_dbg!(self, "NetworkManager::build_envelope random_nonce"),
+            )
+            .await;
 
         // Encode envelope
-        let envelope = Envelope::new(
-            version,
-            node_id.kind,
-            ts,
-            nonce,
-            node_id.value,
-            dest_node_id.value,
-        );
+        let envelope = match version {
+            ENVELOPE_VERSION_ENV0 => Envelope::try_new_env0(
+                &crypto,
+                node_id.kind(),
+                timestamp,
+                nonce,
+                node_id,
+                dest_node_id,
+            )?,
+            _ => {
+                bail!("unsupported envelope version: {:?}", version);
+            }
+        };
         envelope
-            .to_encrypted_data(&crypto, body.as_ref(), &node_id_secret, &self.network_key)
+            .to_encrypted_data(&crypto, body.as_ref(), &secret_key, &self.network_key)
+            .measure_debug(
+                TimestampDuration::new_ms(100),
+                veilid_log_dbg!(self, "NetworkManager::build_envelope to_encrypted_data"),
+            )
+            .await
             .wrap_err("envelope failed to encode")
     }
 
@@ -939,17 +1044,25 @@ impl NetworkManager {
         };
 
         // Build the envelope to send
-        let out = self.build_envelope(best_node_id, envelope_version, body)?;
+        let timestamp = Timestamp::now_increasing();
+        let out = self
+            .build_envelope(timestamp, best_node_id, envelope_version, body)
+            .measure_debug(
+                TimestampDuration::new_ms(200),
+                veilid_log_dbg!(self, "NetworkManager::build_envelope"),
+            )
+            .await?;
 
         if !node_ref.same_entry(&destination_node_ref) {
             veilid_log!(self trace
-                "sending envelope to {:?} via {:?}, len={}",
+                "sending envelope to {:?} via {:?}, len={}, timestamp={:?}",
                 destination_node_ref,
                 node_ref,
-                out.len()
+                out.len(),
+                timestamp
             );
         } else {
-            veilid_log!(self trace "sending envelope to {:?}, len={}", node_ref, out.len());
+            veilid_log!(self trace "sending envelope to {:?}, len={}, timestamp={:?}", node_ref, out.len(), timestamp);
         }
 
         // Send the envelope via whatever means necessary
@@ -988,7 +1101,7 @@ impl NetworkManager {
     // Called when a packet potentially containing an RPC envelope is received by a low-level
     // network protocol handler. Processes the envelope, authenticates and decrypts the RPC message
     // and passes it to the RPC handler
-    //#[instrument(level = "trace", target = "net", skip_all)]
+    #[instrument(level = "trace", target = "net", skip_all)]
     async fn on_recv_envelope(&self, data: &mut [u8], flow: Flow) -> EyreResult<bool> {
         let Ok(_guard) = self.startup_context.startup_lock.enter() else {
             return Ok(false);
@@ -1014,12 +1127,10 @@ impl NetworkManager {
                 .punish_ip_addr(remote_addr, PunishmentReason::ShortPacket);
             return Ok(false);
         }
+        let magic: [u8; 4] = data[0..4].try_into()?;
 
         // Get the routing domain for this data
-        let routing_domain = match self
-            .routing_table()
-            .routing_domain_for_address(flow.remote_address().address())
-        {
+        let routing_domain = match self.routing_table().routing_domain_for_flow(flow) {
             Some(rd) => rd,
             None => {
                 veilid_log!(self debug "no routing domain for envelope received from {:?}", flow);
@@ -1028,24 +1139,25 @@ impl NetworkManager {
         };
 
         // Is this a direct bootstrap request instead of an envelope?
-        if data[0..4] == *BOOT_MAGIC {
+        if magic == *BOOT_MAGIC {
             network_result_value_or_log!(self pin_future!(self.handle_boot_v0_request(flow)).await? => [ format!(": v0 flow={:?}", flow) ] {});
             return Ok(true);
         }
-        if data[0..4] == *B01T_MAGIC {
+        if magic == *B01T_MAGIC {
             network_result_value_or_log!(self pin_future!(self.handle_boot_v1_request(flow)).await? => [ format!(": v1 flow={:?}", flow) ] {});
             return Ok(true);
         }
 
         // Is this an out-of-band receipt instead of an envelope?
-        if data[0..3] == *RECEIPT_MAGIC {
+        if VALID_RECEIPT_VERSIONS.contains(&ReceiptVersion::from(magic)) {
             network_result_value_or_log!(self pin_future!(self.handle_out_of_band_receipt(data)).await => [ format!(": data.len={}", data.len()) ] {});
             return Ok(true);
         }
 
         // Decode envelope header (may fail signature validation)
         let crypto = self.crypto();
-        let envelope = match Envelope::from_signed_data(&crypto, data, &self.network_key) {
+        let envelope = match Envelope::try_from_signed_data(&crypto, data, &self.network_key).await
+        {
             Ok(v) => v,
             Err(e) => {
                 veilid_log!(self debug "envelope failed to decode: {}", e);
@@ -1056,44 +1168,64 @@ impl NetworkManager {
             }
         };
 
-        // Get timestamp range
-        let (tsbehind, tsahead) = self.config().with(|c| {
-            (
-                c.network
-                    .rpc
-                    .max_timestamp_behind_ms
-                    .map(ms_to_us)
-                    .map(TimestampDuration::new),
-                c.network
-                    .rpc
-                    .max_timestamp_ahead_ms
-                    .map(ms_to_us)
-                    .map(TimestampDuration::new),
-            )
-        });
-
-        // Validate timestamp isn't too old
-        let ts = Timestamp::now();
-        let ets = envelope.get_timestamp();
-        if let Some(tsbehind) = tsbehind {
-            if tsbehind.as_u64() != 0 && (ts > ets && ts.saturating_sub(ets) > tsbehind) {
-                veilid_log!(self debug
-                    "Timestamp behind: {}ms ({})",
-                    timestamp_to_secs(ts.saturating_sub(ets).as_u64()) * 1000f64,
-                    flow.remote()
-                );
-                return Ok(false);
+        // Verify and log timestamp
+        let local_timestamp = Timestamp::now_increasing();
+        let remote_timestamp = envelope.get_timestamp();
+        match self.address_filter().check_envelope_timestamp(
+            envelope.get_sender_id(),
+            local_timestamp,
+            remote_timestamp,
+        ) {
+            Ok(()) => {
+                // Envelope is good, keep it
             }
-        }
-        if let Some(tsahead) = tsahead {
-            if tsahead.as_u64() != 0 && (ts < ets && ets.saturating_sub(ts) > tsahead) {
-                veilid_log!(self debug
-                    "Timestamp ahead: {}ms ({})",
-                    timestamp_to_secs(ets.saturating_sub(ts).as_u64()) * 1000f64,
-                    flow.remote()
-                );
-                return Ok(false);
-            }
+            Err(e) => match e {
+                TimestampError::TooFarBehind {
+                    local_timestamp,
+                    remote_timestamp: _,
+                    adjusted_remote_timestamp,
+                    timestamp_offset: _,
+                } => {
+                    veilid_log!(self debug
+                        "Timestamp behind from {}: {} ({}): {:?}",
+                        envelope.get_sender_id(),
+                        local_timestamp.duration_since(adjusted_remote_timestamp),
+                        flow.remote(),
+                        e
+                    );
+                    return Ok(false);
+                }
+                TimestampError::TooFarAhead {
+                    local_timestamp,
+                    remote_timestamp: _,
+                    adjusted_remote_timestamp,
+                    timestamp_offset: _,
+                } => {
+                    veilid_log!(self debug
+                        "Timestamp ahead from {}: {} ({}): {:?}",
+                        envelope.get_sender_id(),
+                        adjusted_remote_timestamp.duration_since(local_timestamp),
+                        flow.remote(),
+                        e
+                    );
+                    return Ok(false);
+                }
+                TimestampError::Duplicate {
+                    local_timestamp: _,
+                    last_local_timestamp: _,
+                    remote_timestamp: _,
+                    adjusted_remote_timestamp: _,
+                    timestamp_offset: _,
+                } => {
+                    veilid_log!(self debug
+                        "Duplicate envelope from {} ({}): {:?}",
+                        envelope.get_sender_id(),
+                        flow.remote(),
+                        e
+                    );
+                    return Ok(false);
+                }
+            },
         }
 
         // Get routing table and rpc processor
@@ -1101,15 +1233,15 @@ impl NetworkManager {
         let rpc = self.rpc_processor();
 
         // See if this sender is punished, if so, ignore the packet
-        let sender_id = envelope.get_sender_typed_id();
-        if self.address_filter().is_node_id_punished(sender_id) {
+        let sender_id = envelope.get_sender_id();
+        if self.address_filter().is_node_id_punished(sender_id.clone()) {
             return Ok(false);
         }
 
         // Peek at header and see if we need to relay this
         // If the recipient id is not our node id, then it needs relaying
-        let recipient_id = envelope.get_recipient_typed_id();
-        if !routing_table.matches_own_node_id(&[recipient_id]) {
+        let recipient_id = envelope.get_recipient_id();
+        if !routing_table.matches_own_node_id(std::slice::from_ref(&recipient_id)) {
             // See if the source node is allowed to resolve nodes
             // This is a costly operation, so only outbound-relay permitted
             // nodes are allowed to do this, for example PWA users
@@ -1119,13 +1251,16 @@ impl NetworkManager {
             // xxx: that 'localnetwork' routing domain nodes could be allowed to
             // xxx: full relay as well as client_allowlist nodes...
 
-            let some_relay_nr = if self.check_client_allowlist(sender_id) {
+            let some_relay = if self.check_client_allowlist(sender_id.clone()) {
                 // Full relay allowed, do a full resolve_node
                 match rpc
-                    .resolve_node(recipient_id, SafetySelection::Unsafe(Sequencing::default()))
+                    .resolve_node(
+                        recipient_id.clone(),
+                        SafetySelection::Unsafe(Sequencing::default()),
+                    )
                     .await
                 {
-                    Ok(v) => v.map(|nr| nr.default_filtered()),
+                    Ok(v) => v.map(|nr| (nr.default_filtered(), RelayKind::Outbound)),
                     Err(e) => {
                         veilid_log!(self debug "failed to resolve recipient node for relay, dropping relayed envelope: {}" ,e);
                         return Ok(false);
@@ -1138,16 +1273,11 @@ impl NetworkManager {
                 // If our node has the relay capability disabled, we should not be asked to relay
                 if self
                     .config()
-                    .with(|c| c.capabilities.disable.contains(&CAP_RELAY))
+                    .capabilities
+                    .disable
+                    .contains(&VEILID_CAPABILITY_RELAY)
                 {
                     veilid_log!(self debug "node has relay capability disabled, dropping relayed envelope from {} to {}", sender_id, recipient_id);
-                    return Ok(false);
-                }
-
-                // If our own node requires a relay, we should not be asked to relay
-                // on behalf of other nodes, just drop relayed packets if we can't relay
-                if routing_table.relay_node(routing_domain).is_some() {
-                    veilid_log!(self debug "node requires a relay itself, dropping relayed envelope from {} to {}", sender_id, recipient_id);
                     return Ok(false);
                 }
 
@@ -1156,7 +1286,7 @@ impl NetworkManager {
                 // should be mutually in each others routing tables. The node needing the relay will be
                 // pinging this node regularly to keep itself in the routing table
                 match routing_table.lookup_node_ref(recipient_id) {
-                    Ok(v) => v.map(|nr| nr.default_filtered()),
+                    Ok(v) => v.map(|nr| (nr.default_filtered(), RelayKind::Inbound)),
                     Err(e) => {
                         veilid_log!(self debug "failed to look up recipient node for relay, dropping relayed envelope: {}" ,e);
                         return Ok(false);
@@ -1164,15 +1294,14 @@ impl NetworkManager {
                 }
             };
 
-            if let Some(mut relay_nr) = some_relay_nr {
+            if let Some((mut relay_nr, relay_kind)) = some_relay {
                 // Ensure the protocol used to forward is of the same sequencing requirement
                 // Address type is allowed to change if connectivity is better
-                if flow.protocol_type().is_ordered() {
-                    relay_nr.set_sequencing(Sequencing::EnsureOrdered);
-                };
+                let sequencing = flow.protocol_type().sequence_ordering().strict_sequencing();
+                relay_nr.set_sequencing(sequencing);
 
                 // Pass relay to RPC system
-                if let Err(e) = self.enqueue_relay(relay_nr, data.to_vec()) {
+                if let Err(e) = self.enqueue_relay(relay_nr, data.to_vec(), relay_kind) {
                     // Couldn't enqueue, but not the sender's fault
                     veilid_log!(self debug "failed to enqueue relay: {}", e);
                     return Ok(false);
@@ -1183,11 +1312,14 @@ impl NetworkManager {
         }
 
         // DH to get decryption key (cached)
-        let node_id_secret = routing_table.node_id_secret_key(envelope.get_crypto_kind());
+        let secret_key = routing_table.secret_key(envelope.get_crypto_kind());
 
         // Decrypt the envelope body
         let crypto = self.crypto();
-        let body = match envelope.decrypt_body(&crypto, data, &node_id_secret, &self.network_key) {
+        let body = match envelope
+            .decrypt_body(&crypto, data, &secret_key, &self.network_key)
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 veilid_log!(self debug "failed to decrypt envelope body: {}", e);
@@ -1205,7 +1337,7 @@ impl NetworkManager {
         let sender_noderef = match routing_table.register_node_with_id(
             routing_domain,
             sender_id,
-            ts,
+            local_timestamp,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -1216,7 +1348,7 @@ impl NetworkManager {
         };
 
         // Filter the noderef further by its inbound flow
-        let sender_noderef = sender_noderef.filtered_clone(
+        let sender_noderef = sender_noderef.merge_filter_clone(
             NodeRefFilter::new()
                 .with_address_type(flow.address_type())
                 .with_protocol_type(flow.protocol_type()),
@@ -1226,7 +1358,7 @@ impl NetworkManager {
         sender_noderef.add_envelope_version(envelope.get_version());
 
         // Set the last flow for the peer
-        self.set_last_flow(sender_noderef.unfiltered(), flow, ts);
+        self.set_last_flow(sender_noderef.unfiltered(), flow, local_timestamp);
 
         // Pass message to RPC system
         if let Err(e) =
@@ -1244,10 +1376,7 @@ impl NetworkManager {
     /// Record the last flow for a peer in the routing table and the  connection table appropriately
     pub(super) fn set_last_flow(&self, node_ref: NodeRef, flow: Flow, timestamp: Timestamp) {
         // Get the routing domain for the flow
-        let Some(routing_domain) = self
-            .routing_table()
-            .routing_domain_for_address(flow.remote_address().address())
-        else {
+        let Some(routing_domain) = self.routing_table().routing_domain_for_flow(flow) else {
             error!(
                 "flow found with no routing domain: {} for {}",
                 flow, node_ref
@@ -1260,7 +1389,12 @@ impl NetworkManager {
 
         // Inform the connection table about the flow's priority
         let is_relaying_flow = node_ref.is_relaying(routing_domain);
-        if is_relaying_flow && flow.protocol_type().is_ordered() {
+        if is_relaying_flow
+            && matches!(
+                flow.protocol_type().sequence_ordering(),
+                SequenceOrdering::Ordered
+            )
+        {
             self.connection_manager().add_relaying_flow(flow);
         }
     }

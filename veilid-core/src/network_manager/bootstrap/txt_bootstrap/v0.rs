@@ -104,7 +104,10 @@ impl NetworkManager {
             let mut mbi = 0;
             while mbi < merged_bootstrap_records.len() {
                 let mbr = &mut merged_bootstrap_records[mbi];
-                if mbr.node_ids().contains_any(bsrec.node_ids()) {
+                if mbr
+                    .public_keys()
+                    .contains_any_from_slice(bsrec.public_keys())
+                {
                     // Merge record, pop this one out
                     let mbr = merged_bootstrap_records.remove(mbi);
                     bsrec.merge(mbr);

@@ -16,7 +16,7 @@ impl RPCOperationKind {
         }
     }
 
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         match self {
             RPCOperationKind::Question(r) => r.validate(validate_context),
             RPCOperationKind::Statement(r) => r.validate(validate_context),
@@ -28,20 +28,20 @@ impl RPCOperationKind {
         decode_context: &RPCDecodeContext,
         kind_reader: &veilid_capnp::operation::kind::Reader,
     ) -> Result<Self, RPCError> {
-        let which_reader = kind_reader.which().map_err(RPCError::protocol)?;
+        let which_reader = kind_reader.which()?;
         let out = match which_reader {
             veilid_capnp::operation::kind::Which::Question(r) => {
-                let q_reader = r.map_err(RPCError::protocol)?;
+                let q_reader = r?;
                 let out = RPCQuestion::decode(decode_context, &q_reader)?;
                 RPCOperationKind::Question(Box::new(out))
             }
             veilid_capnp::operation::kind::Which::Statement(r) => {
-                let q_reader = r.map_err(RPCError::protocol)?;
+                let q_reader = r?;
                 let out = RPCStatement::decode(decode_context, &q_reader)?;
                 RPCOperationKind::Statement(Box::new(out))
             }
             veilid_capnp::operation::kind::Which::Answer(r) => {
-                let q_reader = r.map_err(RPCError::protocol)?;
+                let q_reader = r?;
                 let out = RPCAnswer::decode(decode_context, &q_reader)?;
                 RPCOperationKind::Answer(Box::new(out))
             }
@@ -86,26 +86,18 @@ impl RPCOperation {
     }
 
     pub fn new_answer(
-        request: &RPCOperation,
+        op_id: OperationId,
         answer: RPCAnswer,
         sender_peer_info: SenderPeerInfo,
     ) -> Self {
         Self {
-            op_id: request.op_id,
+            op_id,
             sender_peer_info,
             kind: RPCOperationKind::Answer(Box::new(answer)),
         }
     }
 
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
-        // Validate sender peer info
-        if let Some(sender_peer_info) = &self.sender_peer_info.opt_peer_info {
-            let crypto = validate_context.crypto();
-            sender_peer_info
-                .validate(&crypto)
-                .map_err(RPCError::protocol)?;
-        }
-
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         // Validate operation kind
         self.kind.validate(validate_context)
     }
@@ -133,9 +125,7 @@ impl RPCOperation {
         let op_id = OperationId::new(operation_reader.get_op_id());
 
         let opt_peer_info = if operation_reader.has_sender_peer_info() {
-            let pi_reader = operation_reader
-                .get_sender_peer_info()
-                .map_err(RPCError::protocol)?;
+            let pi_reader = operation_reader.get_sender_peer_info()?;
             let pi = Arc::new(decode_peer_info(decode_context, &pi_reader)?);
             Some(pi)
         } else {
@@ -149,21 +139,20 @@ impl RPCOperation {
 
         Ok(RPCOperation {
             op_id,
-            sender_peer_info: SenderPeerInfo {
-                opt_peer_info,
-                target_node_info_ts,
-            },
+            sender_peer_info: opt_peer_info
+                .map(|pi| SenderPeerInfo::new(pi, target_node_info_ts))
+                .unwrap_or(SenderPeerInfo::new_no_peer_info(target_node_info_ts)),
             kind,
         })
     }
 
     pub fn encode(&self, builder: &mut veilid_capnp::operation::Builder) -> Result<(), RPCError> {
         builder.set_op_id(self.op_id.as_u64());
-        if let Some(sender_peer_info) = &self.sender_peer_info.opt_peer_info {
+        if let Some(sender_peer_info) = &self.sender_peer_info.opt_peer_info() {
             let mut pi_builder = builder.reborrow().init_sender_peer_info();
             encode_peer_info(sender_peer_info, &mut pi_builder)?;
         }
-        builder.set_target_node_info_ts(self.sender_peer_info.target_node_info_ts.as_u64());
+        builder.set_target_node_info_ts(self.sender_peer_info.target_node_info_ts().as_u64());
         let mut k_builder = builder.reborrow().init_kind();
         self.kind.encode(&mut k_builder)?;
         Ok(())

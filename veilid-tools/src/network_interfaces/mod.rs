@@ -54,6 +54,28 @@ impl IfAddr {
             IfAddr::V6(ref ifv6_addr) => ifv6_addr.broadcast.map(IpAddr::V6),
         }
     }
+
+    #[must_use]
+    pub fn network(&self) -> IfAddr {
+        match *self {
+            IfAddr::V4(ref ifv4_addr) => IfAddr::V4(ifv4_addr.network()),
+            IfAddr::V6(ref ifv6_addr) => IfAddr::V6(ifv6_addr.network()),
+        }
+    }
+
+    #[must_use]
+    pub fn contains_address(&self, addr: IpAddr) -> bool {
+        match *self {
+            IfAddr::V4(ref ifv4_addr) => match addr {
+                IpAddr::V4(ipv4_addr) => ifv4_addr.contains_address(ipv4_addr),
+                IpAddr::V6(_consensus_count) => false,
+            },
+            IfAddr::V6(ref ifv6_addr) => match addr {
+                IpAddr::V4(_) => false,
+                IpAddr::V6(ipv6_addr) => ifv6_addr.contains_address(ipv6_addr),
+            },
+        }
+    }
 }
 
 /// Details about the ipv4 address of an interface on this host.
@@ -67,6 +89,49 @@ pub struct Ifv4Addr {
     pub broadcast: Option<Ipv4Addr>,
 }
 
+impl Ifv4Addr {
+    /// Convert ip address to the address of the network itself by applying the netmask
+    #[must_use]
+    pub fn network(&self) -> Ifv4Addr {
+        let v4 = self.ip.octets();
+        let v4mask = self.netmask.octets();
+        let ip = Ipv4Addr::new(
+            v4[0] & v4mask[0],
+            v4[1] & v4mask[1],
+            v4[2] & v4mask[2],
+            v4[3] & v4mask[3],
+        );
+        Ifv4Addr {
+            ip,
+            netmask: self.netmask,
+            broadcast: self.broadcast,
+        }
+    }
+
+    #[must_use]
+    pub fn contains_address(&self, addr: Ipv4Addr) -> bool {
+        let v4mask = self.netmask.octets();
+
+        let self_v4 = self.ip.octets();
+        let self_ip = Ipv4Addr::new(
+            self_v4[0] & v4mask[0],
+            self_v4[1] & v4mask[1],
+            self_v4[2] & v4mask[2],
+            self_v4[3] & v4mask[3],
+        );
+
+        let addr_v4 = addr.octets();
+        let addr_ip = Ipv4Addr::new(
+            addr_v4[0] & v4mask[0],
+            addr_v4[1] & v4mask[1],
+            addr_v4[2] & v4mask[2],
+            addr_v4[3] & v4mask[3],
+        );
+
+        self_ip == addr_ip
+    }
+}
+
 /// Details about the ipv6 address of an interface on this host.
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Hash, Clone, Serialize, Deserialize)]
 pub struct Ifv6Addr {
@@ -76,6 +141,61 @@ pub struct Ifv6Addr {
     pub netmask: Ipv6Addr,
     /// The broadcast address of the interface.
     pub broadcast: Option<Ipv6Addr>,
+}
+
+impl Ifv6Addr {
+    /// Convert ip address to the address of the network itself by applying the netmask
+    #[must_use]
+    pub fn network(&self) -> Ifv6Addr {
+        let v6 = self.ip.segments();
+        let v6mask = self.netmask.segments();
+        let ip = Ipv6Addr::new(
+            v6[0] & v6mask[0],
+            v6[1] & v6mask[1],
+            v6[2] & v6mask[2],
+            v6[3] & v6mask[3],
+            v6[4] & v6mask[4],
+            v6[5] & v6mask[5],
+            v6[6] & v6mask[6],
+            v6[7] & v6mask[7],
+        );
+        Ifv6Addr {
+            ip,
+            netmask: self.netmask,
+            broadcast: self.broadcast,
+        }
+    }
+
+    #[must_use]
+    pub fn contains_address(&self, addr: Ipv6Addr) -> bool {
+        let v6mask = self.netmask.segments();
+
+        let self_v6 = self.ip.segments();
+        let self_ip = Ipv6Addr::new(
+            self_v6[0] & v6mask[0],
+            self_v6[1] & v6mask[1],
+            self_v6[2] & v6mask[2],
+            self_v6[3] & v6mask[3],
+            self_v6[4] & v6mask[4],
+            self_v6[5] & v6mask[5],
+            self_v6[6] & v6mask[6],
+            self_v6[7] & v6mask[7],
+        );
+
+        let addr_v6 = addr.segments();
+        let addr_ip = Ipv6Addr::new(
+            addr_v6[0] & v6mask[0],
+            addr_v6[1] & v6mask[1],
+            addr_v6[2] & v6mask[2],
+            addr_v6[3] & v6mask[3],
+            addr_v6[4] & v6mask[4],
+            addr_v6[5] & v6mask[5],
+            addr_v6[6] & v6mask[6],
+            addr_v6[7] & v6mask[7],
+        );
+
+        self_ip == addr_ip
+    }
 }
 
 /// Some of the flags associated with an interface.
@@ -324,7 +444,7 @@ impl NetworkInterface {
 pub struct NetworkInterfacesInner {
     valid: bool,
     interfaces: BTreeMap<String, NetworkInterface>,
-    interface_address_cache: Vec<IpAddr>,
+    interface_address_cache: Arc<Vec<IfAddr>>,
 }
 
 #[derive(Clone)]
@@ -364,7 +484,7 @@ impl NetworkInterfaces {
             inner: Arc::new(Mutex::new(NetworkInterfacesInner {
                 valid: false,
                 interfaces: BTreeMap::new(),
-                interface_address_cache: Vec::new(),
+                interface_address_cache: Arc::new(Vec::new()),
             })),
         }
     }
@@ -378,7 +498,7 @@ impl NetworkInterfaces {
         let mut inner = self.inner.lock();
 
         inner.interfaces.clear();
-        inner.interface_address_cache.clear();
+        inner.interface_address_cache = Arc::new(Vec::new());
         inner.valid = false;
     }
     // returns false if refresh had no changes, true if changes were present
@@ -398,13 +518,13 @@ impl NetworkInterfaces {
 
         if last_interfaces != inner.interfaces {
             // get last address cache
-            let old_stable_addresses = inner.interface_address_cache.clone();
+            let old_interface_addresses = inner.interface_address_cache.clone();
 
             // redo the address cache
-            Self::cache_stable_addresses(&mut inner);
+            Self::cache_interface_addresses(&mut inner);
 
             // See if our best addresses have changed
-            if old_stable_addresses != inner.interface_address_cache {
+            if old_interface_addresses != inner.interface_address_cache {
                 return Ok(true);
             }
         }
@@ -419,46 +539,57 @@ impl NetworkInterfaces {
     }
 
     #[must_use]
-    pub fn stable_addresses(&self) -> Vec<IpAddr> {
+    pub fn interface_addresses(&self) -> Arc<Vec<IfAddr>> {
         let inner = self.inner.lock();
         inner.interface_address_cache.clone()
     }
 
     /////////////////////////////////////////////
 
-    fn cache_stable_addresses(inner: &mut NetworkInterfacesInner) {
+    fn cache_interface_addresses(inner: &mut NetworkInterfacesInner) {
         // Reduce interfaces to their best routable ip addresses
         let mut intf_addrs = Vec::new();
         for intf in inner.interfaces.values() {
-            if !intf.is_running() || !intf.has_default_route() || intf.is_loopback()
+            if !intf.is_running() ||
+            // || !intf.has_default_route()
+            intf.is_loopback()
             // || intf.is_point_to_point() // xxx: iOS cellular is 'point-to-point'
             {
                 continue;
             }
-            if let Some(pipv4) = intf.primary_ipv4() {
-                // Skip temporary addresses because they're going to change
-                if !pipv4.is_temporary() {
-                    intf_addrs.push(pipv4);
+
+            for addr in &intf.addrs {
+                if addr.is_temporary() {
+                    continue;
                 }
+
+                intf_addrs.push(addr);
             }
-            if let Some(pipv6) = intf.primary_ipv6() {
-                // Skip temporary addresses because they're going to change
-                if !pipv6.is_temporary() {
-                    intf_addrs.push(pipv6);
-                }
-            }
+
+            // if let Some(pipv4) = intf.primary_ipv4() {
+            //     // Skip temporary addresses because they're going to change
+            //     if !pipv4.is_temporary() {
+            //         intf_addrs.push(pipv4);
+            //     }
+            // }
+            // if let Some(pipv6) = intf.primary_ipv6() {
+            //     // Skip temporary addresses because they're going to change
+            //     if !pipv6.is_temporary() {
+            //         intf_addrs.push(pipv6);
+            //     }
+            // }
         }
 
         // Sort one more time to get the best interface addresses overall
-        let mut addresses = intf_addrs
+        let mut interface_addresses = intf_addrs
             .iter()
-            .map(|x| x.if_addr().ip())
+            .map(|x| x.if_addr().clone())
             .collect::<Vec<_>>();
 
-        addresses.sort();
-        addresses.dedup();
+        interface_addresses.sort();
+        interface_addresses.dedup();
 
         // Now export just the addresses
-        inner.interface_address_cache = addresses;
+        inner.interface_address_cache = Arc::new(interface_addresses);
     }
 }

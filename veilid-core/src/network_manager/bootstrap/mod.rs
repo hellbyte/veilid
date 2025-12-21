@@ -25,7 +25,7 @@ impl NetworkManager {
         veilid_log!(self trace
             "--- bootstrapping {} with {:?}",
             pi.node_ids(),
-            pi.signed_node_info().node_info().dial_info_detail_list()
+            pi.node_info().dial_info_detail_list()
         );
 
         let routing_domain = pi.routing_domain();
@@ -50,7 +50,7 @@ impl NetworkManager {
 
                         // Get what contact method would be used for contacting the bootstrap
                         let bsdi = match network_manager
-                            .get_node_contact_method(nr.sequencing_filtered(Sequencing::PreferOrdered))
+                            .get_node_contact_method(nr.default_filtered_with_sequencing(Sequencing::PreferOrdered))
                         {
                             Ok(Some(ncm)) if ncm.is_direct() => ncm.direct_dial_info().unwrap(),
                             Ok(v) => {
@@ -68,10 +68,10 @@ impl NetworkManager {
 
                         // Need VALID signed peer info, so ask bootstrap to find_node of itself
                         // which will ensure it has the bootstrap's signed peer info as part of the response
-                        let _ = routing_table.find_nodes_close_to_node_ref(crypto_kind, nr.sequencing_filtered(Sequencing::PreferOrdered), vec![]).await;
+                        let _ = Box::pin(routing_table.find_nodes_close_to_node_ref(crypto_kind, nr.default_filtered_with_sequencing(Sequencing::PreferOrdered), vec![])).await;
 
                         // Ensure we got the signed peer info
-                        if !nr.signed_node_info_has_valid_signature(routing_domain) {
+                        if !nr.peer_info_has_valid_signature(routing_domain) {
                             veilid_log!(nr info "bootstrap server is not responding for dialinfo: {}", bsdi);
 
                             // Try a different dialinfo next time

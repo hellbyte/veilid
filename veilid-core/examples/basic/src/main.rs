@@ -12,7 +12,16 @@ async fn main() {
             }
             Network(msg) => {
                 println!(
-                    "Network: Peers {:}, bytes/sec [{} up] [{} down]",
+                    "Network: Node Ids: {}, Peers {}, bytes/sec [{} up] [{} down]",
+                    if msg.node_ids.is_empty() {
+                        "(none assigned)".to_string()
+                    } else {
+                        msg.node_ids
+                            .iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    },
                     msg.peers.len(),
                     msg.bps_up,
                     msg.bps_down
@@ -55,18 +64,15 @@ async fn main() {
     };
 
     // Startup Veilid node
-    let veilid = veilid_core::api_startup_config(update_callback, config)
+    let veilid = veilid_core::api_startup(update_callback, config)
         .await
         .unwrap();
-    println!(
-        "Node ID: {}",
-        veilid.config().unwrap().get().network.routing_table.node_id
-    );
 
     // Attach to the network
     veilid.attach().await.unwrap();
 
     // Until CTRL+C is pressed, keep running
     tokio::signal::ctrl_c().await.unwrap();
+
     veilid.shutdown().await;
 }

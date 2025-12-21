@@ -22,7 +22,7 @@ impl<T: Unpin> Clone for EventualValue<T> {
 
 impl<T: Unpin> EventualBase for EventualValue<T> {
     type ResolvedType = T;
-    fn base_inner(&self) -> MutexGuard<EventualBaseInner<Self::ResolvedType>> {
+    fn base_inner(&self) -> MutexGuard<'_, EventualBaseInner<Self::ResolvedType>> {
         self.inner.lock()
     }
 }

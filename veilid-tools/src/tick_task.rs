@@ -19,7 +19,7 @@ pub struct TickTask<E: Send + 'static> {
     running: Arc<AtomicBool>,
 }
 
-impl<E: Send + 'static> TickTask<E> {
+impl<E: Send + fmt::Debug + 'static> TickTask<E> {
     #[must_use]
     pub fn new_us(name: &str, tick_period_us: u64) -> Self {
         Self {
@@ -101,7 +101,7 @@ impl<E: Send + 'static> TickTask<E> {
     }
 
     pub async fn tick(&self) -> Result<(), E> {
-        let now = get_timestamp();
+        let now = get_raw_timestamp();
         let last_timestamp_us = self.last_timestamp_us.load(Ordering::Acquire);
 
         if last_timestamp_us != 0u64 && now.saturating_sub(last_timestamp_us) < self.tick_period_us
@@ -116,7 +116,7 @@ impl<E: Send + 'static> TickTask<E> {
     }
 
     pub async fn try_tick_now(&self) -> Result<bool, E> {
-        let now = get_timestamp();
+        let now = get_raw_timestamp();
         let last_timestamp_us = self.last_timestamp_us.load(Ordering::Acquire);
 
         let itick = self.internal_tick(now, last_timestamp_us);
@@ -128,60 +128,55 @@ impl<E: Send + 'static> TickTask<E> {
         // Lock the stop source, tells us if we have ever started this future
         let mut stop_source_guard = self.stop_source.lock().await;
 
-        if stop_source_guard.is_some() {
-            // See if the previous execution finished with an error
-            match self.single_future.check().await {
-                Ok(Some(Err(e))) => {
-                    // We have an error result, which means the singlefuture ran but we need to propagate the error
-                    return Err(e);
-                }
-                Ok(Some(Ok(()))) => {
-                    // We have an ok result, which means the singlefuture ran, and we should run it again this tick
-                }
-                Ok(None) => {
-                    // No prior result to return which means things are still running
-                    // We can just return now, since the singlefuture will not run a second time
-                    return Ok(false);
-                }
-                Err(()) => {
-                    // If we get this, it's because we are joining the singlefuture already
-                    // Don't bother running but this is not an error in this case
-                    return Ok(false);
-                }
-            };
-        }
-
         // Run the singlefuture
         let stop_source = StopSource::new();
         let stop_token = stop_source.token();
-        let running = self.running.clone();
-        let routine = self.routine.get().unwrap()(stop_token, last_timestamp_us, now);
+        let make_singlefuture_closure = || {
+            let running = self.running.clone();
+            let routine = self.routine.get().unwrap()(stop_token, last_timestamp_us, now);
 
-        let wrapped_routine = Box::pin(async move {
-            running.store(true, core::sync::atomic::Ordering::Release);
-            let out = routine.await;
-            running.store(false, core::sync::atomic::Ordering::Release);
-            out
-        });
+            Box::pin(async move {
+                running.store(true, core::sync::atomic::Ordering::Release);
+                let out = routine.await;
+                running.store(false, core::sync::atomic::Ordering::Release);
+                out
+            })
+        };
 
         match self
             .single_future
-            .single_spawn(&self.name, wrapped_routine)
+            .single_spawn(&self.name, make_singlefuture_closure)
             .await
         {
-            // We should have already consumed the result of the last run, or there was none
-            // and we should definitely have run, because the prior 'check()' operation
-            // should have ensured the singlefuture was ready to run
-            Ok((None, true)) => {
-                // Set new timer
-                self.last_timestamp_us.store(now, Ordering::Release);
-                // Save new stopper
-                *stop_source_guard = Some(stop_source);
-                Ok(true)
+            // A new singlefuture ran
+            Ok((res, ran)) => {
+                // If the previous run finished and we started a new one, switch the stopper
+                if ran {
+                    // Set new timer
+                    self.last_timestamp_us.store(now, Ordering::Release);
+                    // Save new stopper
+                    *stop_source_guard = Some(stop_source);
+                }
+
+                match res {
+                    Some(Ok(())) => {
+                        // Prior run returned successfully
+                        Ok(ran)
+                    }
+                    Some(Err(e)) => {
+                        // Prior run returned an error, propagate it
+                        Err(e)
+                    }
+                    None => {
+                        // No prior run or nothing completed
+                        Ok(ran)
+                    }
+                }
             }
-            // All other conditions should not be reachable
-            _ => {
-                unreachable!();
+            Err(()) => {
+                // If we get this, it's because we are joining the singlefuture already
+                // Don't bother running but this is not an error in this case
+                Ok(false)
             }
         }
     }

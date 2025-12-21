@@ -1,6 +1,5 @@
 use super::*;
-
-static LOREM_IPSUM:&[u8] = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. ";
+use crate::crypto::tests::fixtures::*;
 
 pub async fn test_aead(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     trace!("test_aead");
@@ -118,7 +117,10 @@ pub async fn test_no_auth(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     let mut body = LOREM_IPSUM.to_vec();
     let body2 = body.clone();
     let size_before_encrypt = body.len();
-    vcrypto.crypt_in_place_no_auth(&mut body, &n1, &ss1).await;
+    vcrypto
+        .crypt_in_place_no_auth(&mut body, &n1, &ss1)
+        .await
+        .expect("should succeed");
 
     let size_after_encrypt = body.len();
     assert_eq!(
@@ -128,32 +130,51 @@ pub async fn test_no_auth(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     let mut body3 = body.clone();
     let mut body4 = body.clone();
 
-    vcrypto.crypt_in_place_no_auth(&mut body, &n1, &ss1).await;
+    vcrypto
+        .crypt_in_place_no_auth(&mut body, &n1, &ss1)
+        .await
+        .expect("should succeed");
     assert_eq!(body, body2, "result after decrypt should be the same");
 
-    vcrypto.crypt_in_place_no_auth(&mut body3, &n2, &ss1).await;
+    vcrypto
+        .crypt_in_place_no_auth(&mut body3, &n2, &ss1)
+        .await
+        .expect("should succeed");
     assert_ne!(body3, body, "decrypt should not be equal with wrong nonce");
 
-    vcrypto.crypt_in_place_no_auth(&mut body4, &n1, &ss2).await;
+    vcrypto
+        .crypt_in_place_no_auth(&mut body4, &n1, &ss2)
+        .await
+        .expect("should succeed");
     assert_ne!(body4, body, "decrypt should not be equal with wrong secret");
 
     let body5 = vcrypto
         .crypt_no_auth_unaligned(LOREM_IPSUM, &n1, &ss1)
-        .await;
-    let body6 = vcrypto.crypt_no_auth_unaligned(&body5, &n1, &ss1).await;
+        .await
+        .unwrap();
+    let body6 = vcrypto
+        .crypt_no_auth_unaligned(&body5, &n1, &ss1)
+        .await
+        .unwrap();
     let body7 = vcrypto
         .crypt_no_auth_unaligned(LOREM_IPSUM, &n1, &ss1)
-        .await;
+        .await
+        .unwrap();
     assert_eq!(body6, LOREM_IPSUM);
     assert_eq!(body5, body7);
 
     let body5 = vcrypto
         .crypt_no_auth_aligned_8(LOREM_IPSUM, &n1, &ss1)
-        .await;
-    let body6 = vcrypto.crypt_no_auth_aligned_8(&body5, &n1, &ss1).await;
+        .await
+        .unwrap();
+    let body6 = vcrypto
+        .crypt_no_auth_aligned_8(&body5, &n1, &ss1)
+        .await
+        .unwrap();
     let body7 = vcrypto
         .crypt_no_auth_aligned_8(LOREM_IPSUM, &n1, &ss1)
-        .await;
+        .await
+        .unwrap();
     assert_eq!(body6, LOREM_IPSUM);
     assert_eq!(body5, body7);
 }
@@ -161,9 +182,15 @@ pub async fn test_no_auth(vcrypto: &AsyncCryptoSystemGuard<'_>) {
 pub async fn test_dh(vcrypto: &AsyncCryptoSystemGuard<'_>) {
     trace!("test_dh");
     let (dht_key, dht_key_secret) = vcrypto.generate_keypair().await.into_split();
-    assert!(vcrypto.validate_keypair(&dht_key, &dht_key_secret).await);
+    assert!(vcrypto
+        .validate_keypair(&dht_key, &dht_key_secret)
+        .await
+        .expect("should succeed"));
     let (dht_key2, dht_key_secret2) = vcrypto.generate_keypair().await.into_split();
-    assert!(vcrypto.validate_keypair(&dht_key2, &dht_key_secret2).await);
+    assert!(vcrypto
+        .validate_keypair(&dht_key2, &dht_key_secret2)
+        .await
+        .expect("should succeed"));
 
     let r1 = vcrypto
         .compute_dh(&dht_key, &dht_key_secret2)

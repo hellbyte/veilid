@@ -23,12 +23,12 @@ extension ValidateDFLT on DHTSchemaDFLT {
     return true;
   }
 
-  int subkeyCount() => oCnt;
+  int get subkeyCount => oCnt;
 }
 
 extension ValidateSMPL on DHTSchemaSMPL {
   bool validate() {
-    final totalsv = subkeyCount();
+    final totalsv = subkeyCount;
     if (totalsv > 65535) {
       return false;
     }
@@ -38,7 +38,7 @@ extension ValidateSMPL on DHTSchemaSMPL {
     return true;
   }
 
-  int subkeyCount() => members.fold(oCnt, (acc, v) => acc + v.mCnt);
+  int get subkeyCount => members.fold(oCnt, (acc, v) => acc + v.mCnt);
 }
 
 extension Validate on DHTSchema {
@@ -51,11 +51,11 @@ extension Validate on DHTSchema {
     throw TypeError();
   }
 
-  int subkeyCount() {
+  int get subkeyCount {
     if (this is DHTSchemaDFLT) {
-      return (this as DHTSchemaDFLT).subkeyCount();
+      return (this as DHTSchemaDFLT).subkeyCount;
     } else if (this is DHTSchemaSMPL) {
-      return (this as DHTSchemaSMPL).subkeyCount();
+      return (this as DHTSchemaSMPL).subkeyCount;
     }
     throw TypeError();
   }
@@ -70,26 +70,36 @@ sealed class DHTSchema with _$DHTSchema {
   const factory DHTSchema.dflt({required int oCnt}) = DHTSchemaDFLT;
 
   @FreezedUnionValue('SMPL')
-  const factory DHTSchema.smpl(
-      {required int oCnt,
-      required List<DHTSchemaMember> members}) = DHTSchemaSMPL;
+  const factory DHTSchema.smpl({
+    required int oCnt,
+    required List<DHTSchemaMember> members,
+  }) = DHTSchemaSMPL;
 
   factory DHTSchema.fromJson(dynamic json) =>
       _$DHTSchemaFromJson(json as Map<String, dynamic>);
 }
 
-const DHTSchema defaultDHTSchema = DHTSchema.dflt(oCnt: 1);
+const defaultDHTSchema = DHTSchema.dflt(oCnt: 1);
 
 @freezed
 sealed class DHTSchemaMember with _$DHTSchemaMember {
   @Assert('mCnt > 0 && mCnt <= 65535', 'value out of range')
   const factory DHTSchemaMember({
-    required PublicKey mKey,
+    required BareMemberId mKey,
     required int mCnt,
   }) = _DHTSchemaMember;
 
   factory DHTSchemaMember.fromJson(dynamic json) =>
       _$DHTSchemaMemberFromJson(json as Map<String, dynamic>);
+
+  static Future<DHTSchemaMember> fromPublicKey(
+    Veilid veilid,
+    PublicKey publicKey,
+    int mCnt,
+  ) async => DHTSchemaMember(
+    mKey: (await veilid.generateMemberId(publicKey)).value,
+    mCnt: mCnt,
+  );
 }
 
 //////////////////////////////////////
@@ -98,35 +108,35 @@ sealed class DHTSchemaMember with _$DHTSchemaMember {
 @freezed
 sealed class DHTRecordDescriptor with _$DHTRecordDescriptor {
   const factory DHTRecordDescriptor({
-    required TypedKey key,
+    required RecordKey key,
     required PublicKey owner,
     required DHTSchema schema,
-    PublicKey? ownerSecret,
+    SecretKey? ownerSecret,
   }) = _DHTRecordDescriptor;
   factory DHTRecordDescriptor.fromJson(dynamic json) =>
       _$DHTRecordDescriptorFromJson(json as Map<String, dynamic>);
 }
 
 extension DHTRecordDescriptorExt on DHTRecordDescriptor {
-  KeyPair? ownerKeyPair() {
+  BareKeyPair? get ownerBareKeyPair {
+    if (ownerSecret == null) {
+      return null;
+    }
+    return BareKeyPair(key: owner.value, secret: ownerSecret!.value);
+  }
+
+  BareSecretKey? get ownerBareSecretKey {
+    if (ownerSecret == null) {
+      return null;
+    }
+    return ownerSecret!.value;
+  }
+
+  KeyPair? get ownerKeyPair {
     if (ownerSecret == null) {
       return null;
     }
     return KeyPair(key: owner, secret: ownerSecret!);
-  }
-
-  TypedKey? ownerTypedSecret() {
-    if (ownerSecret == null) {
-      return null;
-    }
-    return TypedKey(kind: key.kind, value: ownerSecret!);
-  }
-
-  TypedKeyPair? ownerTypedKeyPair() {
-    if (ownerSecret == null) {
-      return null;
-    }
-    return TypedKeyPair(kind: key.kind, key: owner, secret: ownerSecret!);
   }
 }
 
@@ -135,7 +145,10 @@ extension DHTRecordDescriptorExt on DHTRecordDescriptor {
 
 @freezed
 sealed class ValueData with _$ValueData {
-  @Assert('seq >= 0', 'seq out of range')
+  static const maxLen = 32768;
+
+  @Assert('seq >= 0 && seq <= 4294967295', 'seq out of range')
+  @Assert('data.length <= ValueData.maxLen', 'data too large')
   const factory ValueData({
     required int seq,
     @Uint8ListJsonConverter.jsIsArray() required Uint8List data,
@@ -180,7 +193,8 @@ abstract class SafetySelection {
     final json = jsond as Map<String, dynamic>;
     if (json.containsKey('Unsafe')) {
       return SafetySelectionUnsafe(
-          sequencing: Sequencing.fromJson(json['Unsafe']));
+        sequencing: Sequencing.fromJson(json['Unsafe']),
+      );
     } else if (json.containsKey('Safe')) {
       return SafetySelectionSafe(safetySpec: SafetySpec.fromJson(json['Safe']));
     } else {
@@ -192,13 +206,14 @@ abstract class SafetySelection {
 
 @immutable
 class SafetySelectionUnsafe extends Equatable implements SafetySelection {
-  //
-  const SafetySelectionUnsafe({
-    required this.sequencing,
-  });
   final Sequencing sequencing;
+
+  //
+  const SafetySelectionUnsafe({required this.sequencing});
+
   @override
   List<Object> get props => [sequencing];
+
   @override
   bool? get stringify => null;
 
@@ -208,13 +223,14 @@ class SafetySelectionUnsafe extends Equatable implements SafetySelection {
 
 @immutable
 class SafetySelectionSafe extends Equatable implements SafetySelection {
-  //
-  const SafetySelectionSafe({
-    required this.safetySpec,
-  });
   final SafetySpec safetySpec;
+
+  //
+  const SafetySelectionSafe({required this.safetySpec});
+
   @override
   List<Object> get props => [safetySpec];
+
   @override
   bool? get stringify => null;
 
@@ -229,7 +245,7 @@ sealed class SafetySpec with _$SafetySpec {
     required int hopCount,
     required Stability stability,
     required Sequencing sequencing,
-    String? preferredRoute,
+    RouteId? preferredRoute,
   }) = _SafetySpec;
 
   factory SafetySpec.fromJson(dynamic json) =>
@@ -237,12 +253,65 @@ sealed class SafetySpec with _$SafetySpec {
 }
 
 //////////////////////////////////////
+/// Target
+
+@immutable
+abstract class Target {
+  factory Target.fromJson(dynamic jsond) {
+    final json = jsond as Map<String, dynamic>;
+    if (json.containsKey('NodeId')) {
+      return TargetNodeId(nodeId: NodeId.fromJson(json['NodeId']));
+    } else if (json.containsKey('RouteId')) {
+      return TargetRouteId(routeId: RouteId.fromJson(json['RouteId']));
+    } else {
+      throw const VeilidAPIExceptionInternal('Invalid Target');
+    }
+  }
+  Map<String, dynamic> toJson();
+}
+
+@immutable
+class TargetNodeId extends Equatable implements Target {
+  final NodeId nodeId;
+
+  //
+  const TargetNodeId({required this.nodeId});
+
+  @override
+  List<Object> get props => [nodeId];
+
+  @override
+  bool? get stringify => null;
+
+  @override
+  Map<String, dynamic> toJson() => {'NodeId': nodeId.toJson()};
+}
+
+@immutable
+class TargetRouteId extends Equatable implements Target {
+  final RouteId routeId;
+
+  //
+  const TargetRouteId({required this.routeId});
+
+  @override
+  List<Object> get props => [routeId];
+
+  @override
+  bool? get stringify => null;
+
+  @override
+  Map<String, dynamic> toJson() => {'RouteId': routeId.toJson()};
+}
+
+//////////////////////////////////////
 /// RouteBlob
 @freezed
 sealed class RouteBlob with _$RouteBlob {
-  const factory RouteBlob(
-      {required String routeId,
-      @Uint8ListJsonConverter() required Uint8List blob}) = _RouteBlob;
+  const factory RouteBlob({
+    required RouteId routeId,
+    @Uint8ListJsonConverter.jsIsArray() required Uint8List blob,
+  }) = _RouteBlob;
   factory RouteBlob.fromJson(dynamic json) =>
       _$RouteBlobFromJson(json as Map<String, dynamic>);
 }
@@ -277,19 +346,17 @@ enum DHTReportScope {
 
 @freezed
 sealed class SetDHTValueOptions with _$SetDHTValueOptions {
-  const factory SetDHTValueOptions({
-    KeyPair? writer,
-    bool? allowOffline,
-  }) = _SetDHTValueOptions;
+  const factory SetDHTValueOptions({KeyPair? writer, bool? allowOffline}) =
+      _SetDHTValueOptions;
 
   factory SetDHTValueOptions.fromJson(dynamic json) =>
       _$SetDHTValueOptionsFromJson(json as Map<String, dynamic>);
 
   @override
   Map<String, dynamic> toJson() => {
-        'writer': writer,
-        'allow_offline': allowOffline,
-      };
+    'writer': writer,
+    'allow_offline': allowOffline,
+  };
 }
 
 //////////////////////////////////////
@@ -300,30 +367,50 @@ abstract class VeilidRoutingContext {
 
   // Modifiers
   VeilidRoutingContext withDefaultSafety({bool closeSelf = false});
-  VeilidRoutingContext withSafety(SafetySelection safetySelection,
-      {bool closeSelf = false});
-  VeilidRoutingContext withSequencing(Sequencing sequencing,
-      {bool closeSelf = false});
+  VeilidRoutingContext withSafety(
+    SafetySelection safetySelection, {
+    bool closeSelf = false,
+  });
+  VeilidRoutingContext withSequencing(
+    Sequencing sequencing, {
+    bool closeSelf = false,
+  });
   Future<SafetySelection> safety();
 
   // App call/message
-  Future<Uint8List> appCall(String target, Uint8List request);
-  Future<void> appMessage(String target, Uint8List message);
+  Future<Uint8List> appCall(Target target, Uint8List request);
+  Future<void> appMessage(Target target, Uint8List message);
 
   // DHT Operations
-  Future<DHTRecordDescriptor> createDHTRecord(DHTSchema schema,
-      {KeyPair? owner, CryptoKind kind = 0});
-  Future<DHTRecordDescriptor> openDHTRecord(TypedKey key, {KeyPair? writer});
-  Future<void> closeDHTRecord(TypedKey key);
-  Future<void> deleteDHTRecord(TypedKey key);
-  Future<ValueData?> getDHTValue(TypedKey key, int subkey,
-      {bool forceRefresh = false});
-  Future<ValueData?> setDHTValue(TypedKey key, int subkey, Uint8List data,
-      {SetDHTValueOptions? options});
-  Future<bool> watchDHTValues(TypedKey key,
-      {List<ValueSubkeyRange>? subkeys, Timestamp? expiration, int? count});
-  Future<bool> cancelDHTWatch(TypedKey key, {List<ValueSubkeyRange>? subkeys});
-  Future<DHTRecordReport> inspectDHTRecord(TypedKey key,
-      {List<ValueSubkeyRange>? subkeys,
-      DHTReportScope scope = DHTReportScope.local});
+  Future<DHTRecordDescriptor> createDHTRecord(
+    CryptoKind kind,
+    DHTSchema schema, {
+    KeyPair? owner,
+  });
+  Future<DHTRecordDescriptor> openDHTRecord(RecordKey key, {KeyPair? writer});
+  Future<void> closeDHTRecord(RecordKey key);
+  Future<void> deleteDHTRecord(RecordKey key);
+  Future<ValueData?> getDHTValue(
+    RecordKey key,
+    int subkey, {
+    bool forceRefresh = false,
+  });
+  Future<ValueData?> setDHTValue(
+    RecordKey key,
+    int subkey,
+    Uint8List data, {
+    SetDHTValueOptions? options,
+  });
+  Future<bool> watchDHTValues(
+    RecordKey key, {
+    List<ValueSubkeyRange>? subkeys,
+    Timestamp? expiration,
+    int? count,
+  });
+  Future<bool> cancelDHTWatch(RecordKey key, {List<ValueSubkeyRange>? subkeys});
+  Future<DHTRecordReport> inspectDHTRecord(
+    RecordKey key, {
+    List<ValueSubkeyRange>? subkeys,
+    DHTReportScope scope = DHTReportScope.local,
+  });
 }

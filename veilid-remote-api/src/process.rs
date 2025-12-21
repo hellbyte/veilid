@@ -60,6 +60,7 @@ struct JsonRequestProcessorInner {
     routing_contexts: BTreeMap<u32, RoutingContext>,
     table_dbs: BTreeMap<u32, TableDB>,
     table_db_transactions: BTreeMap<u32, TableDBTransaction>,
+    dht_transactions: BTreeMap<u32, DHTTransaction>,
     crypto_kinds: BTreeMap<u32, CryptoKind>,
 }
 
@@ -78,6 +79,7 @@ impl JsonRequestProcessor {
                 routing_contexts: Default::default(),
                 table_dbs: Default::default(),
                 table_db_transactions: Default::default(),
+                dht_transactions: Default::default(),
                 crypto_kinds: Default::default(),
             })),
         }
@@ -211,6 +213,37 @@ impl JsonRequestProcessor {
         1
     }
 
+    // Routing Context
+    fn add_dht_transaction(&self, dht_transaction: DHTTransaction) -> u32 {
+        let mut inner = self.inner.lock();
+        let mut next_id: u32 = 1;
+        while inner.dht_transactions.contains_key(&next_id) {
+            next_id += 1;
+        }
+        inner.dht_transactions.insert(next_id, dht_transaction);
+        next_id
+    }
+    fn lookup_dht_transaction(&self, id: u32, dhttx_id: u32) -> Result<DHTTransaction, Response> {
+        let inner = self.inner.lock();
+        let Some(dht_transaction) = inner.dht_transactions.get(&dhttx_id).cloned() else {
+            return Err(Response {
+                id,
+                op: ResponseOp::DhtTransaction(Box::new(DhtTransactionResponse {
+                    dhttx_id,
+                    dhttx_op: DhtTransactionResponseOp::InvalidId,
+                })),
+            });
+        };
+        Ok(dht_transaction)
+    }
+    fn release_dht_transaction(&self, id: u32) -> i32 {
+        let mut inner = self.inner.lock();
+        if inner.dht_transactions.remove(&id).is_none() {
+            return 0;
+        }
+        1
+    }
+
     //////////////////////////////////////////////////////////////////////////////////////
 
     #[instrument(level = "trace", target = "json_api", skip_all)]
@@ -256,35 +289,25 @@ impl JsonRequestProcessor {
             RoutingContextRequestOp::AppCall { target, message } => {
                 RoutingContextResponseOp::AppCall {
                     result: to_json_api_result_with_vec_u8(
-                        async {
-                            routing_context
-                                .app_call(self.api.parse_as_target(target)?, message)
-                                .await
-                        }
-                        .await,
+                        async { routing_context.app_call(target, message).await }.await,
                     ),
                 }
             }
             RoutingContextRequestOp::AppMessage { target, message } => {
                 RoutingContextResponseOp::AppMessage {
                     result: to_json_api_result(
-                        async {
-                            routing_context
-                                .app_message(self.api.parse_as_target(target)?, message)
-                                .await
-                        }
-                        .await,
+                        async { routing_context.app_message(target, message).await }.await,
                     ),
                 }
             }
             RoutingContextRequestOp::CreateDhtRecord {
+                kind,
                 schema,
                 owner,
-                kind,
             } => RoutingContextResponseOp::CreateDhtRecord {
                 result: to_json_api_result(
                     routing_context
-                        .create_dht_record(schema, owner, kind)
+                        .create_dht_record(kind, schema, owner)
                         .await
                         .map(Box::new),
                 ),
@@ -435,13 +458,13 @@ impl JsonRequestProcessor {
             }
             TableDbTransactionRequestOp::Store { col, key, value } => {
                 TableDbTransactionResponseOp::Store {
-                    result: to_json_api_result(table_db_transaction.store(col, &key, &value)),
+                    result: to_json_api_result(table_db_transaction.store(col, &key, &value).await),
                 }
             }
 
             TableDbTransactionRequestOp::Delete { col, key } => {
                 TableDbTransactionResponseOp::Delete {
-                    result: to_json_api_result(table_db_transaction.delete(col, &key)),
+                    result: to_json_api_result(table_db_transaction.delete(col, &key).await),
                 }
             }
         };
@@ -482,9 +505,60 @@ impl JsonRequestProcessor {
             CryptoSystemRequestOp::RandomBytes { len } => CryptoSystemResponseOp::RandomBytes {
                 value: csv.random_bytes(len),
             },
-            CryptoSystemRequestOp::DefaultSaltLength => CryptoSystemResponseOp::DefaultSaltLength {
-                value: csv.default_salt_length(),
+            CryptoSystemRequestOp::SharedSecretLength => {
+                CryptoSystemResponseOp::SharedSecretLength {
+                    value: csv.shared_secret_length() as u32,
+                }
+            }
+            CryptoSystemRequestOp::NonceLength => CryptoSystemResponseOp::NonceLength {
+                value: csv.nonce_length() as u32,
             },
+            CryptoSystemRequestOp::HashDigestLength => CryptoSystemResponseOp::HashDigestLength {
+                value: csv.hash_digest_length() as u32,
+            },
+            CryptoSystemRequestOp::PublicKeyLength => CryptoSystemResponseOp::PublicKeyLength {
+                value: csv.public_key_length() as u32,
+            },
+            CryptoSystemRequestOp::SecretKeyLength => CryptoSystemResponseOp::SecretKeyLength {
+                value: csv.secret_key_length() as u32,
+            },
+            CryptoSystemRequestOp::SignatureLength => CryptoSystemResponseOp::SignatureLength {
+                value: csv.signature_length() as u32,
+            },
+            CryptoSystemRequestOp::DefaultSaltLength => CryptoSystemResponseOp::DefaultSaltLength {
+                value: csv.default_salt_length() as u32,
+            },
+            CryptoSystemRequestOp::AeadOverhead => CryptoSystemResponseOp::AeadOverhead {
+                value: csv.aead_overhead() as u32,
+            },
+            CryptoSystemRequestOp::CheckSharedSecret { secret } => {
+                CryptoSystemResponseOp::CheckSharedSecret {
+                    result: to_json_api_result(csv.check_shared_secret(&secret)),
+                }
+            }
+            CryptoSystemRequestOp::CheckNonce { nonce } => CryptoSystemResponseOp::CheckNonce {
+                result: to_json_api_result(csv.check_nonce(&nonce)),
+            },
+            CryptoSystemRequestOp::CheckHashDigest { digest } => {
+                CryptoSystemResponseOp::CheckHashDigest {
+                    result: to_json_api_result(csv.check_hash_digest(&digest)),
+                }
+            }
+            CryptoSystemRequestOp::CheckPublicKey { key } => {
+                CryptoSystemResponseOp::CheckPublicKey {
+                    result: to_json_api_result(csv.check_public_key(&key)),
+                }
+            }
+            CryptoSystemRequestOp::CheckSecretKey { key } => {
+                CryptoSystemResponseOp::CheckSecretKey {
+                    result: to_json_api_result(csv.check_secret_key(&key)),
+                }
+            }
+            CryptoSystemRequestOp::CheckSignature { signature } => {
+                CryptoSystemResponseOp::CheckSignature {
+                    result: to_json_api_result(csv.check_signature(&signature)),
+                }
+            }
             CryptoSystemRequestOp::HashPassword { password, salt } => {
                 CryptoSystemResponseOp::HashPassword {
                     result: to_json_api_result(csv.hash_password(&password, &salt)),
@@ -519,17 +593,14 @@ impl JsonRequestProcessor {
             },
             CryptoSystemRequestOp::ValidateKeyPair { key, secret } => {
                 CryptoSystemResponseOp::ValidateKeyPair {
-                    value: csv.validate_keypair(&key, &secret),
+                    result: to_json_api_result(csv.validate_keypair(&key, &secret)),
                 }
             }
             CryptoSystemRequestOp::ValidateHash { data, hash_digest } => {
                 CryptoSystemResponseOp::ValidateHash {
-                    value: csv.validate_hash(&data, &hash_digest),
+                    result: to_json_api_result(csv.validate_hash(&data, &hash_digest)),
                 }
             }
-            CryptoSystemRequestOp::Distance { key1, key2 } => CryptoSystemResponseOp::Distance {
-                value: csv.distance(&key1, &key2),
-            },
             CryptoSystemRequestOp::Sign { key, secret, data } => CryptoSystemResponseOp::Sign {
                 result: to_json_api_result_with_string(csv.sign(&key, &secret, &data)),
             },
@@ -539,9 +610,6 @@ impl JsonRequestProcessor {
                 signature,
             } => CryptoSystemResponseOp::Verify {
                 result: to_json_api_result(csv.verify(&key, &data, &signature)),
-            },
-            CryptoSystemRequestOp::AeadOverhead => CryptoSystemResponseOp::AeadOverhead {
-                value: csv.aead_overhead() as u32,
             },
             CryptoSystemRequestOp::DecryptAead {
                 body,
@@ -574,12 +642,67 @@ impl JsonRequestProcessor {
                 nonce,
                 shared_secret,
             } => CryptoSystemResponseOp::CryptNoAuth {
-                value: csv.crypt_no_auth_unaligned(&body, &nonce, &shared_secret),
+                result: to_json_api_result_with_vec_u8(csv.crypt_no_auth_unaligned(
+                    &body,
+                    &nonce,
+                    &shared_secret,
+                )),
             },
         };
         CryptoSystemResponse {
             cs_id: csr.cs_id,
             cs_op,
+        }
+    }
+
+    #[instrument(level = "trace", target = "json_api", skip_all)]
+    pub async fn process_dht_transaction_request(
+        &self,
+        dht_transaction: DHTTransaction,
+        dhttr: DhtTransactionRequest,
+    ) -> DhtTransactionResponse {
+        let dhttx_op = match dhttr.dhttx_op {
+            DhtTransactionRequestOp::Release => {
+                self.release_dht_transaction(dhttr.dhttx_id);
+                DhtTransactionResponseOp::Release {}
+            }
+            DhtTransactionRequestOp::Commit => DhtTransactionResponseOp::Commit {
+                result: to_json_api_result(dht_transaction.commit().await.map(|_| {
+                    self.release_dht_transaction(dhttr.dhttx_id);
+                })),
+            },
+            DhtTransactionRequestOp::Rollback => DhtTransactionResponseOp::Rollback {
+                result: to_json_api_result(dht_transaction.rollback().await.map(|_| {
+                    self.release_dht_transaction(dhttr.dhttx_id);
+                })),
+            },
+            DhtTransactionRequestOp::Get { key, subkey } => DhtTransactionResponseOp::Get {
+                result: to_json_api_result(dht_transaction.get(key, subkey).await),
+            },
+            DhtTransactionRequestOp::Set {
+                key,
+                subkey,
+                data,
+                options,
+            } => DhtTransactionResponseOp::Set {
+                result: to_json_api_result(dht_transaction.set(key, subkey, data, options).await),
+            },
+            DhtTransactionRequestOp::Inspect {
+                key,
+                subkeys,
+                scope,
+            } => DhtTransactionResponseOp::Inspect {
+                result: to_json_api_result(
+                    dht_transaction
+                        .inspect(key, subkeys, scope)
+                        .await
+                        .map(Box::new),
+                ),
+            },
+        };
+        DhtTransactionResponse {
+            dhttx_id: dhttr.dhttx_id,
+            dhttx_op,
         }
     }
 
@@ -605,13 +728,22 @@ impl JsonRequestProcessor {
             RequestOp::Detach => ResponseOp::Detach {
                 result: to_json_api_result(self.api.detach().await),
             },
+            RequestOp::GenerateMemberId { writer_key } => ResponseOp::GenerateMemberId {
+                result: to_json_api_result_with_string(self.api.generate_member_id(&writer_key)),
+            },
+            RequestOp::GetDhtRecordKey {
+                schema,
+                owner,
+                encryption_key,
+            } => ResponseOp::GetDhtRecordKey {
+                result: to_json_api_result_with_string(self.api.get_dht_record_key(
+                    schema,
+                    owner,
+                    encryption_key,
+                )),
+            },
             RequestOp::NewPrivateRoute => ResponseOp::NewPrivateRoute {
-                result: to_json_api_result(self.api.new_private_route().await.map(|r| {
-                    NewPrivateRouteResult {
-                        route_id: r.0,
-                        blob: r.1,
-                    }
-                })),
+                result: to_json_api_result(self.api.new_private_route().await),
             },
             RequestOp::NewCustomPrivateRoute {
                 kinds,
@@ -621,11 +753,7 @@ impl JsonRequestProcessor {
                 result: to_json_api_result(
                     self.api
                         .new_custom_private_route(&kinds, stability, sequencing)
-                        .await
-                        .map(|r| NewPrivateRouteResult {
-                            route_id: r.0,
-                            blob: r.1,
-                        }),
+                        .await,
                 ),
             },
             RequestOp::ImportRemotePrivateRoute { blob } => ResponseOp::ImportRemotePrivateRoute {
@@ -735,22 +863,6 @@ impl JsonRequestProcessor {
                     ),
                 }
             }
-            RequestOp::BestCryptoSystem => {
-                let crypto = match self.api.crypto() {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Response {
-                            id,
-                            op: ResponseOp::BestCryptoSystem {
-                                result: to_json_api_result(Err(e)),
-                            },
-                        }
-                    }
-                };
-                ResponseOp::BestCryptoSystem {
-                    result: to_json_api_result(Ok(self.add_crypto_system(crypto.best().kind()))),
-                }
-            }
             RequestOp::CryptoSystem(csr) => {
                 let crypto_kind = match self.lookup_crypto_system(id, csr.cs_id) {
                     Ok(v) => v,
@@ -811,7 +923,7 @@ impl JsonRequestProcessor {
                     result: to_json_api_result_with_vec_string(crypto.generate_signatures(
                         &data,
                         &key_pairs,
-                        |k, s| TypedSignature::new(k.kind, s),
+                        |_k, s| s,
                     )),
                 }
             }
@@ -841,6 +953,30 @@ impl JsonRequestProcessor {
             },
             RequestOp::DefaultVeilidConfig => ResponseOp::DefaultVeilidConfig {
                 value: default_veilid_config(),
+            },
+            RequestOp::ValidCryptoKinds => ResponseOp::ValidCryptoKinds {
+                value: VALID_CRYPTO_KINDS.to_vec(),
+            },
+            RequestOp::DhtTransaction(dhttx) => {
+                let dht_transaction = match self.lookup_dht_transaction(id, dhttx.dhttx_id) {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+                ResponseOp::DhtTransaction(Box::new(
+                    self.process_dht_transaction_request(dht_transaction, dhttx)
+                        .await,
+                ))
+            }
+            RequestOp::TransactDhtRecords {
+                record_keys,
+                options,
+            } => ResponseOp::TransactDhtRecords {
+                result: to_json_api_result(
+                    self.api
+                        .transact_dht_records(record_keys, options)
+                        .await
+                        .map(|dht_tx| self.add_dht_transaction(dht_tx)),
+                ),
             },
         };
 

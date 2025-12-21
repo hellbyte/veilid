@@ -6,7 +6,7 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.8.0'
+        classpath 'com.android.tools.build:gradle:8.13.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -29,7 +29,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion 31
+    compileSdkVersion flutter.compileSdkVersion
     namespace = "com.veilid.veilid"
 
     compileOptions {
@@ -46,8 +46,8 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 24
-        targetSdkVersion 31
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion flutter.targetSdkVersion
         versionCode 1
         versionName "1.0"
 
@@ -64,7 +64,7 @@ android {
         }
     }
 
-    ndkVersion '27.0.12077973'
+    ndkVersion flutter.ndkVersion
 
     // Required to copy libc++_shared.so
     externalNativeBuild {

@@ -2,6 +2,8 @@ use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PunishmentReason {
+    // Manually added punishment
+    Manual,
     // IP-level punishments
     FailedToDecryptEnvelopeBody,
     FailedToDecodeEnvelope,
@@ -10,7 +12,7 @@ pub(crate) enum PunishmentReason {
     // Node-level punishments
     FailedToDecodeOperation,
     WrongSenderPeerInfo,
-    FailedToVerifySenderPeerInfo,
+    //FailedToVerifySenderPeerInfo,
     FailedToRegisterSenderPeerInfo,
     // Route-level punishments
     // FailedToDecodeRoutedMessage,

@@ -46,13 +46,13 @@ impl DialInfoFilter {
     pub fn is_dead(&self) -> bool {
         self.protocol_type_set.is_empty() || self.address_type_set.is_empty()
     }
-    pub fn apply_sequencing(self, sequencing: Sequencing) -> (bool, DialInfoFilter) {
+    pub fn apply_sequencing(self, sequencing: Sequencing) -> (SequenceOrdering, DialInfoFilter) {
         // Get first filtered dialinfo
         match sequencing {
-            Sequencing::NoPreference => (false, self),
-            Sequencing::PreferOrdered => (true, self),
+            Sequencing::NoPreference => (SequenceOrdering::Unordered, self),
+            Sequencing::PreferOrdered => (SequenceOrdering::Ordered, self),
             Sequencing::EnsureOrdered => (
-                true,
+                SequenceOrdering::Ordered,
                 self.filtered(
                     DialInfoFilter::all().with_protocol_type_set(ProtocolType::all_ordered_set()),
                 ),
@@ -62,7 +62,7 @@ impl DialInfoFilter {
     }
     pub fn is_ordered_only(&self) -> bool {
         for pt in self.protocol_type_set {
-            if !pt.is_ordered() {
+            if !matches!(pt.sequence_ordering(), SequenceOrdering::Ordered) {
                 return false;
             }
         }

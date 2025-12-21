@@ -12,39 +12,37 @@ impl_veilid_log_facility!("net");
 
 cfg_if! {
     if #[cfg(all(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 7;
-    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
         const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 6;
-    } else  {
+    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
         const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 5;
+    } else  {
+        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 4;
     }
 }
 pub const PUBLIC_INTERNET_CAPABILITIES: [VeilidCapability; PUBLIC_INTERNET_CAPABILITIES_LEN] = [
-    CAP_ROUTE,
+    VEILID_CAPABILITY_ROUTE,
     #[cfg(feature = "unstable-tunnels")]
-    CAP_TUNNEL,
-    CAP_SIGNAL,
-    //CAP_RELAY,
-    //CAP_VALIDATE_DIAL_INFO,
-    CAP_DHT,
-    CAP_DHT_WATCH,
-    CAP_APPMESSAGE,
+    VEILID_CAPABILITY_TUNNEL,
+    VEILID_CAPABILITY_SIGNAL,
+    //VEILID_CAPABILITY_RELAY,
+    //VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
+    VEILID_CAPABILITY_DHT,
+    VEILID_CAPABILITY_APPMESSAGE,
     #[cfg(feature = "unstable-blockstore")]
-    CAP_BLOCKSTORE,
+    VEILID_CAPABILITY_BLOCKSTORE,
 ];
 
 // #[cfg(feature = "unstable-blockstore")]
-// const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 3;
-// #[cfg(not(feature = "unstable-blockstore"))]
 // const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 2;
+// #[cfg(not(feature = "unstable-blockstore"))]
+// const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 1;
 
 // pub const LOCAL_NETWORK_CAPABILITIES: [VeilidCapability; LOCAL_NETWORK_CAPABILITIES_LEN] = [
-//     //CAP_RELAY,
-//     CAP_DHT,
-//     CAP_DHT_WATCH,
-//     CAP_APPMESSAGE,
+//     //VEILID_CAPABILITY_RELAY,
+//     VEILID_CAPABILITY_DHT,
+//     VEILID_CAPABILITY_APPMESSAGE,
 //     #[cfg(feature = "unstable-blockstore")]
-//     CAP_BLOCKSTORE,
+//     VEILID_CAPABILITY_BLOCKSTORE,
 // ];
 
 pub const MAX_CAPABILITIES: usize = 64;
@@ -76,7 +74,7 @@ pub(super) struct Network {
     unlocked_inner: Arc<NetworkUnlockedInner>,
 }
 
-impl_veilid_component_registry_accessor!(Network);
+impl_veilid_component_accessors!(Network);
 
 impl core::ops::Deref for Network {
     type Target = NetworkUnlockedInner;
@@ -139,9 +137,7 @@ impl Network {
 
         self.record_dial_info_failure(dial_info.clone(), async move {
             let data_len = data.len();
-            let timeout_ms = self
-                .config()
-                .with(|c| c.network.connection_initial_timeout_ms);
+            let timeout_ms = self.config().network.connection_initial_timeout_ms;
 
             if self
                 .network_manager()
@@ -158,7 +154,18 @@ impl Network {
                 ProtocolType::TCP => {
                     bail!("no support for TCP protocol")
                 }
-                ProtocolType::WS | ProtocolType::WSS => {
+                ProtocolType::WS => {
+                    let pnc = network_result_try!(ws::WebsocketProtocolHandler::connect(
+                        self.registry(),
+                        &dial_info,
+                        timeout_ms
+                    )
+                    .await
+                    .wrap_err("connect failure")?);
+                    network_result_try!(pnc.send(data).await.wrap_err("send failure")?);
+                }
+                #[cfg(feature = "enable-protocol-wss")]
+                ProtocolType::WSS => {
                     let pnc = network_result_try!(ws::WebsocketProtocolHandler::connect(
                         self.registry(),
                         &dial_info,
@@ -195,9 +202,7 @@ impl Network {
 
         self.record_dial_info_failure(dial_info.clone(), async move {
             let data_len = data.len();
-            let connect_timeout_ms = self
-                .config()
-                .with(|c| c.network.connection_initial_timeout_ms);
+            let connect_timeout_ms = self.config().network.connection_initial_timeout_ms;
 
             if self
                 .network_manager()
@@ -214,11 +219,21 @@ impl Network {
                 ProtocolType::TCP => {
                     bail!("no support for TCP protocol")
                 }
-                ProtocolType::WS | ProtocolType::WSS => {
+                _ => {
                     let pnc = network_result_try!(match dial_info.protocol_type() {
                         ProtocolType::UDP => unreachable!(),
                         ProtocolType::TCP => unreachable!(),
-                        ProtocolType::WS | ProtocolType::WSS => {
+                        ProtocolType::WS => {
+                            ws::WebsocketProtocolHandler::connect(
+                                self.registry(),
+                                &dial_info,
+                                connect_timeout_ms,
+                            )
+                            .await
+                            .wrap_err("connect failure")?
+                        }
+                        #[cfg(feature = "enable-protocol-wss")]
+                        ProtocolType::WSS => {
                             ws::WebsocketProtocolHandler::connect(
                                 self.registry(),
                                 &dial_info,
@@ -363,14 +378,14 @@ impl Network {
         // get protocol config
         let protocol_config = {
             let config = self.config();
-            let c = config.get();
             let inbound = ProtocolTypeSet::new();
             let mut outbound = ProtocolTypeSet::new();
 
-            if c.network.protocol.ws.connect {
+            if config.network.protocol.ws.connect {
                 outbound.insert(ProtocolType::WS);
             }
-            if c.network.protocol.wss.connect {
+            #[cfg(feature = "enable-protocol-wss")]
+            if config.network.protocol.wss.connect {
                 outbound.insert(ProtocolType::WSS);
             }
 
@@ -386,7 +401,7 @@ impl Network {
                 PUBLIC_INTERNET_CAPABILITIES
                     .iter()
                     .copied()
-                    .filter(|cap| !c.capabilities.disable.contains(cap))
+                    .filter(|cap| !config.capabilities.disable.contains(cap))
                     .collect::<Vec<VeilidCapability>>()
             };
 
@@ -491,7 +506,7 @@ impl Network {
     //////////////////////////////////////////
 
     #[expect(dead_code)]
-    pub fn needs_update_network_class(&self) -> bool {
+    pub fn needs_update_dial_info(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
             veilid_log!(self debug "ignoring due to not started up");
             return false;
@@ -509,7 +524,7 @@ impl Network {
         false
     }
 
-    pub fn trigger_update_network_class(&self, _routing_domain: RoutingDomain) {
+    pub fn trigger_update_dial_info(&self, _routing_domain: RoutingDomain) {
         let Ok(_guard) = self.startup_lock.enter() else {
             veilid_log!(self debug "ignoring due to not started up");
             return;

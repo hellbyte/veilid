@@ -6,7 +6,12 @@ pub trait RoutingDomainEditorCommonTrait {
         address_type: Option<AddressType>,
         protocol_type: Option<ProtocolType>,
     ) -> &mut Self;
-    fn set_relay_node(&mut self, relay_node: Option<NodeRef>) -> &mut Self;
+    fn set_relays(&mut self, relays: Vec<RoutingDomainRelay>) -> &mut Self;
+    fn set_relay_state(
+        &mut self,
+        relay: RoutingDomainRelay,
+        state: RoutingDomainRelayState,
+    ) -> &mut Self;
     #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
     fn add_dial_info(&mut self, dial_info: DialInfo, class: DialInfoClass) -> &mut Self;
     fn setup_network(
@@ -39,8 +44,9 @@ impl<T: RoutingDomainDetailCommonAccessors> RoutingDomainDetailApplyCommonChange
                     .clear_dial_info_details(address_type, protocol_type);
             }
 
-            RoutingDomainChangeCommon::SetRelayNode { relay_node } => {
-                self.common_mut().set_relay_node(relay_node)
+            RoutingDomainChangeCommon::SetRelays { relays } => self.common_mut().set_relays(relays),
+            RoutingDomainChangeCommon::SetRelayState { relay, state } => {
+                self.common_mut().set_relay_state(&relay, state)
             }
 
             RoutingDomainChangeCommon::AddDialInfo { dial_info_detail } => {
@@ -80,8 +86,12 @@ pub(super) enum RoutingDomainChangeCommon {
         address_type: Option<AddressType>,
         protocol_type: Option<ProtocolType>,
     },
-    SetRelayNode {
-        relay_node: Option<NodeRef>,
+    SetRelays {
+        relays: Vec<RoutingDomainRelay>,
+    },
+    SetRelayState {
+        relay: RoutingDomainRelay,
+        state: RoutingDomainRelayState,
     },
     AddDialInfo {
         dial_info_detail: DialInfoDetail,

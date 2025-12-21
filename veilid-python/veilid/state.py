@@ -4,10 +4,11 @@ from typing import Optional, Self
 from .config import VeilidConfig
 from .types import (
     ByteCount,
-    RouteId,
+    BareRouteId,
     Timestamp,
     TimestampDuration,
-    TypedKey,
+    NodeId,
+    RecordKey,
     ValueData,
     ValueSubkey,
     VeilidLogLevel,
@@ -381,11 +382,11 @@ class PeerStats:
 
 
 class PeerTableData:
-    node_ids: list[str]
+    node_ids: list[NodeId]
     peer_address: str
     peer_stats: PeerStats
 
-    def __init__(self, node_ids: list[str], peer_address: str, peer_stats: PeerStats):
+    def __init__(self, node_ids: list[NodeId], peer_address: str, peer_stats: PeerStats):
         self.node_ids = node_ids
         self.peer_address = peer_address
         self.peer_stats = peer_stats
@@ -393,7 +394,9 @@ class PeerTableData:
     @classmethod
     def from_json(cls, j: dict) -> Self:
         """JSON object hook"""
-        return cls(j["node_ids"], j["peer_address"], PeerStats.from_json(j["peer_stats"]))
+        return cls([NodeId(node_id) for node_id in j["node_ids"]],
+                   j["peer_address"],
+                   PeerStats.from_json(j["peer_stats"]))
 
     def to_json(self) -> dict:
         return self.__dict__
@@ -404,6 +407,7 @@ class VeilidStateNetwork:
     bps_down: ByteCount
     bps_up: ByteCount
     peers: list[PeerTableData]
+    node_ids: list[NodeId]
 
     def __init__(
         self,
@@ -411,11 +415,13 @@ class VeilidStateNetwork:
         bps_down: ByteCount,
         bps_up: ByteCount,
         peers: list[PeerTableData],
+        node_ids: list[NodeId],
     ):
         self.started = started
         self.bps_down = bps_down
         self.bps_up = bps_up
         self.peers = peers
+        self.node_ids = node_ids
 
     @classmethod
     def from_json(cls, j: dict) -> Self:
@@ -425,6 +431,7 @@ class VeilidStateNetwork:
             ByteCount(j["bps_down"]),
             ByteCount(j["bps_up"]),
             [PeerTableData.from_json(peer) for peer in j["peers"]],
+            [NodeId(node_id) for node_id in j["node_ids"]],
         )
 
     def to_json(self) -> dict:
@@ -494,11 +501,11 @@ class VeilidLog:
 
 
 class VeilidAppMessage:
-    sender: Optional[TypedKey]
-    route_id: Optional[RouteId]
+    sender: Optional[NodeId]
+    route_id: Optional[BareRouteId]
     message: bytes
 
-    def __init__(self, sender: Optional[TypedKey], route_id: Optional[RouteId], message: bytes):
+    def __init__(self, sender: Optional[NodeId], route_id: Optional[BareRouteId], message: bytes):
         self.sender = sender
         self.route_id = route_id
         self.message = message
@@ -507,8 +514,8 @@ class VeilidAppMessage:
     def from_json(cls, j: dict) -> Self:
         """JSON object hook"""
         return cls(
-            None if j["sender"] is None else TypedKey(j["sender"]),
-            None if j["route_id"] is None else RouteId(j["route_id"]),
+            None if j["sender"] is None else NodeId(j["sender"]),
+            None if j["route_id"] is None else BareRouteId(j["route_id"]),
             urlsafe_b64decode_no_pad(j["message"]),
         )
 
@@ -517,12 +524,12 @@ class VeilidAppMessage:
 
 
 class VeilidAppCall:
-    sender: Optional[TypedKey]
-    route_id: Optional[RouteId]
+    sender: Optional[NodeId]
+    route_id: Optional[BareRouteId]
     message: bytes
     call_id: OperationId
 
-    def __init__(self, sender: Optional[TypedKey], route_id: Optional[RouteId], message: bytes, call_id: OperationId):
+    def __init__(self, sender: Optional[NodeId], route_id: Optional[BareRouteId], message: bytes, call_id: OperationId):
         self.sender = sender
         self.route_id = route_id
         self.message = message
@@ -532,8 +539,8 @@ class VeilidAppCall:
     def from_json(cls, j: dict) -> Self:
         """JSON object hook"""
         return cls(
-            None if j["sender"] is None else TypedKey(j["sender"]),
-            None if j["route_id"] is None else RouteId(j["route_id"]),
+            None if j["sender"] is None else NodeId(j["sender"]),
+            None if j["route_id"] is None else BareRouteId(j["route_id"]),
             urlsafe_b64decode_no_pad(j["message"]),
             OperationId(j["call_id"]),
         )
@@ -543,10 +550,10 @@ class VeilidAppCall:
 
 
 class VeilidRouteChange:
-    dead_routes: list[RouteId]
-    dead_remote_routes: list[RouteId]
+    dead_routes: list[BareRouteId]
+    dead_remote_routes: list[BareRouteId]
 
-    def __init__(self, dead_routes: list[RouteId], dead_remote_routes: list[RouteId]):
+    def __init__(self, dead_routes: list[BareRouteId], dead_remote_routes: list[BareRouteId]):
         self.dead_routes = dead_routes
         self.dead_remote_routes = dead_remote_routes
 
@@ -554,8 +561,8 @@ class VeilidRouteChange:
     def from_json(cls, j: dict) -> Self:
         """JSON object hook"""
         return cls(
-            [RouteId(route) for route in j["dead_routes"]],
-            [RouteId(route) for route in j["dead_remote_routes"]],
+            [BareRouteId(route) for route in j["dead_routes"]],
+            [BareRouteId(route) for route in j["dead_remote_routes"]],
         )
 
     def to_json(self) -> dict:
@@ -563,12 +570,12 @@ class VeilidRouteChange:
 
 
 class VeilidValueChange:
-    key: TypedKey
+    key: RecordKey
     subkeys: list[tuple[ValueSubkey, ValueSubkey]]
     count: int
     value: Optional[ValueData]
 
-    def __init__(self, key: TypedKey, subkeys: list[tuple[ValueSubkey, ValueSubkey]], count: int, value: Optional[ValueData]):
+    def __init__(self, key: RecordKey, subkeys: list[tuple[ValueSubkey, ValueSubkey]], count: int, value: Optional[ValueData]):
         self.key = key
         self.subkeys = subkeys
         self.count = count
@@ -578,7 +585,7 @@ class VeilidValueChange:
     def from_json(cls, j: dict) -> Self:
         """JSON object hook"""
         return cls(
-            TypedKey(j["key"]),
+            RecordKey(j["key"]),
             [(p[0], p[1]) for p in j["subkeys"]],
             j["count"],
             None if j["value"] is None else ValueData.from_json(j["value"]),

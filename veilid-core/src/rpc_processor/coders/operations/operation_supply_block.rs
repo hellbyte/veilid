@@ -4,22 +4,18 @@ const MAX_SUPPLY_BLOCK_A_PEERS_LEN: usize = 20;
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationSupplyBlockQ {
-    block_id: TypedPublicKey,
+    block_id: PublicKey,
 }
 
 impl RPCOperationSupplyBlockQ {
-    pub fn new(block_id: TypedPublicKey) -> Self {
+    pub fn new(block_id: PublicKey) -> Self {
         Self { block_id }
     }
-    pub fn validate(&mut self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
+    pub fn validate(&self, _validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
     }
 
-    pub fn block_id(&self) -> &TypedPublicKey {
-        &self.block_id
-    }
-
-    pub fn destructure(self) -> TypedPublicKey {
+    pub fn destructure(self) -> PublicKey {
         self.block_id
     }
 
@@ -27,10 +23,11 @@ impl RPCOperationSupplyBlockQ {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_supply_block_q::Reader,
     ) -> Result<Self, RPCError> {
-        let bi_reader = reader.get_block_id().map_err(RPCError::protocol)?;
+        rpc_ignore_missing_property!(reader, block_id);
+        let bi_reader = reader.get_block_id()?;
         let block_id = decode_typed_key(&bi_reader)?;
 
-        Ok(Self { block_id })
+        Ok(Self::new(block_id))
     }
     pub fn encode(
         &self,
@@ -47,26 +44,19 @@ impl RPCOperationSupplyBlockQ {
 
 #[derive(Debug, Clone)]
 pub(in crate::rpc_processor) struct RPCOperationSupplyBlockA {
-    expiration: u64,
+    duration: TimestampDuration,
     peers: Vec<PeerInfo>,
 }
 
 impl RPCOperationSupplyBlockA {
-    pub fn new(expiration: u64, peers: Vec<PeerInfo>) -> Result<Self, RPCError> {
+    pub fn new(duration: TimestampDuration, peers: Vec<PeerInfo>) -> Result<Self, RPCError> {
         if peers.len() > MAX_SUPPLY_BLOCK_A_PEERS_LEN {
-            return Err(RPCError::protocol("SupplyBlockA peers length too long"));
+            return Err(RPCError::internal("SupplyBlockA peers length too long"));
         }
-        Ok(Self { expiration, peers })
+        Ok(Self { duration, peers })
     }
-    pub fn validate(&mut self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
-        PeerInfo::validate_vec(&mut self.peers, validate_context.crypto.clone());
+    pub fn validate(&self, validate_context: &RPCValidateContext) -> Result<(), RPCError> {
         Ok(())
-    }
-    pub fn expiration(&self) -> u64 {
-        self.expiration
-    }
-    pub fn peers(&self) -> &[PeerInfo] {
-        &self.peers
     }
     pub fn destructure(self) -> (u64, Vec<PeerInfo>) {
         (self.expiration, self.peers)
@@ -76,30 +66,24 @@ impl RPCOperationSupplyBlockA {
         decode_context: &RPCDecodeContext,
         reader: &veilid_capnp::operation_supply_block_a::Reader,
     ) -> Result<Self, RPCError> {
-        let expiration = reader.get_expiration();
+        let duration = TimestampDuration::new(reader.get_duration());
 
-        let peers_reader = reader.get_peers().map_err(RPCError::protocol)?;
-        if peers_reader.len() as usize > MAX_SUPPLY_BLOCK_A_PEERS_LEN {
-            return Err(RPCError::protocol("SupplyBlockA peers length too long"));
-        }
-        let mut peers = Vec::<PeerInfo>::with_capacity(
-            peers_reader
-                .len()
-                .try_into()
-                .map_err(RPCError::map_internal("too many peers"))?,
-        );
+        rpc_ignore_missing_property!(reader, peers);
+        let peers_reader = reader.get_peers()?;
+        let peers_len = rpc_ignore_max_len!(peers_reader, MAX_SUPPLY_BLOCK_A_PEERS_LEN);
+        let mut peers = Vec::<PeerInfo>::with_capacity(peers_len);
         for p in peers_reader.iter() {
-            let peer_info = decode_peer_info(decode_context, &p)?;
+            let Some(peer_info) = decode_peer_info(decode_context, &p).ignore_ok()?;
             peers.push(peer_info);
         }
 
-        Ok(Self { expiration, peers })
+        Self::new(expiration, peers)
     }
     pub fn encode(
         &self,
         builder: &mut veilid_capnp::operation_supply_block_a::Builder,
     ) -> Result<(), RPCError> {
-        builder.set_expiration(self.expiration);
+        builder.set_duration(self.duration.as_u64());
         let mut peers_builder = builder.reborrow().init_peers(
             self.peers
                 .len()

@@ -4,12 +4,18 @@ pub const NODE_CONTACT_METHOD_CACHE_SIZE: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct NodeContactMethodCacheKey {
-    pub node_ids: TypedNodeIdGroup,
+    /// The node ids associated with this target
+    pub node_ids: NodeIdGroup,
+    /// The timestamp of our own -current- peer info
     pub own_node_info_ts: Timestamp,
+    /// The timestamp of the target's published peer info
     pub target_node_info_ts: Timestamp,
+    /// The node ref filter used to connect to the target
     pub target_node_ref_filter: NodeRefFilter,
+    /// The sequencing requirement for connections to the target
     pub target_node_ref_sequencing: Sequencing,
-    pub dial_info_failures_map: BTreeMap<DialInfo, Timestamp>,
+    /// The ordering of dial info failures from least recent to most recent
+    pub dial_info_failures: Vec<DialInfo>,
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -33,13 +39,21 @@ impl From<Option<&NodeContactMethodKind>> for ContactMethodKind {
         match value {
             None => ContactMethodKind::Unreachable,
             Some(NodeContactMethodKind::Existing) => ContactMethodKind::Existing,
-            Some(NodeContactMethodKind::Direct(_)) => ContactMethodKind::Direct,
-            Some(NodeContactMethodKind::SignalReverse(_, _)) => ContactMethodKind::SignalReverse,
-            Some(NodeContactMethodKind::SignalHolePunch(_, _)) => {
-                ContactMethodKind::SignalHolePunch
+            Some(NodeContactMethodKind::Direct { target_di: _ }) => ContactMethodKind::Direct,
+            Some(NodeContactMethodKind::SignalReverse {
+                relay_nr: _,
+                target_nr: _,
+            }) => ContactMethodKind::SignalReverse,
+            Some(NodeContactMethodKind::SignalHolePunch {
+                relay_nr: _,
+                target_nr: _,
+            }) => ContactMethodKind::SignalHolePunch,
+            Some(NodeContactMethodKind::InboundRelay { relay_nr: _ }) => {
+                ContactMethodKind::InboundRelay
             }
-            Some(NodeContactMethodKind::InboundRelay(_)) => ContactMethodKind::InboundRelay,
-            Some(NodeContactMethodKind::OutboundRelay(_)) => ContactMethodKind::OutboundRelay,
+            Some(NodeContactMethodKind::OutboundRelay { relay_nr: _ }) => {
+                ContactMethodKind::OutboundRelay
+            }
         }
     }
 }
@@ -63,7 +77,7 @@ impl fmt::Display for HitMissStats {
 }
 
 pub struct NodeContactMethodCache {
-    cache: LruCache<NodeContactMethodCacheKey, NodeContactMethodKind>,
+    cache: LruCache<NodeContactMethodCacheKey, Option<NodeContactMethodKind>>,
 
     // Statistics for cache hits/misses
     cache_stats: HitMissStats,
@@ -90,16 +104,23 @@ impl NodeContactMethodCache {
             contact_method_kind_stats: HashMap::new(),
         }
     }
-    pub fn insert(&mut self, ncm_key: NodeContactMethodCacheKey, ncm_kind: NodeContactMethodKind) {
+    pub fn insert(
+        &mut self,
+        ncm_key: NodeContactMethodCacheKey,
+        opt_ncm_kind: Option<NodeContactMethodKind>,
+    ) {
         // Cache this
-        self.cache.insert(ncm_key, ncm_kind);
+        self.cache.insert(ncm_key, opt_ncm_kind);
     }
 
-    pub fn get(&mut self, ncm_key: &NodeContactMethodCacheKey) -> Option<NodeContactMethodKind> {
-        if let Some(ncm_kind) = self.cache.get(ncm_key) {
+    pub fn get(
+        &mut self,
+        ncm_key: &NodeContactMethodCacheKey,
+    ) -> Option<Option<NodeContactMethodKind>> {
+        if let Some(opt_ncm_kind) = self.cache.get(ncm_key) {
             self.cache_stats.hit += 1;
 
-            return Some(ncm_kind.clone());
+            return Some(opt_ncm_kind.clone());
         }
         // Record miss
         self.cache_stats.miss += 1;

@@ -5,6 +5,7 @@ impl_veilid_log_facility!("rpc");
 
 #[derive(Clone, Debug)]
 pub struct GetValueAnswer {
+    pub accepted: bool,
     pub value: Option<SignedValueData>,
     pub peers: Vec<Arc<PeerInfo>>,
     pub descriptor: Option<SignedValueDescriptor>,
@@ -17,20 +18,21 @@ impl RPCProcessor {
     /// Because this leaks information about the identity of the node itself,
     /// replying to this request received over a private route will leak
     /// the identity of the node and defeat the private route.
-
-    #[instrument(level = "trace", target = "rpc", skip(self, last_descriptor),
-            fields(ret.value.data.len,
+    #[instrument(level = "trace", target = "rpc", skip(self),
+            fields(%descriptor_mode,
+                ret.value.data.len,
                 ret.value.data.seq,
                 ret.value.data.writer,
                 ret.peers.len,
-                ret.latency
+                ret.latency,
+                ret.accepted
             ),err(level=Level::DEBUG))]
     pub async fn rpc_call_get_value(
         &self,
         dest: Destination,
-        key: TypedRecordKey,
+        opaque_record_key: OpaqueRecordKey,
         subkey: ValueSubkey,
-        last_descriptor: Option<SignedValueDescriptor>,
+        descriptor_mode: GetDescriptorMode,
     ) -> RPCNetworkResult<Answer<GetValueAnswer>> {
         let _guard = self
             .startup_context
@@ -47,48 +49,42 @@ impl RPCProcessor {
         };
 
         // Get the target node id
-        let crypto = self.crypto();
-        let Some(vcrypto) = crypto.get(key.kind) else {
-            return Err(RPCError::internal("unsupported cryptosystem"));
-        };
-        let Some(target_node_id) = target_node_ids.get(key.kind) else {
+        Crypto::validate_crypto_kind(opaque_record_key.kind()).map_err(RPCError::internal)?;
+        let Some(target_node_id) = target_node_ids.get(opaque_record_key.kind()) else {
             return Err(RPCError::internal("No node id for crypto kind"));
         };
 
         let debug_string = format!(
             "OUT ==> GetValueQ({} #{}{}) => {}",
-            key,
-            subkey,
-            if last_descriptor.is_some() {
-                " +lastdesc"
-            } else {
-                ""
-            },
-            dest
+            opaque_record_key, subkey, descriptor_mode, dest
         );
 
         // Send the getvalue question
-        let get_value_q = RPCOperationGetValueQ::new(key, subkey, last_descriptor.is_none());
+        let get_value_q = RPCOperationGetValueQ::new(
+            opaque_record_key.clone(),
+            subkey,
+            matches!(descriptor_mode, GetDescriptorMode::WantDescriptor),
+        )?;
         let question = RPCQuestion::new(
             network_result_try!(self.get_destination_respond_to(&dest)?),
             RPCQuestionDetail::GetValueQ(Box::new(get_value_q)),
         );
 
         let question_context = QuestionContext::GetValue(ValidateGetValueContext {
-            last_descriptor,
+            opaque_record_key: opaque_record_key.clone(),
+            descriptor_mode,
             subkey,
-            crypto_kind: vcrypto.kind(),
         });
 
         veilid_log!(self debug target: "dht", "{}", debug_string);
 
         let waitable_reply = network_result_try!(
-            self.question(dest.clone(), question, Some(question_context))
+            self.question(dest.clone(), question, None, Some(question_context))
                 .await?
         );
 
         // Keep the reply private route that was used to return with the answer
-        let reply_private_route = waitable_reply.context.reply_private_route;
+        let reply_private_route = waitable_reply.context.reply_private_route.clone();
 
         // Wait for reply
         let (msg, latency) = match self.wait_for_reply(waitable_reply, debug_string).await? {
@@ -106,25 +102,16 @@ impl RPCProcessor {
             _ => return Ok(NetworkResult::invalid_message("not an answer")),
         };
 
-        let (value, peers, descriptor) = get_value_a.destructure();
+        let (accepted, value, peers, descriptor) = get_value_a.destructure();
         if debug_target_enabled!("dht") {
-            let debug_string_value = value
-                .as_ref()
-                .map(|v| {
-                    format!(
-                        " len={} seq={} writer={}",
-                        v.value_data().data().len(),
-                        v.value_data().seq(),
-                        v.value_data().writer(),
-                    )
-                })
-                .unwrap_or_default();
+            let debug_string_value = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
 
             let debug_string_answer = format!(
-                "OUT <== GetValueA({} #{}{}{} peers={}) <= {}",
-                key,
+                "OUT <== GetValueA({} #{}{}{}{} peers={}) <= {}",
+                opaque_record_key,
                 subkey,
                 debug_string_value,
+                if accepted { " +accept" } else { "" },
                 if descriptor.is_some() { " +desc" } else { "" },
                 peers.len(),
                 dest
@@ -134,16 +121,19 @@ impl RPCProcessor {
 
             let peer_ids: Vec<String> = peers
                 .iter()
-                .filter_map(|p| p.node_ids().get(key.kind).map(|k| k.to_string()))
+                .filter_map(|p| {
+                    p.node_ids()
+                        .get(opaque_record_key.kind())
+                        .map(|k| k.to_string())
+                })
                 .collect();
             veilid_log!(self debug target: "dht", "Peers: {:#?}", peer_ids);
         }
 
         // Validate peers returned are, in fact, closer to the key than the node we sent this to
-        let valid = match RoutingTable::verify_peers_closer(
-            &vcrypto,
-            target_node_id.into(),
-            key.into(),
+        let valid = match self.routing_table().verify_peers_closer(
+            target_node_id.to_hash_coordinate(),
+            opaque_record_key.to_hash_coordinate(),
             &peers,
         ) {
             Ok(v) => v,
@@ -161,12 +151,17 @@ impl RPCProcessor {
         #[cfg(feature = "verbose-tracing")]
         tracing::Span::current().record("ret.latency", latency.as_u64());
         #[cfg(feature = "verbose-tracing")]
+        tracing::Span::current().record("ret.accepted", accepted);
+        #[cfg(feature = "verbose-tracing")]
         if let Some(value) = &value {
             tracing::Span::current().record("ret.value.data.len", value.value_data().data().len());
-            tracing::Span::current().record("ret.value.data.seq", value.value_data().seq());
+            tracing::Span::current().record(
+                "ret.value.data.seq",
+                tracing::field::display(value.value_data().seq()),
+            );
             tracing::Span::current().record(
                 "ret.value.data.writer",
-                value.value_data().writer().to_string(),
+                tracing::field::display(value.value_data().writer()),
             );
         }
         #[cfg(feature = "verbose-tracing")]
@@ -176,6 +171,7 @@ impl RPCProcessor {
             latency,
             reply_private_route,
             GetValueAnswer {
+                accepted,
                 value,
                 peers,
                 descriptor,
@@ -188,13 +184,10 @@ impl RPCProcessor {
     #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
     pub(super) async fn process_get_value_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
-        match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(_) | RPCMessageHeaderDetail::SafetyRouted(_) => {}
-            RPCMessageHeaderDetail::PrivateRouted(_) => {
-                return Ok(NetworkResult::invalid_message(
-                    "not processing get value request over private route",
-                ))
-            }
+        if msg.header.is_private_routed() {
+            return Ok(NetworkResult::invalid_message(
+                "not processing get value request over private route",
+            ));
         }
         let routing_table = self.routing_table();
         let routing_domain = msg.header.routing_domain();
@@ -202,7 +195,7 @@ impl RPCProcessor {
         // Ignore if disabled
         let has_capability_dht = routing_table
             .get_published_peer_info(msg.header.routing_domain())
-            .map(|ppi| ppi.signed_node_info().node_info().has_capability(CAP_DHT))
+            .map(|ppi| ppi.node_info().has_capability(VEILID_CAPABILITY_DHT))
             .unwrap_or(false);
         if !has_capability_dht {
             return Ok(NetworkResult::service_unavailable("dht is not available"));
@@ -219,17 +212,20 @@ impl RPCProcessor {
         };
 
         // Destructure
-        let (key, subkey, want_descriptor) = get_value_q.destructure();
+        let (opaque_record_key, subkey, want_descriptor) = get_value_q.destructure();
 
         // Get the nodes that we know about that are closer to the the key than our own node
-        let closer_to_key_peers = network_result_try!(
-            routing_table.find_preferred_peers_closer_to_key(routing_domain, key, vec![CAP_DHT])
-        );
+        let closer_to_key_peers = network_result_try!(routing_table
+            .find_reliable_peers_closer_to_key(
+                routing_domain,
+                opaque_record_key.to_hash_coordinate(),
+                vec![VEILID_CAPABILITY_DHT]
+            ));
 
         if debug_target_enabled!("dht") {
             let debug_string = format!(
                 "IN <=== GetValueQ({} #{}{}) <== {}",
-                key,
+                opaque_record_key,
                 subkey,
                 if want_descriptor { " +wantdesc" } else { "" },
                 msg.header.direct_sender_node_id()
@@ -238,44 +234,41 @@ impl RPCProcessor {
             veilid_log!(self debug target: "dht", "{}", debug_string);
         }
 
-        // See if we would have accepted this as a set
-        let set_value_count = self
-            .config()
-            .with(|c| c.network.dht.set_value_count as usize);
-        let (get_result_value, get_result_descriptor) =
-            if closer_to_key_peers.len() >= set_value_count {
+        // See if this is within the consensus width
+        let consensus_width = self.config().network.dht.consensus_width as usize;
+        let (accepted, get_result_value, get_result_descriptor) =
+            if closer_to_key_peers.len() >= consensus_width {
                 // Not close enough
-                (None, None)
+                (false, None, None)
             } else {
                 // Close enough, lets get it
 
                 // See if we have this record ourselves
                 let storage_manager = self.storage_manager();
-                let get_result = network_result_try!(storage_manager
-                    .inbound_get_value(key, subkey, want_descriptor)
+                let inbound_get_value_result = network_result_try!(storage_manager
+                    .inbound_get_value(&opaque_record_key, subkey, want_descriptor)
                     .await
                     .map_err(RPCError::internal)?);
-                (get_result.opt_value, get_result.opt_descriptor)
+
+                match inbound_get_value_result {
+                    InboundGetValueResult::Success(get_result) => {
+                        (true, get_result.opt_value, get_result.opt_descriptor)
+                    }
+                }
             };
 
         if debug_target_enabled!("dht") {
             let debug_string_value = get_result_value
                 .as_ref()
-                .map(|v| {
-                    format!(
-                        " len={} seq={} writer={}",
-                        v.value_data().data().len(),
-                        v.value_data().seq(),
-                        v.value_data().writer(),
-                    )
-                })
+                .map(|v| v.to_string())
                 .unwrap_or_default();
 
             let debug_string_answer = format!(
-                "IN ===> GetValueA({} #{}{}{} peers={}) ==> {}",
-                key,
+                "IN ===> GetValueA({} #{}{}{}{} peers={}) ==> {}",
+                opaque_record_key,
                 subkey,
                 debug_string_value,
+                if accepted { " +accept" } else { "" },
                 if get_result_descriptor.is_some() {
                     " +desc"
                 } else {
@@ -290,6 +283,7 @@ impl RPCProcessor {
 
         // Make GetValue answer
         let get_value_a = RPCOperationGetValueA::new(
+            accepted,
             get_result_value.map(|x| (*x).clone()),
             closer_to_key_peers,
             get_result_descriptor.map(|x| (*x).clone()),
@@ -299,6 +293,7 @@ impl RPCProcessor {
         self.answer(
             msg,
             RPCAnswer::new(RPCAnswerDetail::GetValueA(Box::new(get_value_a))),
+            None,
         )
         .await
     }

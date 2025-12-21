@@ -15,7 +15,8 @@ use std::sync::Arc;
 use tracing::*;
 use tracing_flame::FlameLayer;
 use tracing_subscriber::prelude::*;
-use veilid_core::{tools::*, Encodable};
+use veilid_core::tools::*;
+use veilid_core::*;
 
 // Detect flutter load/unload
 cfg_if! {
@@ -58,24 +59,24 @@ cfg_if! {
 // Globals
 lazy_static! {
     static ref CORE_INITIALIZED: Mutex<bool> = Mutex::new(false);
-    static ref VEILID_API: AsyncMutex<Option<veilid_core::VeilidAPI>> = AsyncMutex::new(None);
-    static ref FILTERS: Mutex<BTreeMap<&'static str, veilid_core::VeilidLayerFilter>> =
+    static ref VEILID_API: AsyncMutex<Option<VeilidAPI>> = AsyncMutex::new(None);
+    static ref FILTERS: Mutex<BTreeMap<&'static str, VeilidLayerFilter>> =
         Mutex::new(BTreeMap::new());
-    static ref ROUTING_CONTEXTS: Mutex<BTreeMap<u32, veilid_core::RoutingContext>> =
+    static ref ROUTING_CONTEXTS: Mutex<BTreeMap<u32, RoutingContext>> = Mutex::new(BTreeMap::new());
+    static ref TABLE_DBS: Mutex<BTreeMap<u32, TableDB>> = Mutex::new(BTreeMap::new());
+    static ref TABLE_DB_TRANSACTIONS: Mutex<BTreeMap<u32, TableDBTransaction>> =
         Mutex::new(BTreeMap::new());
-    static ref TABLE_DBS: Mutex<BTreeMap<u32, veilid_core::TableDB>> = Mutex::new(BTreeMap::new());
-    static ref TABLE_DB_TRANSACTIONS: Mutex<BTreeMap<u32, veilid_core::TableDBTransaction>> =
-        Mutex::new(BTreeMap::new());
+    static ref DHT_TRANSACTIONS: Mutex<BTreeMap<u32, DHTTransaction>> = Mutex::new(BTreeMap::new());
     static ref FLAME_GUARD: Mutex<Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>>> =
         Mutex::new(None);
 }
 
-async fn get_veilid_api() -> veilid_core::VeilidAPIResult<veilid_core::VeilidAPI> {
+async fn get_veilid_api() -> VeilidAPIResult<VeilidAPI> {
     let api_lock = VEILID_API.lock().await;
     api_lock
         .as_ref()
         .cloned()
-        .ok_or(veilid_core::VeilidAPIError::NotInitialized)
+        .ok_or(VeilidAPIError::NotInitialized)
 }
 
 /////////////////////////////////////////
@@ -84,43 +85,44 @@ async fn get_veilid_api() -> veilid_core::VeilidAPIResult<veilid_core::VeilidAPI
 // Declare external routine to release ffi strings
 define_string_destructor!(free_string);
 
-// Utility types for async API results
-type APIResult<T> = veilid_core::VeilidAPIResult<T>;
-const APIRESULT_VOID: APIResult<()> = APIResult::Ok(());
-
 /////////////////////////////////////////
 // FFI-specific
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfigLoggingTerminal {
     pub enabled: bool,
-    pub level: veilid_core::VeilidConfigLogLevel,
+    pub level: VeilidConfigLogLevel,
     pub ignore_log_targets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfigLoggingOtlp {
     pub enabled: bool,
-    pub level: veilid_core::VeilidConfigLogLevel,
+    pub level: VeilidConfigLogLevel,
     pub grpc_endpoint: String,
     pub service_name: String,
     pub ignore_log_targets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfigLoggingApi {
     pub enabled: bool,
-    pub level: veilid_core::VeilidConfigLogLevel,
+    pub level: VeilidConfigLogLevel,
     pub ignore_log_targets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfigLoggingFlame {
     pub enabled: bool,
     pub path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfigLogging {
     pub terminal: VeilidFFIConfigLoggingTerminal,
     pub otlp: VeilidFFIConfigLoggingOtlp,
@@ -129,15 +131,9 @@ pub struct VeilidFFIConfigLogging {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VeilidFFIConfig {
     pub logging: VeilidFFIConfigLogging,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct VeilidFFIRouteBlob {
-    pub route_id: veilid_core::RouteId,
-    #[serde(with = "veilid_core::as_human_base64")]
-    pub blob: Vec<u8>,
 }
 
 /////////////////////////////////////////
@@ -156,7 +152,9 @@ pub extern "C" fn initialize_veilid_flutter(
     use std::sync::Once;
     static INIT_BACKTRACE: Once = Once::new();
     INIT_BACKTRACE.call_once(move || {
-        std::env::set_var("RUST_BACKTRACE", "1");
+        // unsafe {
+        //     std::env::set_var("RUST_BACKTRACE", "1");
+        // }
         std::panic::set_hook(Box::new(move |panic_info| {
             let crash_file = if crash_path.is_empty() {
                 None
@@ -218,8 +216,8 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
     }
 
     let platform_config = platform_config.into_opt_string();
-    let platform_config: VeilidFFIConfig = veilid_core::deserialize_opt_json(platform_config)
-        .expect("failed to deserialize plaform config json");
+    let platform_config: VeilidFFIConfig =
+        deserialize_opt_json(platform_config).expect("failed to deserialize plaform config json");
 
     // Set up subscriber and layers
     let subscriber = tracing_subscriber::Registry::default();
@@ -227,26 +225,26 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
     let mut filters = (*FILTERS).lock();
 
     let mut fields_to_strip = HashSet::<&'static str>::new();
-    fields_to_strip.insert(veilid_core::VEILID_LOG_KEY_FIELD);
+    fields_to_strip.insert(VEILID_LOG_KEY_FIELD);
 
     // Terminal logger
     if platform_config.logging.terminal.enabled {
         cfg_if! {
             if #[cfg(target_os = "android")] {
                 let filter =
-                    veilid_core::VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
+                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
                 let layer = paranoid_android::layer("veilid-flutter")
-                    .map_fmt_fields(|f| veilid_core::FmtStripFields::new(f, fields_to_strip.clone()))
+                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
                     .with_ansi(false)
                     .with_filter(filter.clone());
                 filters.insert("terminal", filter);
                 layers.push(layer.boxed());
             } else if #[cfg(target_os = "ios")] {
                 let filter =
-                    veilid_core::VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
+                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
                 let layer = tracing_subscriber::fmt::Layer::new()
                     .compact()
-                    .map_fmt_fields(|f| veilid_core::FmtStripFields::new(f, fields_to_strip.clone()))
+                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
                     .with_ansi(false)
                     .with_writer(std::io::stdout)
                     .with_filter(filter.clone());
@@ -254,10 +252,10 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
                 layers.push(layer.boxed());
             } else {
                 let filter =
-                    veilid_core::VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
+                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
                 let layer = tracing_subscriber::fmt::Layer::new()
                     .compact()
-                    .map_fmt_fields(|f| veilid_core::FmtStripFields::new(f, fields_to_strip.clone()))
+                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
                     .with_writer(std::io::stdout)
                     .with_filter(filter.clone());
                 filters.insert("terminal", filter);
@@ -305,7 +303,7 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
                 .map_err(|e| format!("failed to install OpenTelemetry tracer: {}", e))
                 .unwrap();
 
-        let filter = veilid_core::VeilidLayerFilter::new(
+        let filter = VeilidLayerFilter::new(
             platform_config.logging.otlp.level,
             &platform_config.logging.otlp.ignore_log_targets,
             None,
@@ -319,9 +317,9 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
 
     // Flamegraph logger
     if platform_config.logging.flame.enabled {
-        let filter = veilid_core::VeilidLayerFilter::new_no_default(
-            veilid_core::VeilidConfigLogLevel::Trace,
-            &veilid_core::FLAME_LOG_FACILITIES_IGNORE_LIST
+        let filter = VeilidLayerFilter::new_no_default(
+            VeilidConfigLogLevel::Trace,
+            &FLAME_LOG_FACILITIES_IGNORE_LIST
                 .iter()
                 .map(|&x| x.to_string())
                 .collect::<Vec<_>>(),
@@ -345,12 +343,12 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
 
     // API logger
     if platform_config.logging.api.enabled {
-        let filter = veilid_core::VeilidLayerFilter::new(
+        let filter = VeilidLayerFilter::new(
             platform_config.logging.api.level,
             &platform_config.logging.api.ignore_log_targets,
             None,
         );
-        let layer = veilid_core::ApiTracingLayer::init().with_filter(filter.clone());
+        let layer = ApiTracingLayer::init().with_filter(filter.clone());
         filters.insert("api", filter);
         layers.push(layer.boxed());
     }
@@ -371,8 +369,7 @@ pub extern "C" fn change_log_level(layer: FfiStr, log_level: FfiStr) {
 
     // get log level to change layer to
     let log_level = log_level.into_opt_string();
-    let log_level: veilid_core::VeilidConfigLogLevel =
-        veilid_core::deserialize_opt_json(log_level).unwrap();
+    let log_level: VeilidConfigLogLevel = deserialize_opt_json(log_level).unwrap();
 
     // change log level on appropriate layer
     let filters = (*FILTERS).lock();
@@ -402,7 +399,7 @@ pub extern "C" fn change_log_ignore(layer: FfiStr, log_ignore: FfiStr) {
     if layer.is_empty() {
         // Change all layers
         for f in filters.values() {
-            f.set_ignore_list(Some(veilid_core::VeilidLayerFilter::apply_ignore_change(
+            f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
                 &f.ignore_list(),
                 log_ignore.clone(),
             )));
@@ -410,7 +407,7 @@ pub extern "C" fn change_log_ignore(layer: FfiStr, log_ignore: FfiStr) {
     } else {
         // Change a specific layer
         let f = filters.get(layer.as_str()).unwrap();
-        f.set_ignore_list(Some(veilid_core::VeilidLayerFilter::apply_ignore_change(
+        f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
             &f.ignore_list(),
             log_ignore.clone(),
         )));
@@ -427,24 +424,24 @@ pub extern "C" fn startup_veilid_core(port: i64, stream_port: i64, config: FfiSt
             let config_json = match config {
                 Some(v) => v,
                 None => {
-                    let err = veilid_core::VeilidAPIError::MissingArgument {
+                    let err = VeilidAPIError::MissingArgument {
                         context: "startup_veilid_core".to_owned(),
                         argument: "config".to_owned(),
                     };
-                    return APIResult::Err(err);
+                    return VeilidAPIResult::Err(err);
                 }
             };
 
             let mut api_lock = VEILID_API.lock().await;
             if api_lock.is_some() {
-                return APIResult::Err(veilid_core::VeilidAPIError::AlreadyInitialized);
+                return VeilidAPIResult::Err(VeilidAPIError::AlreadyInitialized);
             }
 
             let sink = stream.clone();
-            let update_callback = Arc::new(move |update: veilid_core::VeilidUpdate| {
+            let update_callback = Arc::new(move |update: VeilidUpdate| {
                 let sink = sink.clone();
                 match update {
-                    veilid_core::VeilidUpdate::Shutdown => {
+                    VeilidUpdate::Shutdown => {
                         sink.close();
                     }
                     _ => {
@@ -453,10 +450,10 @@ pub extern "C" fn startup_veilid_core(port: i64, stream_port: i64, config: FfiSt
                 }
             });
 
-            let veilid_api = veilid_core::api_startup_json(update_callback, config_json).await?;
+            let veilid_api = api_startup_json(update_callback, config_json).await?;
             *api_lock = Some(veilid_api);
 
-            APIRESULT_VOID
+            Ok(())
         }
         .in_current_span(),
     );
@@ -469,7 +466,7 @@ pub extern "C" fn get_veilid_state(port: i64) {
         async move {
             let veilid_api = get_veilid_api().await?;
             let core_state = veilid_api.get_state().await?;
-            APIResult::Ok(core_state)
+            VeilidAPIResult::Ok(core_state)
         }
         .in_current_span(),
     );
@@ -481,12 +478,12 @@ pub extern "C" fn is_shutdown(port: i64) {
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await;
-            if let Err(veilid_core::VeilidAPIError::NotInitialized) = veilid_api {
-                return APIResult::Ok(true);
+            if let Err(VeilidAPIError::NotInitialized) = veilid_api {
+                return VeilidAPIResult::Ok(true);
             }
             let veilid_api = veilid_api.unwrap();
             let is_shutdown = veilid_api.is_shutdown();
-            APIResult::Ok(is_shutdown)
+            VeilidAPIResult::Ok(is_shutdown)
         }
         .in_current_span(),
     );
@@ -499,7 +496,7 @@ pub extern "C" fn attach(port: i64) {
         async move {
             let veilid_api = get_veilid_api().await?;
             veilid_api.attach().await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -512,7 +509,7 @@ pub extern "C" fn detach(port: i64) {
         async move {
             let veilid_api = get_veilid_api().await?;
             veilid_api.detach().await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -524,19 +521,17 @@ pub extern "C" fn shutdown_veilid_core(port: i64) {
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let mut api_lock = VEILID_API.lock().await;
-            let veilid_api = api_lock
-                .take()
-                .ok_or(veilid_core::VeilidAPIError::NotInitialized)?;
+            let veilid_api = api_lock.take().ok_or(VeilidAPIError::NotInitialized)?;
             veilid_api.shutdown().await;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
 }
 
 fn add_routing_context(
-    rc: &mut BTreeMap<u32, veilid_core::RoutingContext>,
-    routing_context: veilid_core::RoutingContext,
+    rc: &mut BTreeMap<u32, RoutingContext>,
+    routing_context: RoutingContext,
 ) -> u32 {
     let mut next_id: u32 = 1;
     while rc.contains_key(&next_id) {
@@ -555,7 +550,7 @@ pub extern "C" fn routing_context(port: i64) {
             let routing_context = veilid_api.routing_context()?;
             let mut rc = ROUTING_CONTEXTS.lock();
             let new_id = add_routing_context(&mut rc, routing_context);
-            APIResult::Ok(new_id)
+            VeilidAPIResult::Ok(new_id)
         }
         .in_current_span(),
     );
@@ -588,8 +583,8 @@ pub extern "C" fn routing_context_with_default_safety(id: u32) -> u32 {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_with_safety(id: u32, safety_selection: FfiStr) -> u32 {
-    let safety_selection: veilid_core::SafetySelection =
-        veilid_core::deserialize_opt_json(safety_selection.into_opt_string()).unwrap();
+    let safety_selection: SafetySelection =
+        deserialize_opt_json(safety_selection.into_opt_string()).unwrap();
 
     let mut rc = ROUTING_CONTEXTS.lock();
     let Some(routing_context) = rc.get(&id) else {
@@ -605,8 +600,7 @@ pub extern "C" fn routing_context_with_safety(id: u32, safety_selection: FfiStr)
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_with_sequencing(id: u32, sequencing: FfiStr) -> u32 {
-    let sequencing: veilid_core::Sequencing =
-        veilid_core::deserialize_opt_json(sequencing.into_opt_string()).unwrap();
+    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap();
 
     let mut rc = ROUTING_CONTEXTS.lock();
     let Some(routing_context) = rc.get(&id) else {
@@ -617,12 +611,10 @@ pub extern "C" fn routing_context_with_sequencing(id: u32, sequencing: FfiStr) -
     add_routing_context(&mut rc, routing_context)
 }
 
-fn get_routing_context(id: u32, func_name: &str) -> APIResult<veilid_core::RoutingContext> {
+fn get_routing_context(id: u32, func_name: &str) -> VeilidAPIResult<RoutingContext> {
     let rc = ROUTING_CONTEXTS.lock();
     let Some(routing_context) = rc.get(&id) else {
-        return APIResult::Err(veilid_core::VeilidAPIError::invalid_argument(
-            func_name, "id", id,
-        ));
+        return VeilidAPIResult::Err(VeilidAPIError::invalid_argument(func_name, "id", id));
     };
     Ok(routing_context.clone())
 }
@@ -632,14 +624,14 @@ fn get_routing_context(id: u32, func_name: &str) -> APIResult<veilid_core::Routi
 pub extern "C" fn routing_context_safety(port: i64, id: u32) {
     DartIsolateWrapper::new(port).spawn_result_json(async move {
         let routing_context = get_routing_context(id, "routing_context_safety")?;
-        APIResult::Ok(routing_context.safety())
+        VeilidAPIResult::Ok(routing_context.safety())
     });
 }
 
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_app_call(port: i64, id: u32, target: FfiStr, request: FfiStr) {
-    let target_string: String = target.into_opt_string().unwrap();
+    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap();
     let request: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(request.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -647,11 +639,9 @@ pub extern "C" fn routing_context_app_call(port: i64, id: u32, target: FfiStr, r
         async move {
             let routing_context = get_routing_context(id, "routing_context_app_call")?;
 
-            let veilid_api = get_veilid_api().await?;
-            let target = veilid_api.parse_as_target(target_string)?;
             let answer = routing_context.app_call(target, request).await?;
             let answer = data_encoding::BASE64URL_NOPAD.encode(&answer);
-            APIResult::Ok(answer)
+            VeilidAPIResult::Ok(answer)
         }
         .in_current_span(),
     );
@@ -660,7 +650,7 @@ pub extern "C" fn routing_context_app_call(port: i64, id: u32, target: FfiStr, r
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_app_message(port: i64, id: u32, target: FfiStr, message: FfiStr) {
-    let target_string: String = target.into_opt_string().unwrap();
+    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap();
     let message: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(message.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -668,10 +658,8 @@ pub extern "C" fn routing_context_app_message(port: i64, id: u32, target: FfiStr
         async move {
             let routing_context = get_routing_context(id, "routing_context_app_message")?;
 
-            let veilid_api = get_veilid_api().await?;
-            let target = veilid_api.parse_as_target(target_string)?;
             routing_context.app_message(target, message).await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -682,29 +670,24 @@ pub extern "C" fn routing_context_app_message(port: i64, id: u32, target: FfiStr
 pub extern "C" fn routing_context_create_dht_record(
     port: i64,
     id: u32,
+    kind: u32,
     schema: FfiStr,
     owner: FfiStr,
-    kind: u32,
 ) {
-    let crypto_kind = if kind == 0 {
-        None
-    } else {
-        Some(veilid_core::CryptoKind::from(kind))
-    };
-    let schema: veilid_core::DHTSchema =
-        veilid_core::deserialize_opt_json(schema.into_opt_string()).unwrap();
-    let owner: Option<veilid_core::KeyPair> = owner
+    let crypto_kind = CryptoKind::from(kind);
+    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap();
+    let owner: Option<KeyPair> = owner
         .into_opt_string()
-        .map(|s| veilid_core::deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_create_dht_record")?;
 
             let dht_record_descriptor = routing_context
-                .create_dht_record(schema, owner, crypto_kind)
+                .create_dht_record(crypto_kind, schema, owner)
                 .await?;
-            APIResult::Ok(dht_record_descriptor)
+            VeilidAPIResult::Ok(dht_record_descriptor)
         }
         .in_current_span(),
     );
@@ -713,17 +696,16 @@ pub extern "C" fn routing_context_create_dht_record(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_open_dht_record(port: i64, id: u32, key: FfiStr, writer: FfiStr) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let writer: Option<veilid_core::KeyPair> = writer
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let writer: Option<KeyPair> = writer
         .into_opt_string()
-        .map(|s| veilid_core::deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap());
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_open_dht_record")?;
 
             let dht_record_descriptor = routing_context.open_dht_record(key, writer).await?;
-            APIResult::Ok(dht_record_descriptor)
+            VeilidAPIResult::Ok(dht_record_descriptor)
         }
         .in_current_span(),
     );
@@ -732,14 +714,13 @@ pub extern "C" fn routing_context_open_dht_record(port: i64, id: u32, key: FfiSt
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_close_dht_record(port: i64, id: u32, key: FfiStr) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_close_dht_record")?;
 
             routing_context.close_dht_record(key).await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -748,14 +729,13 @@ pub extern "C" fn routing_context_close_dht_record(port: i64, id: u32, key: FfiS
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_delete_dht_record(port: i64, id: u32, key: FfiStr) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_delete_dht_record")?;
 
             routing_context.delete_dht_record(key).await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -770,8 +750,7 @@ pub extern "C" fn routing_context_get_dht_value(
     subkey: u32,
     force_refresh: bool,
 ) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_get_dht_value")?;
@@ -779,7 +758,7 @@ pub extern "C" fn routing_context_get_dht_value(
             let res = routing_context
                 .get_dht_value(key, subkey, force_refresh)
                 .await?;
-            APIResult::Ok(res)
+            VeilidAPIResult::Ok(res)
         }
         .in_current_span(),
     );
@@ -795,14 +774,13 @@ pub extern "C" fn routing_context_set_dht_value(
     data: FfiStr,
     options: FfiStr,
 ) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
-    let options: Option<veilid_core::SetDHTValueOptions> = options
+    let options: Option<SetDHTValueOptions> = options
         .into_opt_string()
-        .map(|s| veilid_core::deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -811,7 +789,7 @@ pub extern "C" fn routing_context_set_dht_value(
             let res = routing_context
                 .set_dht_value(key, subkey, data, options)
                 .await?;
-            APIResult::Ok(res)
+            VeilidAPIResult::Ok(res)
         }
         .in_current_span(),
     );
@@ -827,20 +805,20 @@ pub extern "C" fn routing_context_watch_dht_values(
     expiration: u64,
     count: u32,
 ) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let subkeys: veilid_core::ValueSubkeyRangeSet =
-        veilid_core::deserialize_opt_json(subkeys.into_opt_string()).unwrap();
-    let expiration = veilid_core::Timestamp::from(expiration);
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let subkeys: Option<ValueSubkeyRangeSet> = subkeys
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+    let expiration = Timestamp::from(expiration);
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_watch_dht_values")?;
 
             let res = routing_context
-                .watch_dht_values(key, Some(subkeys), Some(expiration), Some(count))
+                .watch_dht_values(key, subkeys, Some(expiration), Some(count))
                 .await?;
-            APIResult::Ok(res)
+            VeilidAPIResult::Ok(res)
         }
         .in_current_span(),
     );
@@ -854,17 +832,17 @@ pub extern "C" fn routing_context_cancel_dht_watch(
     key: FfiStr,
     subkeys: FfiStr,
 ) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let subkeys: veilid_core::ValueSubkeyRangeSet =
-        veilid_core::deserialize_opt_json(subkeys.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let subkeys: Option<ValueSubkeyRangeSet> = subkeys
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_cancel_dht_watch")?;
 
-            let res = routing_context.cancel_dht_watch(key, Some(subkeys)).await?;
-            APIResult::Ok(res)
+            let res = routing_context.cancel_dht_watch(key, subkeys).await?;
+            VeilidAPIResult::Ok(res)
         }
         .in_current_span(),
     );
@@ -879,21 +857,64 @@ pub extern "C" fn routing_context_inspect_dht_record(
     subkeys: FfiStr,
     scope: FfiStr,
 ) {
-    let key: veilid_core::TypedRecordKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let subkeys: veilid_core::ValueSubkeyRangeSet =
-        veilid_core::deserialize_opt_json(subkeys.into_opt_string()).unwrap();
-    let scope: veilid_core::DHTReportScope =
-        veilid_core::deserialize_opt_json(scope.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+
+    let subkeys: Option<ValueSubkeyRangeSet> = subkeys
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+
+    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_inspect_dht_record")?;
 
             let res = routing_context
-                .inspect_dht_record(key, Some(subkeys), scope)
+                .inspect_dht_record(key, subkeys, scope)
                 .await?;
-            APIResult::Ok(res)
+            VeilidAPIResult::Ok(res)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn generate_member_id(port: i64, writer_key: FfiStr) {
+    let writer_key: PublicKey = deserialize_opt_json(writer_key.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+
+            let member_id = veilid_api.generate_member_id(&writer_key)?;
+
+            VeilidAPIResult::Ok(member_id)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn get_dht_record_key(
+    port: i64,
+    schema: FfiStr,
+    owner: FfiStr,
+    encryption_key: FfiStr,
+) {
+    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap();
+    let owner: PublicKey = deserialize_opt_json(owner.into_opt_string()).unwrap();
+    let encryption_key: Option<SharedSecret> = encryption_key
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+
+            let record_key = veilid_api.get_dht_record_key(schema, owner, encryption_key)?;
+            VeilidAPIResult::Ok(record_key)
         }
         .in_current_span(),
     );
@@ -906,11 +927,9 @@ pub extern "C" fn new_private_route(port: i64) {
         async move {
             let veilid_api = get_veilid_api().await?;
 
-            let (route_id, blob) = veilid_api.new_private_route().await?;
+            let route_blob = veilid_api.new_private_route().await?;
 
-            let route_blob = VeilidFFIRouteBlob { route_id, blob };
-
-            APIResult::Ok(route_blob)
+            VeilidAPIResult::Ok(route_blob)
         }
         .in_current_span(),
     );
@@ -919,22 +938,18 @@ pub extern "C" fn new_private_route(port: i64) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn new_custom_private_route(port: i64, stability: FfiStr, sequencing: FfiStr) {
-    let stability: veilid_core::Stability =
-        veilid_core::deserialize_opt_json(stability.into_opt_string()).unwrap();
-    let sequencing: veilid_core::Sequencing =
-        veilid_core::deserialize_opt_json(sequencing.into_opt_string()).unwrap();
+    let stability: Stability = deserialize_opt_json(stability.into_opt_string()).unwrap();
+    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
 
-            let (route_id, blob) = veilid_api
-                .new_custom_private_route(&veilid_core::VALID_CRYPTO_KINDS, stability, sequencing)
+            let route_blob = veilid_api
+                .new_custom_private_route(&VALID_CRYPTO_KINDS, stability, sequencing)
                 .await?;
 
-            let route_blob = VeilidFFIRouteBlob { route_id, blob };
-
-            APIResult::Ok(route_blob)
+            VeilidAPIResult::Ok(route_blob)
         }
         .in_current_span(),
     );
@@ -946,13 +961,12 @@ pub extern "C" fn import_remote_private_route(port: i64, blob: FfiStr) {
     let blob: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(blob.into_opt_string().unwrap().as_bytes())
         .unwrap();
-    DartIsolateWrapper::new(port).spawn_result(
+    DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
 
-            let route_id = veilid_api.import_remote_private_route(blob)?.encode();
-
-            APIResult::Ok(route_id)
+            let route_id = veilid_api.import_remote_private_route(blob)?;
+            VeilidAPIResult::Ok(route_id)
         }
         .in_current_span(),
     );
@@ -961,12 +975,13 @@ pub extern "C" fn import_remote_private_route(port: i64, blob: FfiStr) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn release_private_route(port: i64, route_id: FfiStr) {
-    let route_id = veilid_core::RouteId::try_decode(route_id.into_string()).unwrap();
+    let route_id: RouteId = deserialize_opt_json(route_id.into_opt_string()).unwrap();
+
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             veilid_api.release_private_route(route_id)?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -985,7 +1000,7 @@ pub extern "C" fn app_call_reply(port: i64, call_id: FfiStr, message: FfiStr) {
             let call_id = match call_id.parse() {
                 Ok(v) => v,
                 Err(e) => {
-                    return APIResult::Err(veilid_core::VeilidAPIError::invalid_argument(
+                    return VeilidAPIResult::Err(VeilidAPIError::invalid_argument(
                         e, "call_id", call_id,
                     ))
                 }
@@ -993,13 +1008,161 @@ pub extern "C" fn app_call_reply(port: i64, call_id: FfiStr, message: FfiStr) {
 
             let veilid_api = get_veilid_api().await?;
             veilid_api.app_call_reply(call_id, message).await?;
-            APIRESULT_VOID
+            Ok(())
         }
         .in_current_span(),
     );
 }
 
-fn add_table_db(table_db: veilid_core::TableDB) -> u32 {
+fn add_dht_transaction(dht_tx: DHTTransaction) -> u32 {
+    let mut next_id: u32 = 1;
+    let mut rc = DHT_TRANSACTIONS.lock();
+    while rc.contains_key(&next_id) {
+        next_id += 1;
+    }
+    rc.insert(next_id, dht_tx);
+    next_id
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn transact_dht_records(port: i64, record_keys: FfiStr, options: FfiStr) {
+    let record_keys: Vec<RecordKey> = deserialize_opt_json(record_keys.into_opt_string()).unwrap();
+    let options: Option<TransactDHTRecordsOptions> = options
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let dht_tx = veilid_api
+                .transact_dht_records(record_keys, options)
+                .await?;
+            let new_id = add_dht_transaction(dht_tx);
+            VeilidAPIResult::Ok(new_id)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn release_dht_transaction(id: u32) -> i32 {
+    let mut rc = DHT_TRANSACTIONS.lock();
+    if rc.remove(&id).is_none() {
+        return 0;
+    }
+    1
+}
+
+fn get_dht_transaction(id: u32, func_name: &str) -> VeilidAPIResult<DHTTransaction> {
+    let dht_transactions = DHT_TRANSACTIONS.lock();
+    let Some(dht_tx) = dht_transactions.get(&id) else {
+        return VeilidAPIResult::Err(VeilidAPIError::invalid_argument(func_name, "id", id));
+    };
+    Ok(dht_tx.clone())
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn dht_transaction_commit(port: i64, id: u32) {
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let dht_tx = get_dht_transaction(id, "dht_transaction_commit")?;
+
+            dht_tx.commit().await?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn dht_transaction_rollback(port: i64, id: u32) {
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let dht_tx = get_dht_transaction(id, "dht_transaction_rollback")?;
+
+            dht_tx.rollback().await?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn dht_transaction_get(port: i64, id: u32, key: FfiStr, subkey: u32) {
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let dht_tx = get_dht_transaction(id, "dht_transaction_get")?;
+
+            let out = dht_tx.get(key, subkey).await?;
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn dht_transaction_set(
+    port: i64,
+    id: u32,
+    key: FfiStr,
+    subkey: u32,
+    data: FfiStr,
+    options: FfiStr,
+) {
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
+        .decode(data.into_opt_string().unwrap().as_bytes())
+        .unwrap();
+    let options: Option<DHTTransactionSetValueOptions> = options
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let dht_tx = get_dht_transaction(id, "dht_transaction_set")?;
+
+            let out = dht_tx.set(key, subkey, data, options).await?;
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn dht_transaction_inspect(
+    port: i64,
+    id: u32,
+    key: FfiStr,
+    subkeys: FfiStr,
+    scope: FfiStr,
+) {
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let subkeys: Option<ValueSubkeyRangeSet> = subkeys
+        .into_opt_string()
+        .map(|s| deserialize_json(&s).unwrap());
+    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result_json(
+        async move {
+            let dht_tx = get_dht_transaction(id, "dht_transaction_inspect")?;
+
+            let out = dht_tx.inspect(key, subkeys, scope).await?;
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+fn add_table_db(table_db: TableDB) -> u32 {
     let mut next_id: u32 = 1;
     let mut rc = TABLE_DBS.lock();
     while rc.contains_key(&next_id) {
@@ -1017,12 +1180,9 @@ pub extern "C" fn open_table_db(port: i64, name: FfiStr, column_count: u32) {
         async move {
             let veilid_api = get_veilid_api().await?;
             let tstore = veilid_api.table_store()?;
-            let table_db = tstore
-                .open(&name, column_count)
-                .await
-                .map_err(veilid_core::VeilidAPIError::generic)?;
+            let table_db = tstore.open(&name, column_count).await?;
             let new_id = add_table_db(table_db);
-            APIResult::Ok(new_id)
+            VeilidAPIResult::Ok(new_id)
         }
         .in_current_span(),
     );
@@ -1046,11 +1206,8 @@ pub extern "C" fn delete_table_db(port: i64, name: FfiStr) {
         async move {
             let veilid_api = get_veilid_api().await?;
             let tstore = veilid_api.table_store()?;
-            let deleted = tstore
-                .delete(&name)
-                .await
-                .map_err(veilid_core::VeilidAPIError::generic)?;
-            APIResult::Ok(deleted)
+            let deleted = tstore.delete(&name).await?;
+            VeilidAPIResult::Ok(deleted)
         }
         .in_current_span(),
     );
@@ -1069,12 +1226,10 @@ pub extern "C" fn table_db_get_column_count(id: u32) -> u32 {
     cc
 }
 
-fn get_table_db(id: u32, func_name: &str) -> APIResult<veilid_core::TableDB> {
+fn get_table_db(id: u32, func_name: &str) -> VeilidAPIResult<TableDB> {
     let table_dbs = TABLE_DBS.lock();
     let Some(table_db) = table_dbs.get(&id) else {
-        return APIResult::Err(veilid_core::VeilidAPIError::invalid_argument(
-            func_name, "id", id,
-        ));
+        return VeilidAPIResult::Err(VeilidAPIError::invalid_argument(func_name, "id", id));
     };
     Ok(table_db.clone())
 }
@@ -1091,13 +1246,13 @@ pub extern "C" fn table_db_get_keys(port: i64, id: u32, col: u32) {
                 .into_iter()
                 .map(|k| BASE64URL_NOPAD.encode(&k))
                 .collect();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
 }
 
-fn add_table_db_transaction(tdbt: veilid_core::TableDBTransaction) -> u32 {
+fn add_table_db_transaction(tdbt: TableDBTransaction) -> u32 {
     let mut next_id: u32 = 1;
     let mut tdbts = TABLE_DB_TRANSACTIONS.lock();
     while tdbts.contains_key(&next_id) {
@@ -1129,15 +1284,10 @@ pub extern "C" fn release_table_db_transaction(id: u32) -> i32 {
     1
 }
 
-fn get_table_db_transaction(
-    id: u32,
-    func_name: &str,
-) -> APIResult<veilid_core::TableDBTransaction> {
+fn get_table_db_transaction(id: u32, func_name: &str) -> VeilidAPIResult<TableDBTransaction> {
     let tdbts = TABLE_DB_TRANSACTIONS.lock();
     let Some(tdbt) = tdbts.get(&id) else {
-        return APIResult::Err(veilid_core::VeilidAPIError::invalid_argument(
-            func_name, "id", id,
-        ));
+        return VeilidAPIResult::Err(VeilidAPIError::invalid_argument(func_name, "id", id));
     };
     Ok(tdbt.clone())
 }
@@ -1150,7 +1300,7 @@ pub extern "C" fn table_db_transaction_commit(port: i64, id: u32) {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_commit")?;
 
             tdbt.commit().await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1163,7 +1313,7 @@ pub extern "C" fn table_db_transaction_rollback(port: i64, id: u32) {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_rollback")?;
 
             tdbt.rollback();
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1188,8 +1338,8 @@ pub extern "C" fn table_db_transaction_store(
         async move {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_store")?;
 
-            tdbt.store(col, &key, &value)?;
-            APIRESULT_VOID
+            tdbt.store(col, &key, &value).await?;
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1205,8 +1355,8 @@ pub extern "C" fn table_db_transaction_delete(port: i64, id: u32, col: u32, key:
         async move {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_delete")?;
 
-            tdbt.delete(col, &key)?;
-            APIRESULT_VOID
+            tdbt.delete(col, &key).await?;
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1226,7 +1376,7 @@ pub extern "C" fn table_db_store(port: i64, id: u32, col: u32, key: FfiStr, valu
             let table_db = get_table_db(id, "table_db_store")?;
 
             table_db.store(col, &key, &value).await?;
-            APIRESULT_VOID
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1244,7 +1394,7 @@ pub extern "C" fn table_db_load(port: i64, id: u32, col: u32, key: FfiStr) {
 
             let out = table_db.load(col, &key).await?;
             let out = out.map(|x| data_encoding::BASE64URL_NOPAD.encode(&x));
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1262,7 +1412,7 @@ pub extern "C" fn table_db_delete(port: i64, id: u32, col: u32, key: FfiStr) {
 
             let out = table_db.delete(col, &key).await?;
             let out = out.map(|x| data_encoding::BASE64URL_NOPAD.encode(&x));
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1271,8 +1421,8 @@ pub extern "C" fn table_db_delete(port: i64, id: u32, col: u32, key: FfiStr) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn valid_crypto_kinds() -> *mut c_char {
-    veilid_core::serialize_json(
-        veilid_core::VALID_CRYPTO_KINDS
+    serialize_json(
+        VALID_CRYPTO_KINDS
             .iter()
             .map(|k| (*k).into())
             .collect::<Vec<u32>>(),
@@ -1282,29 +1432,22 @@ pub extern "C" fn valid_crypto_kinds() -> *mut c_char {
 
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
-pub extern "C" fn best_crypto_kind() -> u32 {
-    veilid_core::best_crypto_kind().into()
-}
-
-#[no_mangle]
-#[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn verify_signatures(port: i64, node_ids: FfiStr, data: FfiStr, signatures: FfiStr) {
-    let node_ids: Vec<veilid_core::TypedPublicKey> =
-        veilid_core::deserialize_opt_json(node_ids.into_opt_string()).unwrap();
+    let node_ids: Vec<PublicKey> = deserialize_opt_json(node_ids.into_opt_string()).unwrap();
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let typed_signatures: Vec<veilid_core::TypedSignature> =
-        veilid_core::deserialize_opt_json(signatures.into_opt_string()).unwrap();
+    let typed_signatures: Vec<Signature> =
+        deserialize_opt_json(signatures.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let out = crypto.verify_signatures(&node_ids, &data, &typed_signatures)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1317,17 +1460,14 @@ pub extern "C" fn generate_signatures(port: i64, data: FfiStr, key_pairs: FfiStr
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let key_pairs: Vec<veilid_core::TypedKeyPair> =
-        veilid_core::deserialize_opt_json(key_pairs.into_opt_string()).unwrap();
+    let key_pairs: Vec<KeyPair> = deserialize_opt_json(key_pairs.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
-            let out = crypto.generate_signatures(&data, &key_pairs, |k, s| {
-                veilid_core::TypedSignature::new(k.kind, s)
-            })?;
-            APIResult::Ok(out)
+            let out = crypto.generate_signatures(&data, &key_pairs, |_k, s| s)?;
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1336,12 +1476,12 @@ pub extern "C" fn generate_signatures(port: i64, data: FfiStr, key_pairs: FfiStr
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn generate_key_pair(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
-            let out = veilid_core::Crypto::generate_keypair(kind)?;
-            APIResult::Ok(out)
+            let out = Crypto::generate_keypair(kind)?;
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1349,26 +1489,20 @@ pub extern "C" fn generate_key_pair(port: i64, kind: u32) {
 
 #[no_mangle]
 pub extern "C" fn crypto_cached_dh(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: veilid_core::SecretKey =
-        veilid_core::deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_cached_dh",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_cached_dh", "kind", kind.to_string())
             })?;
             let out = csv.cached_dh(&key, &secret)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1377,26 +1511,20 @@ pub extern "C" fn crypto_cached_dh(port: i64, kind: u32, key: FfiStr, secret: Ff
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_compute_dh(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: veilid_core::SecretKey =
-        veilid_core::deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_compute_dh",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_compute_dh", "kind", kind.to_string())
             })?;
             let out = csv.compute_dh(&key, &secret)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1411,12 +1539,10 @@ pub extern "C" fn crypto_generate_shared_secret(
     secret: FfiStr,
     domain: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: veilid_core::SecretKey =
-        veilid_core::deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
     let domain: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(domain.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -1426,14 +1552,14 @@ pub extern "C" fn crypto_generate_shared_secret(
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_generate_shared_secret",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.generate_shared_secret(&key, &secret, &domain)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1442,22 +1568,152 @@ pub extern "C" fn crypto_generate_shared_secret(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_random_bytes(port: i64, kind: u32, len: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_random_bytes",
+                VeilidAPIError::invalid_argument("crypto_random_bytes", "kind", kind.to_string())
+            })?;
+            let out = csv.random_bytes(len);
+            let out = data_encoding::BASE64URL_NOPAD.encode(&out);
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_shared_secret_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_shared_secret_length",
                     "kind",
                     kind.to_string(),
                 )
             })?;
-            let out = csv.random_bytes(len);
-            let out = data_encoding::BASE64URL_NOPAD.encode(&out);
-            APIResult::Ok(out)
+            let out = csv.shared_secret_length();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_nonce_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument("crypto_nonce_length", "kind", kind.to_string())
+            })?;
+            let out = csv.nonce_length();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_hash_digest_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_hash_digest_length",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            let out = csv.hash_digest_length();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_public_key_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_public_key_length",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            let out = csv.public_key_length();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_secret_key_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_secret_key_length",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            let out = csv.secret_key_length();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_signature_length(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_signature_length",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            let out = csv.signature_length();
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1466,21 +1722,176 @@ pub extern "C" fn crypto_random_bytes(port: i64, kind: u32, len: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_default_salt_length(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_default_salt_length",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.default_salt_length();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_aead_overhead(port: i64, kind: u32) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument("crypto_aead_overhead", "kind", kind.to_string())
+            })?;
+            let out = csv.aead_overhead();
+            VeilidAPIResult::Ok(out)
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_shared_secret(port: i64, kind: u32, secret: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let secret: SharedSecret = deserialize_opt_json(secret.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_check_shared_secret",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            csv.check_shared_secret(&secret)?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_nonce(port: i64, kind: u32, nonce: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument("crypto_check_nonce", "kind", kind.to_string())
+            })?;
+            csv.check_nonce(&nonce)?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_hash_digest(port: i64, kind: u32, digest: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let digest: HashDigest = deserialize_opt_json(digest.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_check_hash_digest",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            csv.check_hash_digest(&digest)?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_public_key(port: i64, kind: u32, key: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_check_public_key",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            csv.check_public_key(&key)?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_secret_key(port: i64, kind: u32, key: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let key: SecretKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument(
+                    "crypto_check_secret_key",
+                    "kind",
+                    kind.to_string(),
+                )
+            })?;
+            csv.check_secret_key(&key)?;
+            VeilidAPIResult::Ok(())
+        }
+        .in_current_span(),
+    );
+}
+
+#[no_mangle]
+#[instrument(level = "trace", target = "ffi", skip_all)]
+pub extern "C" fn crypto_check_signature(port: i64, kind: u32, signature: FfiStr) {
+    let kind: CryptoKind = CryptoKind::from(kind);
+    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap();
+
+    DartIsolateWrapper::new(port).spawn_result(
+        async move {
+            let veilid_api = get_veilid_api().await?;
+            let crypto = veilid_api.crypto()?;
+            let csv = crypto.get(kind).ok_or_else(|| {
+                VeilidAPIError::invalid_argument("crypto_check_signature", "kind", kind.to_string())
+            })?;
+            csv.check_signature(&signature)?;
+            VeilidAPIResult::Ok(())
         }
         .in_current_span(),
     );
@@ -1489,7 +1900,7 @@ pub extern "C" fn crypto_default_salt_length(port: i64, kind: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_hash_password(port: i64, kind: u32, password: FfiStr, salt: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(password.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -1502,14 +1913,10 @@ pub extern "C" fn crypto_hash_password(port: i64, kind: u32, password: FfiStr, s
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_hash_password",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_hash_password", "kind", kind.to_string())
             })?;
             let out = csv.hash_password(&password, &salt)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1523,7 +1930,7 @@ pub extern "C" fn crypto_verify_password(
     password: FfiStr,
     password_hash: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(password.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -1534,14 +1941,10 @@ pub extern "C" fn crypto_verify_password(
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_verify_password",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_verify_password", "kind", kind.to_string())
             })?;
             let out = csv.verify_password(&password, &password_hash)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1555,7 +1958,7 @@ pub extern "C" fn crypto_derive_shared_secret(
     password: FfiStr,
     salt: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(password.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -1568,14 +1971,14 @@ pub extern "C" fn crypto_derive_shared_secret(
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_derive_shared_secret",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.derive_shared_secret(&password, &salt)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1584,21 +1987,17 @@ pub extern "C" fn crypto_derive_shared_secret(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_random_nonce(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_random_nonce",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_random_nonce", "kind", kind.to_string())
             })?;
             let out = csv.random_nonce();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1607,21 +2006,21 @@ pub extern "C" fn crypto_random_nonce(port: i64, kind: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_random_shared_secret(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_random_shared_secret",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.random_shared_secret();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1630,21 +2029,21 @@ pub extern "C" fn crypto_random_shared_secret(port: i64, kind: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_generate_key_pair(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_generate_key_pair",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.generate_keypair();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1653,7 +2052,7 @@ pub extern "C" fn crypto_generate_key_pair(port: i64, kind: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_generate_hash(port: i64, kind: u32, data: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
@@ -1664,14 +2063,10 @@ pub extern "C" fn crypto_generate_hash(port: i64, kind: u32, data: FfiStr) {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_generate_hash",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_generate_hash", "kind", kind.to_string())
             })?;
             let out = csv.generate_hash(&data);
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1680,26 +2075,24 @@ pub extern "C" fn crypto_generate_hash(port: i64, kind: u32, data: FfiStr) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_validate_key_pair(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: veilid_core::SecretKey =
-        veilid_core::deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
+                VeilidAPIError::invalid_argument(
                     "crypto_validate_key_pair",
                     "kind",
                     kind.to_string(),
                 )
             })?;
             let out = csv.validate_keypair(&key, &secret);
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1708,56 +2101,23 @@ pub extern "C" fn crypto_validate_key_pair(port: i64, kind: u32, key: FfiStr, se
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_validate_hash(port: i64, kind: u32, data: FfiStr, hash: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let hash: veilid_core::HashDigest =
-        veilid_core::deserialize_opt_json(hash.into_opt_string()).unwrap();
+    let hash: HashDigest = deserialize_opt_json(hash.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_validate_hash",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_validate_hash", "kind", kind.to_string())
             })?;
             let out = csv.validate_hash(&data, &hash);
-            APIResult::Ok(out)
-        }
-        .in_current_span(),
-    );
-}
-
-#[no_mangle]
-#[instrument(level = "trace", target = "ffi", skip_all)]
-pub extern "C" fn crypto_distance(port: i64, kind: u32, key1: FfiStr, key2: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
-
-    let key1: veilid_core::HashDigest =
-        veilid_core::deserialize_opt_json(key1.into_opt_string()).unwrap();
-    let key2: veilid_core::HashDigest =
-        veilid_core::deserialize_opt_json(key2.into_opt_string()).unwrap();
-
-    DartIsolateWrapper::new(port).spawn_result_json(
-        async move {
-            let veilid_api = get_veilid_api().await?;
-            let crypto = veilid_api.crypto()?;
-            let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_distance",
-                    "kind",
-                    kind.to_string(),
-                )
-            })?;
-            let out = csv.distance(&key1, &key2);
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1766,12 +2126,10 @@ pub extern "C" fn crypto_distance(port: i64, kind: u32, key1: FfiStr, key2: FfiS
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_sign(port: i64, kind: u32, key: FfiStr, secret: FfiStr, data: FfiStr) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: veilid_core::SecretKey =
-        veilid_core::deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
@@ -1781,14 +2139,10 @@ pub extern "C" fn crypto_sign(port: i64, kind: u32, key: FfiStr, secret: FfiStr,
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_sign",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_sign", "kind", kind.to_string())
             })?;
             let out = csv.sign(&key, &secret, &data)?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1803,52 +2157,23 @@ pub extern "C" fn crypto_verify(
     data: FfiStr,
     signature: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: veilid_core::PublicKey =
-        veilid_core::deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(data.into_opt_string().unwrap().as_bytes())
         .unwrap();
-    let signature: veilid_core::Signature =
-        veilid_core::deserialize_opt_json(signature.into_opt_string()).unwrap();
+    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_verify",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_verify", "kind", kind.to_string())
             })?;
             let out = csv.verify(&key, &data, &signature)?;
-            APIResult::Ok(out)
-        }
-        .in_current_span(),
-    );
-}
-
-#[no_mangle]
-#[instrument(level = "trace", target = "ffi", skip_all)]
-pub extern "C" fn crypto_aead_overhead(port: i64, kind: u32) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
-
-    DartIsolateWrapper::new(port).spawn_result(
-        async move {
-            let veilid_api = get_veilid_api().await?;
-            let crypto = veilid_api.crypto()?;
-            let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_aead_overhead",
-                    "kind",
-                    kind.to_string(),
-                )
-            })?;
-            let out = csv.aead_overhead();
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1864,17 +2189,16 @@ pub extern "C" fn crypto_decrypt_aead(
     shared_secret: FfiStr,
     associated_data: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     let body: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(body.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let nonce: veilid_core::Nonce =
-        veilid_core::deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
 
-    let shared_secret: veilid_core::SharedSecret =
-        veilid_core::deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+    let shared_secret: SharedSecret =
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
 
     let associated_data: Option<Vec<u8>> = associated_data
         .into_opt_string()
@@ -1885,11 +2209,7 @@ pub extern "C" fn crypto_decrypt_aead(
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_decrypt_aead",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_decrypt_aead", "kind", kind.to_string())
             })?;
             let out = csv.decrypt_aead(
                 &body,
@@ -1901,7 +2221,7 @@ pub extern "C" fn crypto_decrypt_aead(
                 },
             )?;
             let out = data_encoding::BASE64URL_NOPAD.encode(&out);
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1917,17 +2237,16 @@ pub extern "C" fn crypto_encrypt_aead(
     shared_secret: FfiStr,
     associated_data: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     let body: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(body.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let nonce: veilid_core::Nonce =
-        veilid_core::deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
 
-    let shared_secret: veilid_core::SharedSecret =
-        veilid_core::deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+    let shared_secret: SharedSecret =
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
 
     let associated_data: Option<Vec<u8>> = associated_data
         .into_opt_string()
@@ -1938,11 +2257,7 @@ pub extern "C" fn crypto_encrypt_aead(
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_encrypt_aead",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_encrypt_aead", "kind", kind.to_string())
             })?;
             let out = csv.encrypt_aead(
                 &body,
@@ -1954,7 +2269,7 @@ pub extern "C" fn crypto_encrypt_aead(
                 },
             )?;
             let out = data_encoding::BASE64URL_NOPAD.encode(&out);
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );
@@ -1969,32 +2284,27 @@ pub extern "C" fn crypto_crypt_no_auth(
     nonce: FfiStr,
     shared_secret: FfiStr,
 ) {
-    let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
+    let kind: CryptoKind = CryptoKind::from(kind);
 
     let mut body: Vec<u8> = data_encoding::BASE64URL_NOPAD
         .decode(body.into_opt_string().unwrap().as_bytes())
         .unwrap();
 
-    let nonce: veilid_core::Nonce =
-        veilid_core::deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
 
-    let shared_secret: veilid_core::SharedSecret =
-        veilid_core::deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+    let shared_secret: SharedSecret =
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let veilid_api = get_veilid_api().await?;
             let crypto = veilid_api.crypto()?;
             let csv = crypto.get(kind).ok_or_else(|| {
-                veilid_core::VeilidAPIError::invalid_argument(
-                    "crypto_crypt_no_auth",
-                    "kind",
-                    kind.to_string(),
-                )
+                VeilidAPIError::invalid_argument("crypto_crypt_no_auth", "kind", kind.to_string())
             })?;
-            csv.crypt_in_place_no_auth(&mut body, &nonce, &shared_secret);
+            csv.crypt_in_place_no_auth(&mut body, &nonce, &shared_secret)?;
             let body = data_encoding::BASE64URL_NOPAD.encode(&body);
-            APIResult::Ok(body)
+            VeilidAPIResult::Ok(body)
         }
         .in_current_span(),
     );
@@ -2003,7 +2313,7 @@ pub extern "C" fn crypto_crypt_no_auth(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn now() -> u64 {
-    veilid_core::Timestamp::now().as_u64()
+    Timestamp::now().as_u64()
 }
 
 #[no_mangle]
@@ -2014,7 +2324,7 @@ pub extern "C" fn debug(port: i64, command: FfiStr) {
         async move {
             let veilid_api = get_veilid_api().await?;
             let out = veilid_api.debug(command).await?;
-            APIResult::Ok(out)
+            VeilidAPIResult::Ok(out)
         }
         .in_current_span(),
     );

@@ -6,18 +6,14 @@ use stop_token::future::FutureExt as _;
 
 impl_veilid_log_facility!("rtab");
 
+/// Number of automatic safety routes of each safe/unsafe default length to keep around in the background
 const BACKGROUND_SAFETY_ROUTE_COUNT: usize = 2;
 
 impl RoutingTable {
     fn get_background_safety_route_count(&self) -> usize {
-        self.config().with(|c| {
-            if c.capabilities.disable.contains(&CAP_ROUTE) {
-                0
-            } else {
-                BACKGROUND_SAFETY_ROUTE_COUNT
-            }
-        })
+        BACKGROUND_SAFETY_ROUTE_COUNT
     }
+
     /// Fastest routes sort
     fn route_sort_latency_fn(a: &(RouteId, u64), b: &(RouteId, u64)) -> cmp::Ordering {
         let mut al = a.1;
@@ -30,7 +26,13 @@ impl RoutingTable {
             bl = u64::MAX;
         }
         // Less is better
-        al.cmp(&bl)
+        let c = al.cmp(&bl);
+        if c != cmp::Ordering::Equal {
+            return c;
+        }
+
+        // Otherwise, just sort by route id
+        a.0.cmp(&b.0)
     }
 
     /// Get the list of routes to test and drop
@@ -38,21 +40,25 @@ impl RoutingTable {
     /// Allocated routes to test:
     /// * if a route 'needs_testing'
     ///   . all published allocated routes
-    ///   . the fastest 0..N default length routes
+    ///   . routes that have never been tested
+    ///   . the fastest 0..N automatic safety routes of safe default length
+    ///   . the fastest 0..N automatic safety routes of unsafe default length
     /// Routes to drop:
     /// * if a route 'needs_testing'
-    ///   . the N.. default routes
+    ///   . the remaining automatic safety routes
     ///   . the rest of the allocated unpublished routes
     ///
     /// If a route doesn't 'need_testing', then we neither test nor drop it
-    #[instrument(level = "trace", skip(self))]
+    #[instrument(level = "trace", skip(self), ret)]
     fn get_allocated_routes_to_test(&self, cur_ts: Timestamp) -> Vec<RouteId> {
-        let default_route_hop_count = self
-            .config()
-            .with(|c| c.network.rpc.default_route_hop_count as usize);
+        let default_route_hop_count_safe =
+            self.route_spec_store().get_default_route_hop_count_safe();
+        let default_route_hop_count_unsafe =
+            self.route_spec_store().get_default_route_hop_count_unsafe();
 
         let mut must_test_routes = Vec::<RouteId>::new();
-        let mut unpublished_routes = Vec::<(RouteId, u64)>::new();
+        let mut automatic_safe_routes = Vec::<(RouteId, u64)>::new();
+        let mut automatic_unsafe_routes = Vec::<(RouteId, u64)>::new();
         let mut expired_routes = Vec::<RouteId>::new();
         self.route_spec_store().list_allocated_routes(|k, v| {
             let stats = v.get_stats();
@@ -63,35 +69,49 @@ impl RoutingTable {
             // If this has been published, always test if we need it
             // Also if the route has never been tested, test it at least once
             if v.is_published() || stats.last_known_valid_ts.is_none() {
-                must_test_routes.push(*k);
+                must_test_routes.push(k.clone());
             }
-            // If this is a default route hop length, include it in routes to keep alive
-            else if v.hop_count() == default_route_hop_count {
-                unpublished_routes.push((*k, stats.latency.average.as_u64()));
+            // If this is of default safe route hop length, include it in routes to keep alive
+            else if v.is_automatic() && v.hop_count() == default_route_hop_count_safe {
+                automatic_safe_routes.push((k.clone(), stats.latency.average.as_u64()));
+            }
+            // If this is a default unsafe route hop length, include it in routes to keep alive
+            else if v.is_automatic() && v.hop_count() == default_route_hop_count_unsafe {
+                automatic_unsafe_routes.push((k.clone(), stats.latency.average.as_u64()));
             }
             // Else this is a route that hasnt been used recently enough and we can tear it down
             else {
-                expired_routes.push(*k);
+                expired_routes.push(k.clone());
             }
             Option::<()>::None
         });
 
-        // Sort unpublished routes by speed if we know the speed
-        unpublished_routes.sort_by(Self::route_sort_latency_fn);
+        // Sort automatic routes by speed if we know the speed
+        automatic_safe_routes.sort_by(Self::route_sort_latency_fn);
+        automatic_unsafe_routes.sort_by(Self::route_sort_latency_fn);
 
         // Save up to N unpublished routes and test them
         let background_safety_route_count = self.get_background_safety_route_count();
-        for unpublished_route in unpublished_routes.iter().take(usize::min(
-            background_safety_route_count,
-            unpublished_routes.len(),
-        )) {
-            must_test_routes.push(unpublished_route.0);
+        let safe_routes_to_keep =
+            usize::min(background_safety_route_count, automatic_safe_routes.len());
+        for automatic_safe_route in automatic_safe_routes.iter().take(safe_routes_to_keep) {
+            must_test_routes.push(automatic_safe_route.0.clone());
+        }
+        let unsafe_routes_to_keep =
+            usize::min(background_safety_route_count, automatic_unsafe_routes.len());
+        for automatic_unsafe_route in automatic_unsafe_routes.iter().take(unsafe_routes_to_keep) {
+            must_test_routes.push(automatic_unsafe_route.0.clone());
         }
 
         // Kill off all but N unpublished routes rather than testing them
-        if unpublished_routes.len() > background_safety_route_count {
-            for x in &unpublished_routes[background_safety_route_count..] {
-                expired_routes.push(x.0);
+        if automatic_safe_routes.len() > safe_routes_to_keep {
+            for x in &automatic_safe_routes[safe_routes_to_keep..] {
+                expired_routes.push(x.0.clone());
+            }
+        }
+        if automatic_unsafe_routes.len() > unsafe_routes_to_keep {
+            for x in &automatic_unsafe_routes[unsafe_routes_to_keep..] {
+                expired_routes.push(x.0.clone());
             }
         }
 
@@ -129,7 +149,10 @@ impl RoutingTable {
                 let ctx = ctx.clone();
                 unord.push(
                     async move {
-                        let success = match self.route_spec_store().test_route(r).await {
+                        let success = match Box::pin(self.route_spec_store().test_route(r.clone()))
+                            .await
+                            .ok_try_again()
+                        {
                             // Test had result
                             Ok(Some(v)) => v,
                             // Test could not be performed at this time
@@ -182,67 +205,83 @@ impl RoutingTable {
                 .await?;
         }
 
-        // Ensure we have a minimum of N allocated local, unpublished routes with the default number of hops and all our supported crypto kinds
-        let default_route_hop_count = self
-            .config()
-            .with(|c| c.network.rpc.default_route_hop_count as usize);
-        let mut local_unpublished_route_count = 0usize;
+        // Ensure we have a minimum of N allocated local, unpublished routes with the default number of hops
+        // and all our supported crypto kinds. Also allocate some routes of twice the default length for
+        // safety routes to direct nodes.
+        let default_route_hop_count_safe =
+            self.route_spec_store().get_default_route_hop_count_safe();
+        let default_route_hop_count_unsafe =
+            self.route_spec_store().get_default_route_hop_count_unsafe();
+
+        let mut local_safety_route_count_safe = 0usize;
+        let mut local_safety_route_count_unsafe = 0usize;
 
         self.route_spec_store().list_allocated_routes(|_k, v| {
-            if !v.is_published()
-                && v.hop_count() == default_route_hop_count
-                && v.get_route_set_keys().kinds() == VALID_CRYPTO_KINDS
-            {
-                local_unpublished_route_count += 1;
+            if !v.is_published() && v.is_automatic() {
+                if v.hop_count() == default_route_hop_count_safe {
+                    local_safety_route_count_safe += 1;
+                } else if v.hop_count() == default_route_hop_count_unsafe {
+                    local_safety_route_count_unsafe += 1;
+                }
             }
             Option::<()>::None
         });
 
         let background_safety_route_count = self.get_background_safety_route_count();
 
-        if local_unpublished_route_count < background_safety_route_count {
-            let routes_to_allocate = background_safety_route_count - local_unpublished_route_count;
+        // Newly allocated routes
+        let mut newly_allocated_routes = Vec::new();
 
-            // Newly allocated routes
-            let mut newly_allocated_routes = Vec::new();
-            for _n in 0..routes_to_allocate {
-                // Parameters here must be the most inclusive safety route spec
-                // These will be used by test_remote_route as well
-                let safety_spec = SafetySpec {
-                    preferred_route: None,
-                    hop_count: default_route_hop_count,
-                    stability: Stability::Reliable,
-                    sequencing: Sequencing::PreferOrdered,
-                };
-                match self.route_spec_store().allocate_route(
-                    &VALID_CRYPTO_KINDS,
-                    &safety_spec,
-                    DirectionSet::all(),
-                    &[],
-                    true,
-                ) {
-                    Err(VeilidAPIError::TryAgain { message }) => {
-                        veilid_log!(self debug "Route allocation unavailable: {}", message);
-                    }
-                    Err(e) => return Err(e.into()),
-                    Ok(v) => {
-                        newly_allocated_routes.push(v);
+        // Allocate more routes if needed
+        for (route_count, hop_count) in [
+            (local_safety_route_count_safe, default_route_hop_count_safe),
+            (
+                local_safety_route_count_unsafe,
+                default_route_hop_count_unsafe,
+            ),
+        ] {
+            if route_count < background_safety_route_count {
+                let routes_to_allocate = background_safety_route_count - route_count;
+
+                for _n in 0..routes_to_allocate {
+                    // Parameters here must be the most inclusive safety route spec
+                    // These will be used by test_remote_route as well
+                    let safety_spec = SafetySpec {
+                        preferred_route: None,
+                        hop_count,
+                        stability: Stability::Reliable,
+                        sequencing: Sequencing::PreferOrdered,
+                    };
+                    match self.route_spec_store().allocate_route(
+                        &VALID_CRYPTO_KINDS,
+                        &safety_spec,
+                        DirectionSet::all(),
+                        &[],
+                        true,
+                    ) {
+                        Err(VeilidAPIError::TryAgain { message }) => {
+                            veilid_log!(self debug "Route allocation unavailable: {}", message);
+                        }
+                        Err(e) => return Err(e.into()),
+                        Ok(v) => {
+                            newly_allocated_routes.push(v);
+                        }
                     }
                 }
             }
+        }
 
-            // Immediately test them
-            if !newly_allocated_routes.is_empty() {
-                self.test_route_set(stop_token.clone(), newly_allocated_routes)
-                    .await?;
-            }
+        // Immediately test them
+        if !newly_allocated_routes.is_empty() {
+            self.test_route_set(stop_token.clone(), newly_allocated_routes)
+                .await?;
         }
 
         // Test remote routes next
         let remote_routes_needing_testing = self.route_spec_store().list_remote_routes(|k, v| {
             let stats = v.get_stats();
             if stats.needs_testing(cur_ts) {
-                Some(*k)
+                Some(k.clone())
             } else {
                 None
             }

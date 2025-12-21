@@ -3,61 +3,23 @@ use super::*;
 impl_veilid_log_facility!("rtab");
 
 impl RoutingTable {
-    // Check if a relay is desired or not
-    #[instrument(level = "trace", skip_all)]
-    fn public_internet_wants_relay(&self) -> Option<RelayKind> {
-        let own_peer_info = self.get_current_peer_info(RoutingDomain::PublicInternet);
-        let own_node_info = own_peer_info.signed_node_info().node_info();
-        let network_class = own_node_info.network_class();
-
-        // Never give a relay to something with an invalid network class
-        if matches!(network_class, NetworkClass::Invalid) {
-            return None;
-        }
-
-        // If we -need- a relay always request one
-        let requires_relay = self
-            .inner
-            .read()
-            .with_routing_domain(RoutingDomain::PublicInternet, |rdd| rdd.requires_relay());
-        if let Some(rk) = requires_relay {
-            return Some(rk);
-        }
-
-        // If we are behind some NAT, then we should get ourselves a relay just
-        // in case we need to navigate hairpin NAT to our own network
-        let mut inbound_addresses = HashSet::<SocketAddr>::new();
-        for did in own_node_info.dial_info_detail_list() {
-            inbound_addresses.insert(did.dial_info.to_socket_addr());
-        }
-        let own_local_peer_info = self.get_current_peer_info(RoutingDomain::LocalNetwork);
-        let own_local_node_info = own_local_peer_info.signed_node_info().node_info();
-        for ldid in own_local_node_info.dial_info_detail_list() {
-            inbound_addresses.remove(&ldid.dial_info.to_socket_addr());
-        }
-        if !inbound_addresses.is_empty() {
-            return Some(RelayKind::Inbound);
-        }
-
-        // No relay is desired
-        None
-    }
-
     fn check_relay_valid(
         &self,
-        editor: &mut RoutingDomainEditorPublicInternet<'_>,
         cur_ts: Timestamp,
-        relay_node: FilteredNodeRef,
+        relay: &RoutingDomainRelay,
+        mut relay_state: RoutingDomainRelayState,
         relay_node_filter: &impl Fn(&BucketEntryInner) -> bool,
-        relay_desired: Option<RelayKind>,
-    ) -> bool {
-        let state_reason = relay_node.state_reason(cur_ts);
+    ) -> Option<RoutingDomainRelayState> {
+        let inner = self.inner.read();
+        let rti = &inner;
+        let locked_relay_node = relay.relay_node.locked(rti);
+
+        let state_reason = locked_relay_node.state_reason(cur_ts);
 
         // No best node id
-        let Some(relay_node_id) = relay_node.best_node_id() else {
-            veilid_log!(self debug "Relay node no longer has best node id, dropping relay {}", relay_node);
-            editor.set_relay_node(None);
-            return false;
+        let Some(relay_node_id) = locked_relay_node.best_node_id() else {
+            veilid_log!(self debug "Relay node no longer has best node id, dropping relay {}", locked_relay_node);
+            return None;
         };
 
         // Relay node is dead or no longer needed
@@ -65,103 +27,78 @@ impl RoutingTable {
             state_reason,
             BucketEntryStateReason::Dead(_) | BucketEntryStateReason::Punished(_)
         ) {
-            veilid_log!(self debug "Relay node is now {:?}, dropping relay {}", state_reason, relay_node);
-            editor.set_relay_node(None);
-            return false;
+            veilid_log!(self debug "Relay node is now {:?}, dropping relay {}", state_reason, locked_relay_node);
+            return None;
         }
 
         // Relay node no longer can relay
-        if relay_node.operate(|_rti, e| !&relay_node_filter(e)) {
+        if locked_relay_node.operate(|_rti, e| !&relay_node_filter(e)) {
             veilid_log!(self debug
                 "Relay node can no longer relay, dropping relay {}",
-                relay_node
+                relay.relay_node
             );
-            editor.set_relay_node(None);
-            return false;
-        }
-
-        // Relay node is no longer wanted
-        if relay_desired.is_none() {
-            veilid_log!(self debug
-                "Relay node no longer desired, dropping relay {}",
-                relay_node
-            );
-            editor.set_relay_node(None);
-            return false;
+            return None;
         }
 
         // See if our relay was optimized last long enough ago to consider getting a new one
         // if it is no longer fast enough
-        let mut inner = self.inner.upgradable_read();
-        if let Some(last_optimized) = inner.relay_node_last_optimized(RoutingDomain::PublicInternet)
-        {
-            let last_optimized_duration = cur_ts - last_optimized;
-            if last_optimized_duration
-                > TimestampDuration::new_secs(RELAY_OPTIMIZATION_INTERVAL_SECS)
-            {
-                // See what our relay's current percentile is
-                if let Some(relay_relative_performance) = inner.get_node_relative_performance(
-                    relay_node_id,
-                    cur_ts,
-                    relay_node_filter,
-                    |ls| ls.tm90,
-                ) {
-                    // Get latency numbers
-                    let latency_stats = if let Some(latency) = relay_node.peer_stats().latency {
-                        latency.to_string()
-                    } else {
-                        "[no stats]".to_owned()
-                    };
-
-                    // Get current relay reliability
-                    let state_reason = relay_node.state_reason(cur_ts);
-
-                    if relay_relative_performance.percentile < RELAY_OPTIMIZATION_PERCENTILE {
-                        // Drop the current relay so we can get the best new one
-                        veilid_log!(self debug
-                            "Relay tm90 is ({:.2}% < {:.2}%) ({} out of {}) (latency {}, {:?}) optimizing relay {}",
-                            relay_relative_performance.percentile,
-                            RELAY_OPTIMIZATION_PERCENTILE,
-                            relay_relative_performance.node_index,
-                            relay_relative_performance.node_count,
-                            latency_stats,
-                            state_reason,
-                            relay_node
-                        );
-                        editor.set_relay_node(None);
-                        return false;
-                    } else {
-                        // Note that we tried to optimize the relay but it was good
-                        veilid_log!(self debug
-                            "Relay tm90 is ({:.2}% >= {:.2}%) ({} out of {}) (latency {}, {:?}) keeping {}",
-                            relay_relative_performance.percentile,
-                            RELAY_OPTIMIZATION_PERCENTILE,
-                            relay_relative_performance.node_index,
-                            relay_relative_performance.node_count,
-                            latency_stats,
-                            state_reason,
-                            relay_node
-                        );
-                        inner.with_upgraded(|inner| {
-                            inner.set_relay_node_last_optimized(
-                                RoutingDomain::PublicInternet,
-                                cur_ts,
-                            )
-                        });
-                    }
+        let last_optimized_duration = cur_ts.duration_since(relay_state.last_optimized);
+        if last_optimized_duration > RELAY_OPTIMIZATION_INTERVAL {
+            // See what our relay's current percentile is
+            if let Some(relay_relative_performance) = inner.get_node_relative_performance(
+                relay_node_id,
+                cur_ts,
+                relay_node_filter,
+                |ls| ls.tm90,
+            ) {
+                // Get latency numbers
+                let latency_stats = if let Some(latency) = locked_relay_node.peer_stats().latency {
+                    latency.to_string()
                 } else {
-                    // Drop the current relay because it could not be measured
+                    "[no stats]".to_owned()
+                };
+
+                // Get current relay reliability
+                let state_reason = locked_relay_node.state_reason(cur_ts);
+
+                if relay_relative_performance.percentile < RELAY_OPTIMIZATION_PERCENTILE {
+                    // Drop the current relay so we can get the best new one
                     veilid_log!(self debug
-                        "Relay relative performance not found {}",
-                        relay_node
+                        "Relay tm90 is ({:.2}% < {:.2}%) ({} out of {}) (latency {}, {:?}) optimizing relay {}",
+                        relay_relative_performance.percentile,
+                        RELAY_OPTIMIZATION_PERCENTILE,
+                        relay_relative_performance.node_index,
+                        relay_relative_performance.node_count,
+                        latency_stats,
+                        state_reason,
+                        locked_relay_node
                     );
-                    editor.set_relay_node(None);
-                    return false;
+                    return None;
+                } else {
+                    // Note that we tried to optimize the relay but it was good
+                    veilid_log!(self debug
+                        "Relay tm90 is ({:.2}% >= {:.2}%) ({} out of {}) (latency {}, {:?}) keeping {}",
+                        relay_relative_performance.percentile,
+                        RELAY_OPTIMIZATION_PERCENTILE,
+                        relay_relative_performance.node_index,
+                        relay_relative_performance.node_count,
+                        latency_stats,
+                        state_reason,
+                        locked_relay_node
+                    );
+                    relay_state.last_optimized = cur_ts;
                 }
+            } else {
+                // Drop the current relay because it could not be measured
+                veilid_log!(self debug
+                    "Relay relative performance not found {}",
+                    locked_relay_node
+                );
+                return None;
             }
         }
 
-        true
+        Some(relay_state)
     }
 
     // Keep relays assigned and accessible
@@ -172,71 +109,151 @@ impl RoutingTable {
         _last_ts: Timestamp,
         cur_ts: Timestamp,
     ) -> EyreResult<()> {
-        let relay_node_filter = self.make_public_internet_relay_node_filter();
-        let relay_desired = self.public_internet_wants_relay();
-
-        // Get routing domain editor
-        let mut editor = self.edit_public_internet_routing_domain();
-
-        // If we already have a relay, see if it is dead, or if we don't need it any more
-        let has_relay = {
-            if let Some(relay_node) = self.relay_node(RoutingDomain::PublicInternet) {
-                self.check_relay_valid(
-                    &mut editor,
-                    cur_ts,
-                    relay_node,
-                    &relay_node_filter,
-                    relay_desired,
-                )
-            } else {
-                false
-            }
+        // Only do this if we've reached the state where we can allocate relays meaningfully
+        let rds = self.routing_domain_state(RoutingDomain::PublicInternet);
+        let mut relay_status = match rds {
+            RoutingDomainState::Invalid
+            | RoutingDomainState::NeedsDialInfoConfirmation
+            | RoutingDomainState::Unusable => return Ok(()),
+            RoutingDomainState::NeedsRelays { relay_status }
+            | RoutingDomainState::ReadyToPublish { relay_status } => relay_status,
         };
 
-        // Do we want a relay?
-        if !has_relay && relay_desired.is_some() {
-            let relay_desired = relay_desired.unwrap();
+        // Get existing relays
+        let original_relays_and_states = self.relays_and_states(RoutingDomain::PublicInternet);
 
-            // Do we want an outbound relay?
-            let mut got_outbound_relay = false;
-            if matches!(relay_desired, RelayKind::Outbound) {
-                // The outbound relay is the host of the PWA
-                if let Some(outbound_relay_peerinfo) =
-                    intf::get_outbound_relay_peer(RoutingDomain::PublicInternet).await
-                {
-                    // Register new outbound relay
-                    match self.register_node_with_peer_info(outbound_relay_peerinfo, false) {
-                        Ok(nr) => {
-                            veilid_log!(self debug "Outbound relay node selected: {}", nr);
-                            editor.set_relay_node(Some(nr.unfiltered()));
-                            got_outbound_relay = true;
-                        }
-                        Err(e) => {
-                            veilid_log!(self error "failed to register node with peer info: {}", e);
-                        }
+        // Validate existing relays
+        let mut original_relays = vec![];
+        let mut valid_relays = vec![];
+        let mut state_updates = vec![];
+        let relay_node_filter = self.make_public_internet_relay_node_filter();
+        for (relay, relay_state) in original_relays_and_states {
+            if let Some(updated_relay_state) =
+                self.check_relay_valid(cur_ts, &relay, relay_state, &relay_node_filter)
+            {
+                if updated_relay_state != relay_state {
+                    state_updates.push((relay.clone(), updated_relay_state));
+                }
+                valid_relays.push(relay.clone());
+            }
+            original_relays.push(relay);
+        }
+
+        // Apply new relay states if they have changed
+        if !state_updates.is_empty() {
+            let mut editor = self.edit_public_internet_routing_domain();
+            for (relay, state) in state_updates {
+                editor.set_relay_state(relay, state);
+            }
+            editor.commit(false).await;
+        }
+
+        // Drop outbound relay if it changed
+        let mut has_outbound_relay = false;
+        if let Some(outbound_relay_peerinfo) =
+            intf::get_outbound_relay_peer(RoutingDomain::PublicInternet).await
+        {
+            valid_relays.retain(|rdr| {
+                if matches!(rdr.relay_kind, RelayKind::Outbound) {
+                    if rdr
+                        .relay_node
+                        .node_ids()
+                        .contains_any_from_slice(outbound_relay_peerinfo.node_ids())
+                    {
+                        has_outbound_relay = true;
+                        true
+                    } else {
+                        false
                     }
                 } else {
-                    veilid_log!(self debug "Outbound relay desired but not available");
+                    true
                 }
-            }
-            if !got_outbound_relay {
-                // Find a node in our routing table that is an acceptable inbound relay
-                if let Some(nr) = self.find_random_fast_node(
-                    cur_ts,
-                    &relay_node_filter,
-                    RELAY_SELECTION_PERCENTILE,
-                    |ls| ls.tm90,
-                ) {
-                    veilid_log!(self debug "Inbound relay node selected: {}", nr);
-                    editor.set_relay_node(Some(nr));
-                }
+            });
+        }
+
+        // Allocate outbound relay if one is needed
+        let mut attempted_relays = HashSet::<NodeId>::new();
+        if let Some(outbound_relay_peerinfo) =
+            intf::get_outbound_relay_peer(RoutingDomain::PublicInternet).await
+        {
+            if !has_outbound_relay {
+                // Register new outbound relay
+                match self.register_node_with_peer_info(outbound_relay_peerinfo, false) {
+                    Ok(relay_node) => {
+                        let outbound_relay = RoutingDomainRelay::new(
+                            RoutingDomain::PublicInternet,
+                            relay_node.unfiltered(),
+                            RelayKind::Outbound,
+                        );
+                        for rid in outbound_relay.relay_node.node_ids().iter() {
+                            attempted_relays.insert(rid.clone());
+                        }
+                        relay_status.apply_relay(outbound_relay);
+                    }
+                    Err(e) => {
+                        veilid_log!(self error "failed to register outbound relay with peer info: {}", e);
+                    }
+                };
             }
         }
 
-        // Commit the changes
-        if editor.commit(false).await {
-            // Try to publish the peer info
-            editor.publish();
+        // Apply valid inbound relays to status
+        for relay in valid_relays {
+            for rid in relay.relay_node.node_ids().iter() {
+                attempted_relays.insert(rid.clone());
+            }
+            relay_status.apply_relay(relay);
+        }
+
+        // Allocate new inbound relays as needed
+        while relay_status.wants_more_relays() {
+            let next_relay_node_filter = |e: &BucketEntryInner| {
+                // Exclude any relays we have already
+                for nid in e.node_ids().iter() {
+                    if attempted_relays.contains(nid) {
+                        return false;
+                    }
+                }
+                relay_node_filter(e)
+            };
+            // Find a node in our routing table that is an acceptable inbound relay
+            if let Some(relay_node) = self.find_random_fast_node(
+                cur_ts,
+                next_relay_node_filter,
+                RELAY_SELECTION_PERCENTILE,
+                |ls| ls.tm90,
+            ) {
+                for rid in relay_node.node_ids().iter() {
+                    attempted_relays.insert(rid.clone());
+                }
+
+                let routing_domain_relay = RoutingDomainRelay::new(
+                    RoutingDomain::PublicInternet,
+                    relay_node,
+                    RelayKind::Inbound,
+                );
+
+                relay_status.apply_relay(routing_domain_relay);
+            } else {
+                // No relays left, we did our best
+                break;
+            }
+        }
+
+        // Get final sorted list of relays
+        let new_relays = relay_status.get_sorted_relays_list();
+
+        // Apply new relay list if it has changed
+        if new_relays != original_relays {
+            let mut editor = self.edit_public_internet_routing_domain();
+
+            editor.set_relays(new_relays);
+
+            // Commit the changes
+            if editor.commit(false).await {
+                // Try to publish the peer info
+                editor.publish();
+            }
         }
 
         Ok(())
@@ -244,26 +261,19 @@ impl RoutingTable {
 
     #[instrument(level = "trace", skip_all)]
     pub fn make_public_internet_relay_node_filter(&self) -> impl Fn(&BucketEntryInner) -> bool {
+        let ip6_prefix_size = self.config().network.max_connections_per_ip6_prefix_size as usize;
+
         // Get all our outbound protocol/address types
         let outbound_dif = self.get_outbound_dial_info_filter(RoutingDomain::PublicInternet);
-        let mapped_port_info = self.get_low_level_port_info();
-        let own_node_info = self
-            .get_current_peer_info(RoutingDomain::PublicInternet)
-            .signed_node_info()
-            .node_info()
-            .clone();
-        let ip6_prefix_size = self
-            .config()
-            .with(|c| c.network.max_connections_per_ip6_prefix_size as usize);
+
+        // Get our own peer info
+        let own_peer_info = self.get_current_peer_info(RoutingDomain::PublicInternet);
 
         move |e: &BucketEntryInner| {
             // Ensure this node is not on the local network and is on the public internet
             if e.has_node_info(RoutingDomain::LocalNetwork.into()) {
                 return false;
             }
-            let Some(signed_node_info) = e.signed_node_info(RoutingDomain::PublicInternet) else {
-                return false;
-            };
 
             // Exclude any nodes that don't have a 'best node id' for our enabled cryptosystems
             if e.best_node_id().is_none() {
@@ -276,61 +286,78 @@ impl RoutingTable {
                 return false;
             }
 
-            // Until we have a way of reducing a SignedRelayedNodeInfo to a SignedDirectNodeInfo
-            // See https://gitlab.com/veilid/veilid/-/issues/381
-            // We should consider nodes with allocated relays as disqualified from being a relay themselves
-            // due to limitations in representing the PeerInfo for relays that also have relays.
-            let node_info = match signed_node_info {
-                SignedNodeInfo::Direct(d) => d.node_info(),
-                SignedNodeInfo::Relayed(_) => {
-                    return false;
-                }
+            // Get the public internet peer info so we can validate it
+            let Some(peer_info) = e.get_peer_info(RoutingDomain::PublicInternet) else {
+                return false;
             };
 
-            // Disqualify nodes that don't have relay capability or require a relay themselves
-            if !(node_info.has_capability(CAP_RELAY) && node_info.is_fully_direct_inbound()) {
-                // Needs to be able to accept packets to relay directly
+            // Exclude any nodes that are relaying directly through us
+            if own_peer_info
+                .node_ids()
+                .contains_any_from_slice(&peer_info.node_info().relay_ids())
+            {
                 return false;
             }
 
-            // Disqualify nodes that don't cover all our inbound ports for tcp and udp
-            // as we need to be able to use the relay for keepalives for all nat mappings
-            let mut low_level_protocol_ports = mapped_port_info.low_level_protocol_ports.clone();
-            let dids = node_info.filtered_dial_info_details(DialInfoDetail::NO_SORT, &|did| {
-                did.matches_filter(&outbound_dif)
-            });
-            for did in &dids {
-                let pt = did.dial_info.protocol_type();
-                let at = did.dial_info.address_type();
-                if let Some((llpt, port)) = mapped_port_info.protocol_to_port.get(&(pt, at)) {
-                    low_level_protocol_ports.remove(&(*llpt, at, *port));
-                }
-            }
-            if !low_level_protocol_ports.is_empty() {
+            // Disqualify nodes that don't have relay capability
+            if !peer_info
+                .node_info()
+                .has_capability(VEILID_CAPABILITY_RELAY)
+            {
                 return false;
             }
 
-            // For all protocol types we could connect to the relay by, ensure the relay supports all address types
-            let mut address_type_mappings = HashMap::<ProtocolType, AddressTypeSet>::new();
-            let dids = node_info.dial_info_detail_list();
-            for did in dids {
-                address_type_mappings
-                    .entry(did.dial_info.protocol_type())
-                    .and_modify(|x| {
-                        x.insert(did.dial_info.address_type());
-                    })
-                    .or_insert_with(|| did.dial_info.address_type().into());
+            // Disqualify any nodes that don't speak all of the envelope versions we do
+            let peer_envelope_support = peer_info.node_info().envelope_support();
+            if own_peer_info
+                .node_info()
+                .envelope_support()
+                .iter()
+                .copied()
+                .any(|x| !peer_envelope_support.contains(&x))
+            {
+                return false;
             }
-            for pt in outbound_dif.protocol_type_set.iter() {
-                if let Some(ats) = address_type_mappings.get(&pt) {
-                    if *ats != AddressTypeSet::all() {
-                        return false;
-                    }
+            // Note: as of right now we don't need the relays to speak the same cryptography we do. Relays don't validate envelopes, they just forward them if they can.
+            // If this changes, we may want to have relays match our crypto kinds too.
+            // let peer_crypto_kinds = peer_info
+            //     .node_info()
+            //     .crypto_info_list()
+            //     .iter()
+            //     .map(|x| x.kind())
+            //     .collect::<HashSet<_>>();
+            // if own_peer_info
+            //     .node_info()
+            //     .crypto_info_list()
+            //     .iter()
+            //     .find(|x| !peer_crypto_kinds.contains(&x.kind()))
+            //     .is_some()
+            // {
+            //     return false;
+            // }
+
+            // Ensure there is a way to reach this relay
+            let mut directly_reachable = false;
+            for did in peer_info.node_info().dial_info_detail_list() {
+                if did.class.requires_signal() {
+                    continue;
                 }
+                // If this dial info can be contacted directly, then it is a relay candidate
+                if did.dial_info.matches_filter(&outbound_dif) {
+                    directly_reachable = true;
+                    break;
+                }
+            }
+
+            if !directly_reachable {
+                return false;
             }
 
             // Exclude any nodes that have our same network block
-            if own_node_info.node_is_on_same_ipblock(node_info, ip6_prefix_size) {
+            if own_peer_info
+                .node_info()
+                .is_on_same_ipblock(peer_info.node_info(), ip6_prefix_size)
+            {
                 return false;
             }
 

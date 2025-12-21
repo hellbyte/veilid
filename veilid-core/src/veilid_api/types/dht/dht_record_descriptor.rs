@@ -2,23 +2,18 @@ use super::*;
 
 /// DHT Record Descriptor
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    derive(Tsify),
-    tsify(from_wasm_abi, into_wasm_abi)
-)]
 #[must_use]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 pub struct DHTRecordDescriptor {
     /// DHT Key = Hash(ownerKeyKind) of: [ ownerKeyValue, schema ]
     #[schemars(with = "String")]
-    key: TypedRecordKey,
+    key: RecordKey,
     /// The public key of the owner
     #[schemars(with = "String")]
     owner: PublicKey,
     /// If this key is being created: Some(the secret key of the owner)
     /// If this key is just being opened: None
     #[schemars(with = "Option<String>")]
-    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), tsify(optional))]
     owner_secret: Option<SecretKey>,
     /// The schema in use associated with the key
     schema: DHTSchema,
@@ -26,11 +21,14 @@ pub struct DHTRecordDescriptor {
 
 impl DHTRecordDescriptor {
     pub(crate) fn new(
-        key: TypedRecordKey,
+        key: RecordKey,
         owner: PublicKey,
         owner_secret: Option<SecretKey>,
         schema: DHTSchema,
     ) -> Self {
+        if let Some(owner_secret) = &owner_secret {
+            assert_eq!(owner_secret.kind(), owner.kind());
+        }
         Self {
             key,
             owner,
@@ -38,20 +36,41 @@ impl DHTRecordDescriptor {
             schema,
         }
     }
-
-    pub fn key(&self) -> &TypedRecordKey {
+    pub fn ref_key(&self) -> &RecordKey {
         &self.key
     }
-    pub fn owner(&self) -> &PublicKey {
+    pub fn ref_owner(&self) -> &PublicKey {
         &self.owner
+    }
+    #[must_use]
+    pub fn ref_owner_secret(&self) -> Option<&SecretKey> {
+        self.owner_secret.as_ref()
+    }
+    pub fn ref_schema(&self) -> &DHTSchema {
+        &self.schema
+    }
+
+    pub fn key(&self) -> RecordKey {
+        self.key.clone()
+    }
+
+    pub fn owner(&self) -> PublicKey {
+        self.owner.clone()
     }
 
     #[must_use]
-    pub fn owner_secret(&self) -> Option<&SecretKey> {
-        self.owner_secret.as_ref()
+    pub fn owner_secret(&self) -> Option<SecretKey> {
+        self.owner_secret.clone()
     }
 
-    pub fn schema(&self) -> &DHTSchema {
-        &self.schema
+    pub fn schema(&self) -> DHTSchema {
+        self.schema.clone()
+    }
+
+    #[must_use]
+    pub fn owner_keypair(&self) -> Option<KeyPair> {
+        self.owner_secret
+            .as_ref()
+            .map(|s| KeyPair::new_from_parts(self.owner.clone(), s.ref_value().clone()))
     }
 }

@@ -32,22 +32,11 @@ pub(crate) enum RouteNode {
 }
 
 impl RouteNode {
-    pub fn validate(&self, crypto: &Crypto) -> VeilidAPIResult<()> {
-        match self {
-            RouteNode::NodeId(_) => Ok(()),
-            RouteNode::PeerInfo(pi) => pi.validate(crypto),
-        }
-    }
-
-    pub fn node_ref(
-        &self,
-        routing_table: &RoutingTable,
-        crypto_kind: CryptoKind,
-    ) -> Option<NodeRef> {
+    pub fn node_ref(&self, routing_table: &RoutingTable) -> Option<NodeRef> {
         match self {
             RouteNode::NodeId(id) => {
                 //
-                match routing_table.lookup_node_ref(TypedNodeId::new(crypto_kind, *id)) {
+                match routing_table.lookup_node_ref(id.clone()) {
                     Ok(nr) => nr,
                     Err(e) => {
                         veilid_log!(routing_table debug "failed to look up route node: {}", e);
@@ -68,15 +57,15 @@ impl RouteNode {
         }
     }
 
-    pub fn describe(&self, crypto_kind: CryptoKind) -> String {
+    pub fn describe(&self) -> String {
         match self {
             RouteNode::NodeId(id) => {
-                format!("{}", TypedNodeId::new(crypto_kind, *id))
+                format!("{}", id)
             }
-            RouteNode::PeerInfo(pi) => match pi.node_ids().get(crypto_kind) {
+            RouteNode::PeerInfo(pi) => match pi.node_ids().first() {
                 Some(id) => format!("{}", id),
                 None => {
-                    format!("({})?{}", crypto_kind, pi.node_ids())
+                    format!("?({})", pi.node_ids())
                 }
             },
         }
@@ -91,11 +80,6 @@ pub(crate) struct RouteHop {
     /// The encrypted blob to pass to the next hop as its data (None for stubs)
     pub next_hop: Option<RouteHopData>,
 }
-impl RouteHop {
-    pub fn validate(&self, crypto: &Crypto) -> VeilidAPIResult<()> {
-        self.node.validate(crypto)
-    }
-}
 
 /// The kind of hops a private route can have
 #[derive(Clone, Debug)]
@@ -108,39 +92,24 @@ pub(crate) enum PrivateRouteHops {
     Empty,
 }
 
-impl PrivateRouteHops {
-    pub fn validate(&self, crypto: &Crypto) -> VeilidAPIResult<()> {
-        match self {
-            PrivateRouteHops::FirstHop(rh) => rh.validate(crypto),
-            PrivateRouteHops::Data(_) => Ok(()),
-            PrivateRouteHops::Empty => Ok(()),
-        }
-    }
-}
 /// A private route for receiver privacy
 #[derive(Clone, Debug)]
 pub(crate) struct PrivateRoute {
     /// The public key used for the entire route
-    pub public_key: TypedPublicKey,
-    pub hop_count: u8,
+    pub public_key: PublicKey,
     pub hops: PrivateRouteHops,
 }
 
 impl PrivateRoute {
     /// Stub route is the form used when no privacy is required, but you need to specify the destination for a safety route
-    pub fn new_stub(public_key: TypedPublicKey, node: RouteNode) -> Self {
+    pub fn new_stub(public_key: PublicKey, node: RouteNode) -> Self {
         Self {
             public_key,
-            hop_count: 1,
             hops: PrivateRouteHops::FirstHop(Box::new(RouteHop {
                 node,
                 next_hop: None,
             })),
         }
-    }
-
-    pub fn validate(&self, crypto: &Crypto) -> VeilidAPIResult<()> {
-        self.hops.validate(crypto)
     }
 
     /// Check if this is a stub route
@@ -153,7 +122,7 @@ impl PrivateRoute {
 
     /// Get the crypto kind in use for this route
     pub fn crypto_kind(&self) -> CryptoKind {
-        self.public_key.kind
+        self.public_key.kind()
     }
 
     /// Remove the first unencrypted hop if possible
@@ -161,13 +130,6 @@ impl PrivateRoute {
         match &mut self.hops {
             PrivateRouteHops::FirstHop(first_hop) => {
                 let first_hop_node = first_hop.node.clone();
-
-                // Reduce hop count
-                if self.hop_count > 0 {
-                    self.hop_count -= 1;
-                } else {
-                    error!("hop count should not be 0 for first hop");
-                }
 
                 // Go to next hop
                 self.hops = match first_hop.next_hop.take() {
@@ -182,15 +144,15 @@ impl PrivateRoute {
         }
     }
 
-    pub fn first_hop_node_id(&self) -> Option<TypedNodeId> {
+    pub fn first_hop_node_id(&self) -> Option<NodeId> {
         let PrivateRouteHops::FirstHop(pr_first_hop) = &self.hops else {
             return None;
         };
 
         // Get the safety route to use from the spec
         Some(match &pr_first_hop.node {
-            RouteNode::NodeId(n) => TypedNodeId::new(self.public_key.kind, *n),
-            RouteNode::PeerInfo(p) => p.node_ids().get(self.public_key.kind).unwrap(),
+            RouteNode::NodeId(n) => n.clone(),
+            RouteNode::PeerInfo(p) => p.node_ids().get(self.public_key.kind()).unwrap(),
         })
     }
 }
@@ -199,9 +161,8 @@ impl fmt::Display for PrivateRoute {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "PR({:?}+{}{})",
+            "PR({:?}+{})",
             self.public_key,
-            self.hop_count,
             match &self.hops {
                 PrivateRouteHops::FirstHop(_) => {
                     format!(
@@ -232,20 +193,18 @@ pub(crate) enum SafetyRouteHops {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SafetyRoute {
-    pub public_key: TypedPublicKey,
-    pub hop_count: u8,
+    pub public_key: PublicKey,
     pub hops: SafetyRouteHops,
 }
 
 impl SafetyRoute {
     /// Stub route is the form used when no privacy is required, but you need to directly contact a private route
-    pub fn new_stub(public_key: TypedPublicKey, private_route: PrivateRoute) -> Self {
+    pub fn new_stub(public_key: PublicKey, private_route: PrivateRoute) -> Self {
         // First hop should have already been popped off for stubbed safety routes since
         // we are sending directly to the first hop
         assert!(matches!(private_route.hops, PrivateRouteHops::Data(_)));
         Self {
             public_key,
-            hop_count: 0,
             hops: SafetyRouteHops::Private(private_route),
         }
     }
@@ -257,7 +216,7 @@ impl SafetyRoute {
 
     /// Get the crypto kind in use for this route
     pub fn crypto_kind(&self) -> CryptoKind {
-        self.public_key.kind
+        self.public_key.kind()
     }
 }
 
@@ -265,9 +224,8 @@ impl fmt::Display for SafetyRoute {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "SR({:?}+{}{})",
+            "SR({:?}+{})",
             self.public_key,
-            self.hop_count,
             match &self.hops {
                 SafetyRouteHops::Data(_) => "".to_owned(),
                 SafetyRouteHops::Private(p) => format!("->{}", p),

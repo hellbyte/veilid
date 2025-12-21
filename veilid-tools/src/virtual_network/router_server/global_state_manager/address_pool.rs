@@ -54,21 +54,17 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
     }
 
     pub fn find_scope_v4(&self, allocation: Ipv4Net) -> Option<Ipv4Net> {
-        for x in &self.scope_v4 {
-            if x.contains(&allocation) {
-                return Some(*x);
-            }
-        }
-        None
+        self.scope_v4
+            .iter()
+            .find(|&x| x.contains(&allocation))
+            .copied()
     }
 
     pub fn find_scope_v6(&self, allocation: Ipv6Net) -> Option<Ipv6Net> {
-        for x in &self.scope_v6 {
-            if x.contains(&allocation) {
-                return Some(*x);
-            }
-        }
-        None
+        self.scope_v6
+            .iter()
+            .find(|&x| x.contains(&allocation))
+            .copied()
     }
 
     pub fn can_allocate_v6(&self, prefix: u8) -> GlobalStateManagerResult<bool> {

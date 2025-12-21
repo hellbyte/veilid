@@ -15,9 +15,7 @@ impl NetworkManager {
     /// however this does work over straight UDP and TCP protocols as well.
     #[instrument(level = "trace", target = "net", skip(self), ret, err)]
     pub async fn handle_boot_v1_request(&self, flow: Flow) -> EyreResult<NetworkResult<()>> {
-        let bootstraps = self
-            .config()
-            .with(|c| c.network.routing_table.bootstrap.clone());
+        let bootstraps = self.config().network.routing_table.bootstrap.clone();
 
         // Don't bother if bootstraps aren't configured
         if bootstraps.is_empty() {
@@ -73,11 +71,16 @@ impl NetworkManager {
         let peers: Vec<Arc<PeerInfo>> = bsrecs
             .into_iter()
             .filter_map(|bsrec| {
-                if routing_table.matches_own_node_id(bsrec.node_ids()) {
+                if routing_table.matches_own_public_key(bsrec.public_keys()) {
                     routing_table.get_published_peer_info(routing_domain)
-                } else if let Some(best_node_id) = bsrec.node_ids().best() {
-                    if let Some(nr) = routing_table.lookup_node_ref(best_node_id).ok().flatten() {
-                        nr.get_peer_info(routing_domain)
+                } else if let Some(best_public_key) = bsrec.public_keys().first() {
+                    if let Ok(best_node_id) = routing_table.generate_node_id(best_public_key) {
+                        if let Some(nr) = routing_table.lookup_node_ref(best_node_id).ok().flatten()
+                        {
+                            nr.get_peer_info(routing_domain)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }

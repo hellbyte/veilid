@@ -6,7 +6,8 @@ impl_veilid_log_facility!("fanout");
 struct FanoutContext<'a> {
     fanout_queue: FanoutQueue<'a>,
     result: FanoutResult,
-    done: bool,
+    done: FanoutDoneDisposition,
+    stop_source: Option<StopSource>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -87,8 +88,16 @@ pub struct FanoutCallOutput {
     pub disposition: FanoutCallDisposition,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FanoutQueueMode {
+    ThrottleAtConsensus,
+    Unthrottled,
+}
+
+const THROTTLE_DURATION_PERCENT: u64 = 33;
+
 /// The return type of the fanout call routine
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum FanoutCallDisposition {
     /// The call routine timed out
     Timeout,
@@ -111,18 +120,36 @@ pub enum FanoutCallDisposition {
     AcceptedNewer,
 }
 
+/// The return type of the fanout done routine
+#[derive(Debug, Copy, Clone)]
+pub enum FanoutDoneDisposition {
+    /// Finish immediately without completing operations
+    DoneEarly,
+    /// Finish when all operations are complete
+    Done,
+    /// Not done yet
+    NotDone,
+}
+
+/// The return type of a fanout processor lane
+enum FanoutProcessorReturn {
+    DoneEarly,
+    Done,
+    Tick,
+}
+
 pub type FanoutCallResult = Result<FanoutCallOutput, RPCError>;
-pub type FanoutNodeInfoFilter = Arc<dyn (Fn(&[TypedNodeId], &NodeInfo) -> bool) + Send + Sync>;
-pub type FanoutCheckDone = Arc<dyn (Fn(&FanoutResult) -> bool) + Send + Sync>;
+pub type FanoutPeerInfoFilter = Arc<dyn (Fn(Arc<PeerInfo>) -> bool) + Send + Sync>;
+pub type FanoutCheckDone = Arc<dyn (Fn(&FanoutResult) -> FanoutDoneDisposition) + Send + Sync>;
 pub type FanoutCallRoutine =
     Arc<dyn (Fn(NodeRef) -> PinBoxFutureStatic<FanoutCallResult>) + Send + Sync>;
 
-pub fn empty_fanout_node_info_filter() -> FanoutNodeInfoFilter {
-    Arc::new(|_, _| true)
+pub fn empty_fanout_peer_info_filter() -> FanoutPeerInfoFilter {
+    Arc::new(|_| true)
 }
 
-pub fn capability_fanout_node_info_filter(caps: Vec<VeilidCapability>) -> FanoutNodeInfoFilter {
-    Arc::new(move |_, ni| ni.has_all_capabilities(&caps))
+pub fn capability_fanout_peer_info_filter(caps: Vec<VeilidCapability>) -> FanoutPeerInfoFilter {
+    Arc::new(move |pi| pi.node_info().has_all_capabilities(&caps))
 }
 
 /// Contains the logic for generically searching the Veilid routing table for a set of nodes and applying an
@@ -137,21 +164,21 @@ pub fn capability_fanout_node_info_filter(caps: Vec<VeilidCapability>) -> Fanout
 /// The algorithm is parameterized by:
 ///  * 'node_count' - the number of nodes to keep in the closest_nodes set
 ///  * 'fanout' - the number of concurrent calls being processed at the same time
-///  * 'consensus_count' - the number of nodes in the processed queue that need to be in the
-///    'Accepted' state before we terminate the fanout early.
+///  * 'consensus_count' - the number of nodes in the processed queue that need to be in the 'Accepted' state before we terminate the fanout early.
 ///
 /// The algorithm returns early if 'check_done' returns some value, or if an error is found during the process.
 /// If the algorithm times out, a Timeout result is returned, however operations will still have been performed and a
 /// timeout is not necessarily indicative of an algorithmic 'failure', just that no definitive stopping condition was found
 /// in the given time
 pub(crate) struct FanoutCall<'a> {
+    name: String,
     routing_table: &'a RoutingTable,
-    hash_coordinate: TypedHashDigest,
+    hash_coordinate: HashCoordinate,
     node_count: usize,
     fanout_tasks: usize,
     consensus_count: usize,
-    timeout_us: TimestampDuration,
-    node_info_filter: FanoutNodeInfoFilter,
+    timeout: TimestampDuration,
+    peer_info_filter: FanoutPeerInfoFilter,
     call_routine: FanoutCallRoutine,
     check_done: FanoutCheckDone,
 }
@@ -165,34 +192,36 @@ impl VeilidComponentRegistryAccessor for FanoutCall<'_> {
 impl<'a> FanoutCall<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        name: String,
         routing_table: &'a RoutingTable,
-        hash_coordinate: TypedHashDigest,
+        hash_coordinate: HashCoordinate,
         node_count: usize,
         fanout_tasks: usize,
         consensus_count: usize,
-        timeout_us: TimestampDuration,
-        node_info_filter: FanoutNodeInfoFilter,
+        timeout: TimestampDuration,
+        peer_info_filter: FanoutPeerInfoFilter,
         call_routine: FanoutCallRoutine,
         check_done: FanoutCheckDone,
     ) -> Self {
         Self {
+            name,
             routing_table,
             hash_coordinate,
             node_count,
             fanout_tasks,
             consensus_count,
-            timeout_us,
-            node_info_filter,
+            timeout,
+            peer_info_filter,
             call_routine,
             check_done,
         }
     }
 
     #[instrument(level = "trace", target = "fanout", skip_all)]
-    fn evaluate_done(&self, ctx: &mut FanoutContext) -> bool {
+    fn evaluate_done(&self, ctx: &mut FanoutContext) -> FanoutDoneDisposition {
         // If we already finished, just return
-        if ctx.done {
-            return true;
+        if !matches!(ctx.done, FanoutDoneDisposition::NotDone) {
+            return ctx.done;
         }
 
         // Calculate fanout result so far
@@ -203,24 +232,24 @@ impl<'a> FanoutCall<'a> {
             let mut value_nodes: Vec<NodeRef> = vec![];
             for sn in sorted_nodes {
                 let node = nodes.get(sn).unwrap();
-                match node.status {
-                    FanoutNodeStatus::Queued | FanoutNodeStatus::InProgress => {
+                match node.status.stage() {
+                    FanoutNodeStage::Queued | FanoutNodeStage::InProgress => {
                         // Still have a closer node to do before reaching consensus,
                         // or are doing it still, then wait until those are done
                         if consensus.is_none() {
                             consensus = Some(false);
                         }
                     }
-                    FanoutNodeStatus::Timeout
-                    | FanoutNodeStatus::Rejected
-                    | FanoutNodeStatus::Disqualified => {
+                    FanoutNodeStage::Timeout
+                    | FanoutNodeStage::Rejected
+                    | FanoutNodeStage::Disqualified => {
                         // Node does not count toward consensus or value node list
                     }
-                    FanoutNodeStatus::Stale => {
+                    FanoutNodeStage::Stale => {
                         // Node does not count toward consensus but does count toward value node list
                         value_nodes.push(node.node_ref.clone());
                     }
-                    FanoutNodeStatus::Accepted => {
+                    FanoutNodeStage::Accepted => {
                         // Node counts toward consensus and value node list
                         value_nodes.push(node.node_ref.clone());
 
@@ -255,31 +284,46 @@ impl<'a> FanoutCall<'a> {
         let done = (self.check_done)(&fanout_result);
         ctx.result = fanout_result;
         ctx.done = done;
+        if !matches!(done, FanoutDoneDisposition::NotDone) {
+            drop(ctx.stop_source.take())
+        }
         done
     }
 
     #[instrument(level = "trace", target = "fanout", skip_all)]
-    async fn fanout_processor<'b>(
+    async fn fanout_processor(
         &self,
-        context: &Mutex<FanoutContext<'b>>,
-    ) -> Result<bool, RPCError> {
-        // Make a work request channel
-        let (work_sender, work_receiver) = flume::bounded(1);
+        lane_name: String,
+        context: &Mutex<FanoutContext<'_>>,
+    ) -> Result<FanoutProcessorReturn, RPCError> {
+        // Make a stop token to break out when we're done
+        let stop_token = context
+            .lock()
+            .stop_source
+            .as_ref()
+            .ok_or_else(|| RPCError::internal("should have stop source"))?
+            .token();
 
         // Loop until we have a result or are done
         loop {
             // Put in a work request
-            {
+            let work_receiver = {
                 let mut context_locked = context.lock();
+                veilid_log!(self debug "{}[{}]: Requesting work", self.name, lane_name);
                 context_locked
                     .fanout_queue
-                    .request_work(work_sender.clone());
-            }
+                    .request_work(lane_name.clone())?
+            };
 
             // Wait around for some work to do
-            let Ok(next_node) = work_receiver.recv_async().await else {
-                // If we don't have a node to process, stop fanning out
-                break Ok(false);
+            let Ok(Ok(next_node)) = work_receiver
+                .recv_async()
+                .timeout_at(stop_token.clone())
+                .await
+            else {
+                // If we don't have a node to process, or we are being told to stop, stop fanning out
+                veilid_log!(self debug "{}[{}]: Lane done", self.name, lane_name);
+                break Ok(FanoutProcessorReturn::Done);
             };
 
             // Do the call for this node
@@ -290,11 +334,7 @@ impl<'a> FanoutCall<'a> {
                         .peer_info_list
                         .into_iter()
                         .filter(|pi| {
-                            let node_ids = pi.node_ids().to_vec();
-                            if !(self.node_info_filter)(
-                                &node_ids,
-                                pi.signed_node_info().node_info(),
-                            ) {
+                            if !(self.peer_info_filter)(pi.clone()) {
                                 return false;
                             }
                             true
@@ -310,46 +350,56 @@ impl<'a> FanoutCall<'a> {
                     // Update queue
                     {
                         let mut context_locked = context.lock();
-                        context_locked.fanout_queue.add(&new_nodes);
+                        let cur_ts = Timestamp::now_non_decreasing();
 
                         // Process disposition of the output of the fanout call routine
                         match output.disposition {
                             FanoutCallDisposition::Timeout => {
-                                context_locked.fanout_queue.timeout(next_node);
+                                context_locked.fanout_queue.timeout(next_node, cur_ts);
                             }
                             FanoutCallDisposition::Rejected => {
-                                context_locked.fanout_queue.rejected(next_node);
+                                context_locked.fanout_queue.rejected(next_node, cur_ts);
                             }
                             FanoutCallDisposition::Accepted => {
-                                context_locked.fanout_queue.accepted(next_node);
+                                context_locked.fanout_queue.accepted(next_node, cur_ts);
                             }
                             FanoutCallDisposition::AcceptedNewerRestart => {
-                                context_locked.fanout_queue.all_accepted_to_queued();
-                                context_locked.fanout_queue.accepted(next_node);
+                                context_locked.fanout_queue.all_accepted_to_queued(cur_ts);
+                                context_locked.fanout_queue.accepted(next_node, cur_ts);
                             }
                             FanoutCallDisposition::AcceptedNewer => {
-                                context_locked.fanout_queue.all_accepted_to_stale();
-                                context_locked.fanout_queue.accepted(next_node);
+                                context_locked.fanout_queue.all_accepted_to_stale(cur_ts);
+                                context_locked.fanout_queue.accepted(next_node, cur_ts);
                             }
                             FanoutCallDisposition::Invalid => {
-                                // Do nothing with invalid fanout calls
+                                context_locked.fanout_queue.disqualified(next_node, cur_ts);
                             }
                             FanoutCallDisposition::Stale => {
-                                context_locked.fanout_queue.stale(next_node);
+                                context_locked.fanout_queue.stale(next_node, cur_ts);
                             }
                         }
 
-                        // See if we're done before going back for more processing
-                        if self.evaluate_done(&mut context_locked) {
-                            break Ok(true);
-                        }
+                        // Add any new nodes
+                        context_locked.fanout_queue.update(&new_nodes, cur_ts);
 
-                        // We modified the queue so we may have more work to do now,
-                        // tell the queue it should send more work to the workers
-                        context_locked.fanout_queue.send_more_work();
+                        // See if we're done before going back for more processing
+                        match self.evaluate_done(&mut context_locked) {
+                            FanoutDoneDisposition::DoneEarly => {
+                                veilid_log!(self debug "{}[{}]: Fanout done, terminating all other lanes", self.name, lane_name);
+                                break Ok(FanoutProcessorReturn::DoneEarly);
+                            }
+                            FanoutDoneDisposition::Done => {
+                                veilid_log!(self debug "{}[{}]: Fanout done, letting other lanes complete", self.name, lane_name);
+                                break Ok(FanoutProcessorReturn::Done);
+                            }
+                            FanoutDoneDisposition::NotDone => {
+                                veilid_log!(self debug "{}[{}]: Work done, continuing lane processing", self.name, lane_name);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
+                    veilid_log!(self debug "{}[{}]: Error occurred: {}", self.name, lane_name, e);
                     break Err(e);
                 }
             };
@@ -357,12 +407,18 @@ impl<'a> FanoutCall<'a> {
     }
 
     #[instrument(level = "trace", target = "fanout", skip_all)]
-    fn init_closest_nodes(&self, context: &mut FanoutContext) -> Result<(), RPCError> {
+    fn init_closest_nodes(
+        &self,
+        context: &mut FanoutContext,
+        cur_ts: Timestamp,
+    ) -> Result<(), RPCError> {
         // Get the 'node_count' closest nodes to the key out of our routing table
         let closest_nodes = {
-            let node_info_filter = self.node_info_filter.clone();
+            let peer_info_filter = self.peer_info_filter.clone();
             let filter = Box::new(
-                move |rti: &RoutingTableInner, opt_entry: Option<Arc<BucketEntry>>| {
+                move |rti: &RoutingTableInner,
+                      opt_entry: Option<Arc<BucketEntry>>,
+                      _cur_ts: Timestamp| {
                     // Exclude our own node
                     if opt_entry.is_none() {
                         return false;
@@ -371,19 +427,16 @@ impl<'a> FanoutCall<'a> {
 
                     // Filter entries
                     entry.with(rti, |_rti, e| {
-                        let Some(signed_node_info) =
-                            e.signed_node_info(RoutingDomain::PublicInternet)
-                        else {
+                        let Some(peer_info) = e.get_peer_info(RoutingDomain::PublicInternet) else {
                             return false;
                         };
                         // Ensure only things that are valid/signed in the PublicInternet domain are returned
-                        if !signed_node_info.has_any_signature() {
+                        if peer_info.signatures().is_empty() {
                             return false;
                         }
 
                         // Check our node info filter
-                        let node_ids = e.node_ids().to_vec();
-                        if !(node_info_filter)(&node_ids, signed_node_info.node_info()) {
+                        if !(peer_info_filter)(peer_info.clone()) {
                             return false;
                         }
 
@@ -400,76 +453,105 @@ impl<'a> FanoutCall<'a> {
             self.routing_table
                 .find_preferred_closest_nodes(
                     self.node_count,
-                    self.hash_coordinate,
+                    self.hash_coordinate.clone(),
                     filters,
                     transform,
                 )
                 .map_err(RPCError::invalid_format)?
         };
-        context.fanout_queue.add(&closest_nodes);
+
+        context.fanout_queue.update(&closest_nodes, cur_ts);
 
         Ok(())
     }
 
     #[instrument(level = "trace", target = "fanout", skip_all)]
-    pub async fn run(&self, init_fanout_queue: Vec<NodeRef>) -> Result<FanoutResult, RPCError> {
+    pub async fn run(
+        &self,
+        init_fanout_queue: Vec<NodeRef>,
+        fanout_queue_mode: FanoutQueueMode,
+    ) -> Result<FanoutResult, RPCError> {
         // Create context for this run
-        let crypto = self.routing_table.crypto();
-        let Some(vcrypto) = crypto.get(self.hash_coordinate.kind) else {
-            return Err(RPCError::internal(
-                "should not try this on crypto we don't support",
-            ));
-        };
-        let node_sort = Box::new(
-            |a_key: &CryptoTyped<NodeId>, b_key: &CryptoTyped<NodeId>| -> core::cmp::Ordering {
-                let da =
-                    vcrypto.distance(&HashDigest::from(a_key.value), &self.hash_coordinate.value);
-                let db =
-                    vcrypto.distance(&HashDigest::from(b_key.value), &self.hash_coordinate.value);
-                da.cmp(&db)
-            },
-        );
+        let node_sort = Box::new(make_closest_node_id_sort(self.hash_coordinate.clone()));
         let context = Arc::new(Mutex::new(FanoutContext {
             fanout_queue: FanoutQueue::new(
+                self.name.clone(),
                 self.routing_table.registry(),
-                self.hash_coordinate.kind,
+                self.hash_coordinate.kind(),
                 node_sort,
                 self.consensus_count,
+                match fanout_queue_mode {
+                    FanoutQueueMode::ThrottleAtConsensus => Some(
+                        self.timeout
+                            .saturating_mul(THROTTLE_DURATION_PERCENT)
+                            .div(100),
+                    ),
+                    FanoutQueueMode::Unthrottled => None,
+                },
             ),
             result: FanoutResult {
                 kind: FanoutResultKind::Incomplete,
                 consensus_nodes: vec![],
                 value_nodes: vec![],
             },
-            done: false,
+            done: FanoutDoneDisposition::NotDone,
+            stop_source: Some(StopSource::new()),
         }));
 
         // Get timeout in milliseconds
-        let timeout_ms = us_to_ms(self.timeout_us.as_u64()).map_err(RPCError::internal)?;
+        let timeout_ms = self.timeout.millis_u32().map_err(RPCError::internal)?;
 
         // Initialize closest nodes list
         {
             let context_locked = &mut *context.lock();
-            self.init_closest_nodes(context_locked)?;
+            let cur_ts = Timestamp::now_non_decreasing();
+
+            self.init_closest_nodes(context_locked, cur_ts)?;
 
             // Ensure we include the most recent nodes
-            context_locked.fanout_queue.add(&init_fanout_queue);
+            context_locked
+                .fanout_queue
+                .update(&init_fanout_queue, cur_ts);
 
             // Do a quick check to see if we're already done
-            if self.evaluate_done(context_locked) {
+            if !matches!(
+                self.evaluate_done(context_locked),
+                FanoutDoneDisposition::NotDone
+            ) {
                 return Ok(core::mem::take(&mut context_locked.result));
             }
         }
+
+        // Ticker to pump the queue
+        let stop_token = context
+            .lock()
+            .stop_source
+            .as_ref()
+            .ok_or_else(|| RPCError::internal("should have stop source"))?
+            .token();
+        let make_tick_future = || {
+            let stop_token = stop_token.clone();
+            pin_dyn_future!(async move {
+                if sleep(100).timeout_at(stop_token).await.is_err() {
+                    return Ok(FanoutProcessorReturn::Done);
+                }
+                Ok(FanoutProcessorReturn::Tick)
+            })
+        };
 
         // If not, do the fanout
         let mut unord = FuturesUnordered::new();
         {
             // Spin up 'fanout' tasks to process the fanout
-            for _ in 0..self.fanout_tasks {
-                let h = self.fanout_processor(&context);
-                unord.push(h);
+            for n in 0..self.fanout_tasks {
+                unord.push(pin_dyn_future!(
+                    self.fanout_processor(format!("lane#{}", n), &context)
+                ));
             }
+            // Add the initial timer tick task
+            unord.push(make_tick_future());
         }
+
         // Wait for them to complete
         match timeout(
             timeout_ms,
@@ -477,9 +559,22 @@ impl<'a> FanoutCall<'a> {
                 loop {
                     if let Some(res) = unord.next().in_current_span().await {
                         match res {
-                            Ok(is_done) => {
-                                if is_done {
-                                    break Ok(());
+                            Ok(FanoutProcessorReturn::DoneEarly) => {
+                                // Stop all lanes immediately
+                                break Ok(());
+                            }
+                            Ok(FanoutProcessorReturn::Done) => {
+                                // Lane finished but trying to finish other lanes
+                            }
+                            Ok(FanoutProcessorReturn::Tick) => {
+                                // Timer tick to push more work to the processor lanes
+                                let context_locked = &mut *context.lock();
+                                let cur_ts = Timestamp::now_non_decreasing();
+                                context_locked.fanout_queue.send_more_work(cur_ts);
+
+                                // Set up next tick if there's still stuff processing
+                                if !unord.is_empty() {
+                                    unord.push(make_tick_future());
                                 }
                             }
                             Err(e) => {
@@ -499,8 +594,10 @@ impl<'a> FanoutCall<'a> {
                 // Finished, either by exhaustion or consensus,
                 // time to return whatever value we came up with
                 let context_locked = &mut *context.lock();
+
                 // Print final queue
-                veilid_log!(self debug "Finished FanoutQueue: {}", context_locked.fanout_queue);
+                veilid_log!(self debug "{}: Finished FanoutQueue:\n{}", self.name, context_locked.fanout_queue);
+
                 return Ok(core::mem::take(&mut context_locked.result));
             }
             Ok(Err(e)) => {
@@ -510,13 +607,19 @@ impl<'a> FanoutCall<'a> {
             Err(_) => {
                 // Timeout, do one last evaluate with remaining nodes in timeout state
                 let context_locked = &mut *context.lock();
-                context_locked.fanout_queue.all_unfinished_to_timeout();
+                let cur_ts = Timestamp::now_non_decreasing();
+                context_locked
+                    .fanout_queue
+                    .all_unfinished_to_timeout(cur_ts);
 
                 // Print final queue
-                veilid_log!(self debug "Timeout FanoutQueue: {}", context_locked.fanout_queue);
+                veilid_log!(self debug "{}: Timeout FanoutQueue:\n{}", self.name, context_locked.fanout_queue);
 
                 // Final evaluate
-                if self.evaluate_done(context_locked) {
+                if !matches!(
+                    self.evaluate_done(context_locked),
+                    FanoutDoneDisposition::NotDone,
+                ) {
                     // Last-chance value returned at timeout
                     return Ok(core::mem::take(&mut context_locked.result));
                 }

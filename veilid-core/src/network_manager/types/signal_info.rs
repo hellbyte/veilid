@@ -21,29 +21,35 @@ pub(crate) enum SignalInfo {
 }
 
 impl SignalInfo {
-    pub fn validate(&self, crypto: &Crypto) -> Result<(), RPCError> {
+    pub fn validate(&self) -> Result<(), RPCError> {
         match self {
-            SignalInfo::HolePunch { receipt, peer_info } => {
-                if receipt.len() < MIN_RECEIPT_SIZE {
+            SignalInfo::HolePunch {
+                receipt,
+                peer_info: _,
+            } => {
+                if receipt.len() < RCP0_MIN_RECEIPT_SIZE {
                     return Err(RPCError::protocol("SignalInfo HolePunch receipt too short"));
                 }
-                if receipt.len() > MAX_RECEIPT_SIZE {
+                if receipt.len() > RCP0_MAX_RECEIPT_SIZE {
                     return Err(RPCError::protocol("SignalInfo HolePunch receipt too long"));
                 }
-                peer_info.validate(crypto).map_err(RPCError::protocol)
+                Ok(())
             }
-            SignalInfo::ReverseConnect { receipt, peer_info } => {
-                if receipt.len() < MIN_RECEIPT_SIZE {
+            SignalInfo::ReverseConnect {
+                receipt,
+                peer_info: _,
+            } => {
+                if receipt.len() < RCP0_MIN_RECEIPT_SIZE {
                     return Err(RPCError::protocol(
                         "SignalInfo ReverseConnect receipt too short",
                     ));
                 }
-                if receipt.len() > MAX_RECEIPT_SIZE {
+                if receipt.len() > RCP0_MAX_RECEIPT_SIZE {
                     return Err(RPCError::protocol(
                         "SignalInfo ReverseConnect receipt too long",
                     ));
                 }
-                peer_info.validate(crypto).map_err(RPCError::protocol)
+                Ok(())
             }
         }
     }

@@ -11,7 +11,7 @@ pub(crate) struct FilteredNodeRef {
     track_id: usize,
 }
 
-impl_veilid_component_registry_accessor!(FilteredNodeRef);
+impl_veilid_component_accessors!(FilteredNodeRef);
 
 impl FilteredNodeRef {
     pub fn new(
@@ -36,18 +36,30 @@ impl FilteredNodeRef {
         NodeRef::new(self.registry(), self.entry.clone())
     }
 
-    pub fn filtered_clone(&self, filter: NodeRefFilter) -> FilteredNodeRef {
+    pub fn merge_filter_clone(&self, filter: NodeRefFilter) -> FilteredNodeRef {
         let mut out = self.clone();
         out.merge_filter(filter);
         out
     }
 
-    pub fn sequencing_clone(&self, sequencing: Sequencing) -> FilteredNodeRef {
+    pub fn with_sequencing(&self, sequencing: Sequencing) -> FilteredNodeRef {
         FilteredNodeRef::new(
             self.registry.clone(),
             self.entry.clone(),
             self.filter(),
             sequencing,
+        )
+    }
+    pub fn with_routing_domain<R: Into<RoutingDomainSet>>(
+        &self,
+        routing_domain_set: R,
+    ) -> FilteredNodeRef {
+        FilteredNodeRef::new(
+            self.registry.clone(),
+            self.entry.clone(),
+            self.filter()
+                .with_routing_domain_set(routing_domain_set.into()),
+            self.sequencing(),
         )
     }
 
@@ -70,6 +82,67 @@ impl FilteredNodeRef {
 
     pub fn set_sequencing(&mut self, sequencing: Sequencing) {
         self.sequencing = sequencing;
+    }
+
+    pub fn parse<S: AsRef<str>>(
+        routing_table: &RoutingTable,
+        s: S,
+    ) -> VeilidAPIResult<Option<Self>> {
+        let text = s.as_ref();
+
+        // NodeRefFilter mods
+        let (text, mods) = text
+            .split_once('/')
+            .map(|x| (x.0, Some(x.1)))
+            .unwrap_or((text, None));
+        let filter = match mods {
+            Some(mods) => Some(NodeRefFilter::from_str(mods)?),
+            None => None,
+        };
+
+        // Sequencing
+        let (text, seq) = if let Some((first, second)) = text.split_once('+') {
+            let seq = Sequencing::from_str(second)?;
+            (first, Some(seq))
+        } else {
+            (text, None)
+        };
+
+        // NodeId
+        if text.is_empty() {
+            apibail_parse_error!(
+                "FilteredNodeRef::parse missing node id",
+                s.as_ref().to_string()
+            );
+        }
+        let nr = if let Ok(key) = BareNodeId::from_str(text) {
+            routing_table
+                .lookup_any_node_ref(key)
+                .map_err(VeilidAPIError::internal)?
+        } else if let Ok(node_id) = NodeId::from_str(text) {
+            routing_table
+                .lookup_node_ref(node_id)
+                .map_err(VeilidAPIError::internal)?
+        } else {
+            apibail_parse_error!(
+                "FilteredNodeRef::parse invalid node id",
+                s.as_ref().to_string()
+            );
+        };
+        let Some(nr) = nr else { return Ok(None) };
+
+        // Filter the noderef
+        let nrf = if let Some(filter) = filter {
+            nr.custom_filtered(filter)
+        } else {
+            nr.default_filtered()
+        };
+        let opt_nrf = if let Some(seq) = seq {
+            Some(nrf.with_sequencing(seq))
+        } else {
+            Some(nrf)
+        };
+        Ok(opt_nrf)
     }
 }
 
@@ -119,24 +192,6 @@ impl NodeRefOperateTrait for FilteredNodeRef {
         let inner = &mut *routing_table.inner.write();
         self.entry.with_mut(inner, f)
     }
-
-    fn with_inner<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&RoutingTableInner) -> T,
-    {
-        let routing_table = self.registry.routing_table();
-        let inner = &*routing_table.inner.read();
-        f(inner)
-    }
-
-    fn with_inner_mut<T, F>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut RoutingTableInner) -> T,
-    {
-        let routing_table = self.registry.routing_table();
-        let inner = &mut *routing_table.inner.write();
-        f(inner)
-    }
 }
 
 impl NodeRefCommonTrait for FilteredNodeRef {}
@@ -158,12 +213,29 @@ impl Clone for FilteredNodeRef {
 
 impl fmt::Display for FilteredNodeRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(best_node_id) = self.entry.with_inner(|e| e.best_node_id()) {
-            return write!(f, "{}", best_node_id);
+        let node_id_str = if let Some(best_node_id) = self.entry.with_inner(|e| e.best_node_id()) {
+            best_node_id.to_string()
         } else if let Some(node_id) = self.entry.with_inner(|e| e.node_ids().first().cloned()) {
-            return write!(f, "{}", node_id);
+            node_id.to_string()
+        } else {
+            "*ERROR*".to_string()
+        };
+
+        let mut out = node_id_str;
+
+        let sstr = self.sequencing.to_string();
+        if !sstr.is_empty() {
+            out += "+";
+            out += &sstr;
         }
-        write!(f, "*NONE*")
+
+        let fstr = self.filter.to_string();
+        if !fstr.is_empty() {
+            out += "/";
+            out += &fstr;
+        }
+
+        write!(f, "{}", out)
     }
 }
 

@@ -16,9 +16,9 @@ async def test_connect(api_connection: veilid.VeilidAPI):
 
 
 @pytest.mark.asyncio
-async def test_get_node_id(api_connection: veilid.VeilidAPI):
+async def test_get_node_ids(api_connection: veilid.VeilidAPI):
     state = await api_connection.get_state()
-    node_ids = state.config.config.network.routing_table.node_id
+    node_ids = state.network.node_ids
 
     assert len(node_ids) >= 1
 

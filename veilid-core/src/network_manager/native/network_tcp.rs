@@ -139,12 +139,12 @@ impl Network {
 
         if let Err(e) = set_tcp_stream_linger(&tcp_stream, Some(core::time::Duration::from_secs(0)))
         {
-            veilid_log!(self debug "Couldn't set TCP linger: {}", e);
+            veilid_log!(self debug "Couldn't set TCP linger: {} on {:?} -> {:?}", e, peer_addr, local_addr);
             return;
         }
 
         if let Err(e) = tcp_stream.set_nodelay(true) {
-            veilid_log!(self debug "Couldn't set TCP nodelay: {}", e);
+            veilid_log!(self debug "Couldn't set TCP nodelay: {} on {:?} -> {:?}", e, peer_addr, local_addr);
             return;
         }
 
@@ -224,13 +224,9 @@ impl Network {
     #[instrument(level = "trace", skip_all)]
     async fn spawn_socket_listener(&self, addr: SocketAddr) -> EyreResult<bool> {
         // Get config
-        let (connection_initial_timeout_ms, tls_connection_initial_timeout_ms) =
-            self.config().with(|c| {
-                (
-                    c.network.connection_initial_timeout_ms,
-                    c.network.tls.connection_initial_timeout_ms,
-                )
-            });
+        let config = self.config();
+        let connection_initial_timeout_ms = config.network.connection_initial_timeout_ms;
+        let tls_connection_initial_timeout_ms = config.network.tls.connection_initial_timeout_ms;
 
         // Create a shared socket and bind it once we have determined the port is free
         let Some(listener) = bind_async_tcp_listener(addr)? else {

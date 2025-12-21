@@ -25,11 +25,11 @@ pub(crate) trait VeilidComponent:
 pub(crate) trait VeilidComponentRegistryAccessor {
     fn registry(&self) -> VeilidComponentRegistry;
 
-    fn config(&self) -> VeilidStartupOptions {
-        self.registry().config.clone()
+    fn config(&self) -> Arc<VeilidConfig> {
+        self.registry().startup_options.config()
     }
     fn update_callback(&self) -> UpdateCallback {
-        self.registry().config.update_callback()
+        self.registry().startup_options.update_callback()
     }
     fn event_bus(&self) -> EventBus {
         self.registry().event_bus.clone()
@@ -65,7 +65,7 @@ struct VeilidComponentRegistryInner {
 #[derive(Clone, Debug)]
 pub(crate) struct VeilidComponentRegistry {
     inner: Arc<Mutex<VeilidComponentRegistryInner>>,
-    config: VeilidStartupOptions,
+    startup_options: VeilidStartupOptions,
     namespace: &'static str,
     program_name: &'static str,
     log_key: &'static str,
@@ -74,9 +74,9 @@ pub(crate) struct VeilidComponentRegistry {
 }
 
 impl VeilidComponentRegistry {
-    pub fn new(config: VeilidStartupOptions) -> Self {
-        let (namespace, program_name) =
-            config.with(|c| (c.namespace.to_static_str(), c.program_name.to_static_str()));
+    pub fn new(startup_options: VeilidStartupOptions) -> Self {
+        let namespace = startup_options.config().namespace.to_static_str();
+        let program_name = startup_options.config().program_name.to_static_str();
 
         let log_key = VeilidLayerFilter::make_veilid_log_key(program_name, namespace);
 
@@ -86,7 +86,7 @@ impl VeilidComponentRegistry {
                 init_order: Vec::new(),
                 mock: false,
             })),
-            config,
+            startup_options,
             namespace,
             program_name,
             log_key,
@@ -293,7 +293,7 @@ impl VeilidComponentRegistryAccessor for VeilidComponentRegistry {
 
 ////////////////////////////////////////////////////////////////////
 
-macro_rules! impl_veilid_component_registry_accessor {
+macro_rules! impl_veilid_component_accessors {
     ($struct_name:ty) => {
         impl VeilidComponentRegistryAccessor for $struct_name {
             fn registry(&self) -> VeilidComponentRegistry {
@@ -303,13 +303,13 @@ macro_rules! impl_veilid_component_registry_accessor {
     };
 }
 
-pub(crate) use impl_veilid_component_registry_accessor;
+pub(crate) use impl_veilid_component_accessors;
 
 /////////////////////////////////////////////////////////////////////
 
 macro_rules! impl_veilid_component {
     ($component_name:ty) => {
-        impl_veilid_component_registry_accessor!($component_name);
+        impl_veilid_component_accessors!($component_name);
 
         impl VeilidComponent for $component_name {
             fn name(&self) -> &'static str {
@@ -350,13 +350,28 @@ macro_rules! impl_setup_task {
             Box::pin(async move {
                 let this = registry.lookup::<$this_type>().unwrap();
                 this.$task_routine(s, Timestamp::new(l), Timestamp::new(t))
-                    .await
             })
         });
     }};
 }
 
 pub(crate) use impl_setup_task;
+
+macro_rules! impl_setup_task_async {
+    ($this:expr, $this_type:ty, $task_name:ident, $task_routine:ident ) => {{
+        let registry = $this.registry();
+        $this.$task_name.set_routine(move |s, l, t| {
+            let registry = registry.clone();
+            Box::pin(async move {
+                let this = registry.lookup::<$this_type>().unwrap();
+                this.$task_routine(s, Timestamp::new(l), Timestamp::new(t))
+                    .await
+            })
+        });
+    }};
+}
+
+pub(crate) use impl_setup_task_async;
 
 // Utility macro for setting up an event bus handler
 // Should be called after init, during post-init or later

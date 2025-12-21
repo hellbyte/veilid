@@ -6,10 +6,10 @@ impl_veilid_log_facility!("rtab");
 
 /// Keepalive pings are done occasionally to ensure holepunched public dialinfo
 /// remains valid, as well as to make sure we remain in any relay node's routing table
-const RELAY_KEEPALIVE_PING_INTERVAL_SECS: u32 = 10;
+const RELAY_KEEPALIVE_PING_INTERVAL: TimestampDuration = TimestampDuration::new_secs(10);
 
 /// Keepalive pings are done for active watch nodes to make sure they are still there
-const ACTIVE_WATCH_KEEPALIVE_PING_INTERVAL_SECS: u32 = 10;
+const ACTIVE_WATCH_KEEPALIVE_PING_INTERVAL: TimestampDuration = TimestampDuration::new_secs(10);
 
 /// Ping queue processing depth per validator
 const MAX_PARALLEL_PINGS: usize = 8;
@@ -27,7 +27,7 @@ impl RoutingTable {
     ) -> EyreResult<()> {
         let mut future_queue: VecDeque<PingValidatorFuture> = VecDeque::new();
 
-        self.ping_validator_public_internet(cur_ts, &mut future_queue)
+        self.ping_validator(cur_ts, RoutingDomain::PublicInternet, &mut future_queue)
             .await?;
 
         self.process_ping_validation_queue("PublicInternet", stop_token, cur_ts, future_queue)
@@ -46,7 +46,7 @@ impl RoutingTable {
     ) -> EyreResult<()> {
         let mut future_queue: VecDeque<PingValidatorFuture> = VecDeque::new();
 
-        self.ping_validator_local_network(cur_ts, &mut future_queue)
+        self.ping_validator(cur_ts, RoutingDomain::LocalNetwork, &mut future_queue)
             .await?;
 
         self.process_ping_validation_queue("LocalNetwork", stop_token, cur_ts, future_queue)
@@ -95,72 +95,6 @@ impl RoutingTable {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // Get protocol-specific noderefs for a relay to determine its liveness
-    // Relays get pinged over more protocols than non-relay nodes because we need to ensure
-    // that they can reliably forward packets with 'all' sequencing, not just over 'any' sequencing
-    fn get_relay_specific_noderefs(
-        &self,
-        relay_nr: FilteredNodeRef,
-        routing_domain: RoutingDomain,
-    ) -> Vec<FilteredNodeRef> {
-        // Get our publicinternet dial info
-        let dids =
-            self.all_filtered_dial_info_details(routing_domain.into(), &DialInfoFilter::all());
-
-        // We need to keep-alive at one connection per ordering for relays
-        // but also one per NAT mapping that we need to keep open for our inbound dial info
-        let mut got_unordered = false;
-        let mut got_ordered = false;
-
-        // Look up any NAT mappings we may need to try to preserve with keepalives
-        let mut mapped_port_info = self.get_low_level_port_info();
-
-        // Relay nodes get pinged over all protocols we have inbound dialinfo for
-        // This is so we can preserve the inbound NAT mappings at our router
-        let mut relay_noderefs = vec![];
-        for did in &dids {
-            // Can skip the ones that are direct, those are not mapped or natted
-            // because we can have both direct and natted dialinfo on the same
-            // node, for example ipv4 can be natted, while ipv6 is direct
-            if did.class == DialInfoClass::Direct {
-                continue;
-            }
-            // Do we need to do this ping?
-            // Check if we have already pinged over this low-level-protocol/address-type/port combo
-            // We want to ensure we do the bare minimum required here
-            let pt = did.dial_info.protocol_type();
-            let at = did.dial_info.address_type();
-            let needs_ping_for_protocol =
-                if let Some((llpt, port)) = mapped_port_info.protocol_to_port.get(&(pt, at)) {
-                    mapped_port_info
-                        .low_level_protocol_ports
-                        .remove(&(*llpt, at, *port))
-                } else {
-                    false
-                };
-            if needs_ping_for_protocol {
-                if pt.is_ordered() {
-                    got_ordered = true;
-                } else {
-                    got_unordered = true;
-                }
-                let dif = did.dial_info.make_filter();
-
-                relay_noderefs
-                    .push(relay_nr.filtered_clone(NodeRefFilter::new().with_dial_info_filter(dif)));
-            }
-        }
-        // Add noderef filters for ordered or unordered sequencing if we havent already seen those
-        if !got_ordered {
-            relay_noderefs.push(relay_nr.sequencing_clone(Sequencing::EnsureOrdered));
-        }
-        if !got_unordered {
-            relay_noderefs.push(relay_nr);
-        }
-
-        relay_noderefs
-    }
-
     // Ping the relay to keep it alive, over every protocol it is relaying for us
     #[instrument(level = "trace", skip(self, futurequeue), err)]
     async fn relay_keepalive_public_internet(
@@ -168,44 +102,46 @@ impl RoutingTable {
         cur_ts: Timestamp,
         futurequeue: &mut VecDeque<PingValidatorFuture>,
     ) -> EyreResult<()> {
-        // Get the PublicInternet relay if we are using one
-        let Some(relay_nr) = self.relay_node(RoutingDomain::PublicInternet) else {
-            return Ok(());
-        };
+        // Iterate the PublicInternet relays
+        let relays_and_states = self.relays_and_states(RoutingDomain::PublicInternet);
+        let mut state_updates = Vec::new();
+        for (relay, mut relay_state) in relays_and_states {
+            let relay_needs_keepalive =
+                cur_ts.duration_since(relay_state.last_keepalive) >= RELAY_KEEPALIVE_PING_INTERVAL;
 
-        let opt_relay_keepalive_ts = self.relay_node_last_keepalive(RoutingDomain::PublicInternet);
-        let relay_needs_keepalive = opt_relay_keepalive_ts
-            .map(|kts| {
-                cur_ts.saturating_sub(kts).as_u64()
-                    >= (RELAY_KEEPALIVE_PING_INTERVAL_SECS as u64 * 1_000_000u64)
-            })
-            .unwrap_or(true);
+            if !relay_needs_keepalive {
+                continue;
+            }
 
-        if !relay_needs_keepalive {
-            return Ok(());
+            // Enqueue the pings
+            for relay_ping in relay.pings.clone() {
+                futurequeue.push_back(
+                    async move {
+                        let rpc_processor = relay_ping.node_ref.rpc_processor();
+                        veilid_log!(rpc_processor trace "--> PublicInternet Relay ping to {:?}", relay_ping.node_ref);
+                        let _ = Box::pin(rpc_processor
+                            .rpc_call_status(Destination::direct(relay_ping.node_ref)))
+                            .await?;
+                        Ok(())
+                    }
+                    .boxed(),
+                );
+            }
+
+            // Say we're doing this keepalive now
+            relay_state.last_keepalive = cur_ts;
+            state_updates.push((relay, relay_state));
         }
-        // Say we're doing this keepalive now
-        self.inner
-            .write()
-            .set_relay_node_last_keepalive(RoutingDomain::PublicInternet, cur_ts);
 
-        // Get the sequencing-specific relay noderefs for this relay
-        let relay_noderefs =
-            self.get_relay_specific_noderefs(relay_nr, RoutingDomain::PublicInternet);
-
-        for relay_nr_filtered in relay_noderefs {
-            futurequeue.push_back(
-                async move {
-                    veilid_log!(relay_nr_filtered trace "--> PublicInternet Relay ping to {:?}", relay_nr_filtered);
-                    let rpc_processor = relay_nr_filtered.rpc_processor();
-                    let _ = rpc_processor
-                        .rpc_call_status(Destination::direct(relay_nr_filtered))
-                        .await?;
-                    Ok(())
-                }
-                .boxed(),
-            );
+        // Update the relay keepalive timestamp on the routing domain
+        if !state_updates.is_empty() {
+            let mut editor = self.edit_public_internet_routing_domain();
+            for (relay, state) in state_updates {
+                editor.set_relay_state(relay, state);
+            }
+            editor.commit(false).await;
         }
+
         Ok(())
     }
 
@@ -220,10 +156,7 @@ impl RoutingTable {
             let mut inner = self.inner.write();
             let need = inner
                 .opt_active_watch_keepalive_ts
-                .map(|kts| {
-                    cur_ts.saturating_sub(kts).as_u64()
-                        >= (ACTIVE_WATCH_KEEPALIVE_PING_INTERVAL_SECS as u64 * 1_000_000u64)
-                })
+                .map(|kts| cur_ts.duration_since(kts) >= ACTIVE_WATCH_KEEPALIVE_PING_INTERVAL)
                 .unwrap_or(true);
             if need {
                 inner.opt_active_watch_keepalive_ts = Some(cur_ts);
@@ -236,15 +169,15 @@ impl RoutingTable {
         }
 
         // Get all the active watches from the storage manager
-        let watch_destinations = self.storage_manager().get_outbound_watch_nodes().await;
+        let watch_destinations = self.storage_manager().get_outbound_watch_nodes();
 
         for watch_destination in watch_destinations {
             let registry = self.registry();
             futurequeue.push_back(
                 async move {
-                    veilid_log!(registry trace "--> Watch Keepalive ping to {:?}", watch_destination);
                     let rpc_processor = registry.rpc_processor();
-                    let _ = rpc_processor.rpc_call_status(watch_destination).await?;
+                    veilid_log!(rpc_processor trace "--> Watch Keepalive ping to {:?}", watch_destination);
+                    let _ = Box::pin(rpc_processor.rpc_call_status(watch_destination)).await?;
                     Ok(())
                 }
                 .boxed(),
@@ -256,71 +189,26 @@ impl RoutingTable {
     // Ping each node in the routing table if they need to be pinged
     // to determine their reliability
     #[instrument(level = "trace", skip(self, futurequeue), err)]
-    async fn ping_validator_public_internet(
+    async fn ping_validator(
         &self,
         cur_ts: Timestamp,
+        routing_domain: RoutingDomain,
         futurequeue: &mut VecDeque<PingValidatorFuture>,
     ) -> EyreResult<()> {
-        // Get all nodes needing pings in the PublicInternet routing domain
-        let relay_node_filter = self.make_public_internet_relay_node_filter();
-        let node_refs = self.get_nodes_needing_ping(RoutingDomain::PublicInternet, cur_ts);
+        // Get all nodes needing pings in the chosen routing domain
+        let node_refs = self.get_nodes_needing_ping(routing_domain, cur_ts);
 
         // Just do a single ping with the best protocol for all the other nodes to check for liveness
         for nr in node_refs {
-            // If the node is relay-capable, we should ping it over ALL sequencing types
-            // instead of just a simple liveness check on ANY best contact method
+            let nr = nr.with_sequencing(Sequencing::PreferOrdered);
 
-            let all_noderefs = if nr.operate(|_rti, e| !relay_node_filter(e)) {
-                // If this is a relay capable node, get all the sequencing specific noderefs
-                self.get_relay_specific_noderefs(nr, RoutingDomain::PublicInternet)
-            } else {
-                // If a non-relay node, ping with the normal ping type
-                vec![nr.sequencing_clone(Sequencing::PreferOrdered)]
-            };
-
-            for nr in all_noderefs {
-                futurequeue.push_back(
-                    async move {
-                        #[cfg(feature = "verbose-tracing")]
-                        veilid_log!(nr debug "--> PublicInternet Validator ping to {:?}", nr);
-                        let rpc_processor = nr.rpc_processor();
-                        let _ = rpc_processor
-                            .rpc_call_status(Destination::direct(nr))
-                            .await?;
-                        Ok(())
-                    }
-                    .boxed(),
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    // Ping each node in the LocalNetwork routing domain if they
-    // need to be pinged to determine their reliability
-    #[instrument(level = "trace", skip(self, futurequeue), err)]
-    async fn ping_validator_local_network(
-        &self,
-        cur_ts: Timestamp,
-        futurequeue: &mut VecDeque<PingValidatorFuture>,
-    ) -> EyreResult<()> {
-        // Get all nodes needing pings in the LocalNetwork routing domain
-        let node_refs = self.get_nodes_needing_ping(RoutingDomain::LocalNetwork, cur_ts);
-
-        // Just do a single ping with the best protocol for all the other nodes to check for liveness
-        for nr in node_refs {
-            let nr = nr.sequencing_clone(Sequencing::PreferOrdered);
-
-            // Just do a single ping with the best protocol for all the nodes
             futurequeue.push_back(
                 async move {
                     #[cfg(feature = "verbose-tracing")]
-                    veilid_log!(nr debug "--> LocalNetwork Validator ping to {:?}", nr);
+                    veilid_log!(nr debug "--> {:?} Validator ping to {:?}", routing_domain, nr);
                     let rpc_processor = nr.rpc_processor();
-                    let _ = rpc_processor
-                        .rpc_call_status(Destination::direct(nr))
-                        .await?;
+                    let _ =
+                        Box::pin(rpc_processor.rpc_call_status(Destination::direct(nr))).await?;
                     Ok(())
                 }
                 .boxed(),
@@ -361,7 +249,7 @@ impl RoutingTable {
             "[{}] Ping validation queue finished {} pings in {}",
             name,
             count,
-            done_ts - cur_ts
+            done_ts.duration_since(cur_ts)
         );
     }
 }

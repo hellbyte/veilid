@@ -54,14 +54,14 @@ machines:
     address4: "170.64.128.16"
     address6: "2a03:b0c0:2:dd::ddd:0010"
     disable_capabilities:
-      ["ROUT", "TUNL", "SGNL", "RLAY", "DIAL", "DHTV", "DHTW", "APPM"]
+      ["ROUT", "TUNL", "SGNL", "RLAY", "DIAL", "DHTV", "APPM"]
     bootstrap: true
   bootstrap-2.veilid.net:
     network: "boot"
     address4: "170.64.128.17"
     address6: "2a03:b0c0:2:dd::ddd:0011"
     disable_capabilities:
-      ["ROUT", "TUNL", "SGNL", "RLAY", "DIAL", "DHTV", "DHTW", "APPM"]
+      ["ROUT", "TUNL", "SGNL", "RLAY", "DIAL", "DHTV", "APPM"]
     bootstrap: true
 
 #################################################################

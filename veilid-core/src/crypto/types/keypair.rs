@@ -1,90 +1,133 @@
 use super::*;
 
-#[derive(Clone, Copy, Default, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(wasm_bindgen_derive::TryFromJsValue)
+)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen)]
+#[derive(Clone, Default, Hash, PartialOrd, Ord, PartialEq, Eq, GetSize)]
 #[must_use]
-pub struct KeyPair {
-    pub key: PublicKey,
-    pub secret: SecretKey,
+pub struct BareKeyPair {
+    key: BarePublicKey,
+    secret: BareSecretKey,
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
-        #[wasm_bindgen(typescript_custom_section)]
-        const KEYPAIR_TYPE: &'static str = r#"
-export type KeyPair = `${PublicKey}:${SecretKey}`;
-"#;
-    }
-}
-
-impl KeyPair {
-    pub fn new(key: PublicKey, secret: SecretKey) -> Self {
+impl BareKeyPair {
+    pub fn new(key: BarePublicKey, secret: BareSecretKey) -> Self {
         Self { key, secret }
     }
-    pub fn split(&self) -> (PublicKey, SecretKey) {
-        (self.key, self.secret)
+    pub fn ref_key(&self) -> &BarePublicKey {
+        &self.key
     }
-    pub fn into_split(self) -> (PublicKey, SecretKey) {
+    pub fn ref_secret(&self) -> &BareSecretKey {
+        &self.secret
+    }
+    pub fn ref_split(&self) -> (&BarePublicKey, &BareSecretKey) {
+        (&self.key, &self.secret)
+    }
+    pub fn split(&self) -> (BarePublicKey, BareSecretKey) {
+        (self.key.clone(), self.secret.clone())
+    }
+    pub fn into_split(self) -> (BarePublicKey, BareSecretKey) {
         (self.key, self.secret)
     }
 }
 
-impl Encodable for KeyPair {
-    fn encode(&self) -> String {
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen)]
+#[allow(dead_code)]
+impl BareKeyPair {
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter)
+    )]
+    pub fn key(&self) -> BarePublicKey {
+        self.key.clone()
+    }
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter)
+    )]
+    pub fn secret(&self) -> BareSecretKey {
+        self.secret.clone()
+    }
+    pub fn encode(&self) -> String {
         format!("{}:{}", self.key.encode(), self.secret.encode())
     }
-    fn encoded_len() -> usize {
-        PublicKey::encoded_len() + 1 + SecretKey::encoded_len()
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter, js_name = "encodedLength")
+    )]
+    pub fn encoded_len(&self) -> usize {
+        self.key.encoded_len() + 1 + self.secret.encoded_len()
     }
-    fn try_decode_bytes(b: &[u8]) -> VeilidAPIResult<Self> {
-        if b.len() != Self::encoded_len() {
-            apibail_parse_error!("input has wrong encoded length", format!("len={}", b.len()));
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(js_name = "tryDecode")
+    )]
+    pub fn try_decode(input: &str) -> VeilidAPIResult<Self> {
+        let b = input.as_bytes();
+        Self::try_decode_bytes(b)
+    }
+
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(js_name = "tryDecodeBytes")
+    )]
+    pub fn try_decode_bytes(b: &[u8]) -> VeilidAPIResult<Self> {
+        let parts: Vec<_> = b.split(|x| *x == b':').collect();
+        if parts.len() != 2 {
+            apibail_parse_error!(
+                "input has incorrect parts",
+                format!("parts={}", parts.len())
+            );
         }
-        let key = PublicKey::try_decode_bytes(&b[0..PublicKey::encoded_len()])?;
-        let secret = SecretKey::try_decode_bytes(&b[(PublicKey::encoded_len() + 1)..])?;
-        Ok(KeyPair { key, secret })
+        let key = BarePublicKey::try_decode_bytes(parts[0])?;
+        let secret = BareSecretKey::try_decode_bytes(parts[1])?;
+        Ok(BareKeyPair { key, secret })
     }
 }
-impl fmt::Display for KeyPair {
+
+impl fmt::Display for BareKeyPair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.encode())
     }
 }
 
-impl fmt::Debug for KeyPair {
+impl fmt::Debug for BareKeyPair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "KeyPair({})", self.encode())
+        write!(f, "BareKeyPair({})", self.encode())
     }
 }
 
-impl From<&KeyPair> for String {
-    fn from(value: &KeyPair) -> Self {
+impl From<&BareKeyPair> for String {
+    fn from(value: &BareKeyPair) -> Self {
         value.encode()
     }
 }
 
-impl FromStr for KeyPair {
+impl FromStr for BareKeyPair {
     type Err = VeilidAPIError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        KeyPair::try_from(s)
+        BareKeyPair::try_from(s)
     }
 }
 
-impl TryFrom<String> for KeyPair {
+impl TryFrom<String> for BareKeyPair {
     type Error = VeilidAPIError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        KeyPair::try_from(value.as_str())
+        BareKeyPair::try_from(value.as_str())
     }
 }
 
-impl TryFrom<&str> for KeyPair {
+impl TryFrom<&str> for BareKeyPair {
     type Error = VeilidAPIError;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::try_decode(value)
     }
 }
 
-impl serde::Serialize for KeyPair {
+impl serde::Serialize for BareKeyPair {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -94,15 +137,66 @@ impl serde::Serialize for KeyPair {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for KeyPair {
+impl<'de> serde::Deserialize<'de> for BareKeyPair {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = <String as serde::Deserialize>::deserialize(deserializer)?;
         if s.is_empty() {
-            return Ok(KeyPair::default());
+            return Ok(BareKeyPair::default());
         }
-        KeyPair::try_decode(s.as_str()).map_err(serde::de::Error::custom)
+        BareKeyPair::try_decode(s.as_str()).map_err(serde::de::Error::custom)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////
+
+impl KeyPair {
+    pub fn into_split(self) -> (PublicKey, SecretKey) {
+        let kind = self.kind;
+        let (pk, sk) = self.into_value().into_split();
+        (PublicKey::new(kind, pk), SecretKey::new(kind, sk))
+    }
+
+    pub fn ref_bare_secret(&self) -> &BareSecretKey {
+        self.ref_value().ref_secret()
+    }
+}
+
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), wasm_bindgen)]
+#[allow(dead_code)]
+impl KeyPair {
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(js_name = "newFromParts")
+    )]
+    pub fn new_from_parts(key: PublicKey, bare_secret: BareSecretKey) -> Self {
+        Self {
+            kind: key.kind(),
+            value: BareKeyPair::new(key.value(), bare_secret),
+        }
+    }
+
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter)
+    )]
+    pub fn key(&self) -> PublicKey {
+        PublicKey::new(self.kind, self.ref_value().key())
+    }
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter)
+    )]
+    pub fn secret(&self) -> SecretKey {
+        SecretKey::new(self.kind, self.ref_value().secret())
+    }
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        wasm_bindgen(getter, js_name = "bareSecret")
+    )]
+    pub fn bare_secret(&self) -> BareSecretKey {
+        self.ref_value().secret()
     }
 }

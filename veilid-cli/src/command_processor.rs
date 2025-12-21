@@ -82,10 +82,10 @@ impl CommandProcessor {
     pub fn set_client_api_connection(&self, capi: ClientApiConnection) {
         self.inner.lock().capi = Some(capi);
     }
-    fn inner(&self) -> MutexGuard<CommandProcessorInner> {
+    fn inner(&self) -> MutexGuard<'_, CommandProcessorInner> {
         self.inner.lock()
     }
-    fn inner_mut(&self) -> MutexGuard<CommandProcessorInner> {
+    fn inner_mut(&self) -> MutexGuard<'_, CommandProcessorInner> {
         self.inner.lock()
     }
     fn ui_sender(&self) -> Box<dyn UISender> {

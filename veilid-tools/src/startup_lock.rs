@@ -96,7 +96,7 @@ impl StartupLock {
     /// Start up if things are not already started up
     /// One must call 'success()' on the returned startup lock guard if startup was successful
     /// otherwise the startup lock will not shift to the 'started' state.
-    pub fn startup(&self) -> Result<StartupLockGuard, StartupLockAlreadyStartedError> {
+    pub fn startup(&self) -> Result<StartupLockGuard<'_>, StartupLockAlreadyStartedError> {
         let guard =
             asyncrwlock_try_write!(self.startup_state).ok_or(StartupLockAlreadyStartedError)?;
         if *guard {
@@ -137,7 +137,7 @@ impl StartupLock {
     /// Wait for all 'entered' operations to finish before shutting down
     /// One must call 'success()' on the returned startup lock guard if shutdown was successful
     /// otherwise the startup lock will not shift to the 'stopped' state.
-    pub async fn shutdown(&self) -> Result<StartupLockGuard, StartupLockAlreadyShutDownError> {
+    pub async fn shutdown(&self) -> Result<StartupLockGuard<'_>, StartupLockAlreadyShutDownError> {
         // Drop the stop source to ensure we can detect shutdown has been requested
         *self.stop_source.lock() = None;
 
@@ -166,7 +166,7 @@ impl StartupLock {
     /// Enter an operation in a started-up module.
     /// If this module has not yet started up or is in the process of startup or shutdown
     /// this will fail.
-    pub fn enter(&self) -> Result<StartupLockEnterGuard, StartupLockNotStartedError> {
+    pub fn enter(&self) -> Result<StartupLockEnterGuard<'_>, StartupLockNotStartedError> {
         let guard = asyncrwlock_try_read!(self.startup_state).ok_or(StartupLockNotStartedError)?;
         if !*guard {
             return Err(StartupLockNotStartedError);

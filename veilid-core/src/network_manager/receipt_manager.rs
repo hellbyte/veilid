@@ -78,7 +78,7 @@ impl fmt::Debug for ReceiptRecordCallbackType {
 
 #[derive(Debug)]
 struct ReceiptRecord {
-    expiration_ts: Timestamp,
+    expiration: Timestamp,
     receipt: Receipt,
     expected_returns: u32,
     returns_so_far: u32,
@@ -86,15 +86,14 @@ struct ReceiptRecord {
 }
 
 impl ReceiptRecord {
-    #[expect(dead_code)]
     pub fn new(
         receipt: Receipt,
-        expiration_ts: Timestamp,
+        expiration: Timestamp,
         expected_returns: u32,
         receipt_callback: impl ReceiptCallback,
     ) -> Self {
         Self {
-            expiration_ts,
+            expiration,
             receipt,
             expected_returns,
             returns_so_far: 0u32,
@@ -104,11 +103,11 @@ impl ReceiptRecord {
 
     pub fn new_single_shot(
         receipt: Receipt,
-        expiration_ts: Timestamp,
+        expiration: Timestamp,
         eventual: ReceiptSingleShotType,
     ) -> Self {
         Self {
-            expiration_ts,
+            expiration,
             receipt,
             returns_so_far: 0u32,
             expected_returns: 1u32,
@@ -120,19 +119,19 @@ impl ReceiptRecord {
 /* XXX: may be useful for O(1) timestamp expiration
 #[derive(Clone, Debug)]
 struct ReceiptRecordTimestampSort {
-    expiration_ts: Timestamp,
+    expiration: Timestamp,
     record: Arc<Mutex<ReceiptRecord>>,
 }
 
 impl PartialEq for ReceiptRecordTimestampSort {
     fn eq(&self, other: &ReceiptRecordTimestampSort) -> bool {
-        self.expiration_ts == other.expiration_ts
+        self.expiration == other.expiration
     }
 }
 impl Eq for ReceiptRecordTimestampSort {}
 impl Ord for ReceiptRecordTimestampSort {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.expiration_ts.cmp(&other.expiration_ts).reverse()
+        self.expiration.cmp(&other.expiration).reverse()
     }
 }
 impl PartialOrd for ReceiptRecordTimestampSort {
@@ -162,7 +161,7 @@ pub(super) struct ReceiptManager {
     unlocked_inner: Arc<ReceiptManagerUnlockedInner>,
 }
 
-impl_veilid_component_registry_accessor!(ReceiptManager);
+impl_veilid_component_accessors!(ReceiptManager);
 
 impl ReceiptManager {
     fn new_inner() -> ReceiptManagerInner {
@@ -229,14 +228,14 @@ impl ReceiptManager {
             let mut expired_nonces = Vec::new();
             for (k, v) in &inner.records_by_nonce {
                 let receipt_inner = v.lock();
-                if receipt_inner.expiration_ts <= now {
+                if receipt_inner.expiration <= now {
                     // Expire this receipt
-                    expired_nonces.push(*k);
+                    expired_nonces.push(k.clone());
                 } else if new_next_oldest_ts.is_none()
-                    || receipt_inner.expiration_ts < new_next_oldest_ts.unwrap()
+                    || receipt_inner.expiration < new_next_oldest_ts.unwrap()
                 {
                     // Mark the next oldest timestamp we would need to take action on as we go through everything
-                    new_next_oldest_ts = Some(receipt_inner.expiration_ts);
+                    new_next_oldest_ts = Some(receipt_inner.expiration);
                 }
             }
             if expired_nonces.is_empty() {
@@ -291,18 +290,17 @@ impl ReceiptManager {
             };
             (inner.next_oldest_ts, inner.timeout_task.clone(), stop_token)
         };
-        let now = Timestamp::now();
+        let now = Timestamp::now_non_decreasing();
         // If we have at least one timestamp to expire, lets do it
         if let Some(next_oldest_ts) = next_oldest_ts {
             if now >= next_oldest_ts {
                 // Single-spawn the timeout task routine
                 let _ = timeout_task
-                    .single_spawn(
-                        "receipt timeout",
+                    .single_spawn("receipt timeout", || {
                         self.clone()
                             .timeout_task_routine(now, stop_token)
-                            .instrument(trace_span!(parent: None, "receipt timeout task")),
-                    )
+                            .instrument(trace_span!(parent: None, "receipt timeout task"))
+                    })
                     .in_current_span()
                     .await;
             }
@@ -394,10 +392,10 @@ impl ReceiptManager {
         for v in inner.records_by_nonce.values() {
             let receipt_inner = v.lock();
             if new_next_oldest_ts.is_none()
-                || receipt_inner.expiration_ts < new_next_oldest_ts.unwrap()
+                || receipt_inner.expiration < new_next_oldest_ts.unwrap()
             {
                 // Mark the next oldest timestamp we would need to take action on as we go through everything
-                new_next_oldest_ts = Some(receipt_inner.expiration_ts);
+                new_next_oldest_ts = Some(receipt_inner.expiration);
             }
         }
 

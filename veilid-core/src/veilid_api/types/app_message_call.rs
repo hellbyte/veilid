@@ -3,6 +3,7 @@ use super::*;
 /// Direct statement blob passed to hosting application for processing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidAppMessage {
     #[serde(with = "as_human_opt_string")]
@@ -11,7 +12,7 @@ pub struct VeilidAppMessage {
         all(target_arch = "wasm32", target_os = "unknown"),
         tsify(optional, type = "string")
     )]
-    sender: Option<TypedNodeId>,
+    sender: Option<NodeId>,
 
     #[serde(with = "as_human_opt_string")]
     #[schemars(with = "Option<String>")]
@@ -35,7 +36,7 @@ pub struct VeilidAppMessage {
 }
 
 impl VeilidAppMessage {
-    pub fn new(sender: Option<TypedNodeId>, route_id: Option<RouteId>, message: Vec<u8>) -> Self {
+    pub fn new(sender: Option<NodeId>, route_id: Option<RouteId>, message: Vec<u8>) -> Self {
         Self {
             sender,
             route_id,
@@ -45,7 +46,7 @@ impl VeilidAppMessage {
 
     /// Some(sender) if the message was sent directly, None if received via a private/safety route.
     #[must_use]
-    pub fn sender(&self) -> Option<&TypedNodeId> {
+    pub fn sender(&self) -> Option<&NodeId> {
         self.sender.as_ref()
     }
 
@@ -65,12 +66,13 @@ impl VeilidAppMessage {
 /// Direct question blob passed to hosting application for processing to send an eventual AppReply.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(feature = "json-camel-case", serde(rename_all = "camelCase"))]
 #[must_use]
 pub struct VeilidAppCall {
     #[serde(with = "as_human_opt_string")]
     #[schemars(with = "Option<String>")]
     #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), tsify(optional))]
-    sender: Option<TypedNodeId>,
+    sender: Option<NodeId>,
 
     #[serde(with = "as_human_opt_string")]
     #[schemars(with = "Option<String>")]
@@ -99,7 +101,7 @@ pub struct VeilidAppCall {
 
 impl VeilidAppCall {
     pub fn new(
-        sender: Option<TypedNodeId>,
+        sender: Option<NodeId>,
         route_id: Option<RouteId>,
         message: Vec<u8>,
         call_id: OperationId,
@@ -114,7 +116,7 @@ impl VeilidAppCall {
 
     /// Some(sender) if the request was sent directly, None if received via a private/safety route.
     #[must_use]
-    pub fn sender(&self) -> Option<&TypedNodeId> {
+    pub fn sender(&self) -> Option<&NodeId> {
         self.sender.as_ref()
     }
 

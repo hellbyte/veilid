@@ -3,8 +3,7 @@ plugins {
 }
 
 android {
-    compileSdkVersion 34
-    buildToolsVersion "34.0.0"
+    compileSdkVersion 36
 
     defaultConfig {
         applicationId "com.veilid.veilid_core_android_tests"
@@ -38,7 +37,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    ndkVersion '27.0.12077973'
+    ndkVersion '28.2.13676358'
 
     // Required to copy libc++_shared.so
     externalNativeBuild {

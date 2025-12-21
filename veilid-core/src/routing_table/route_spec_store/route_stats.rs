@@ -148,7 +148,6 @@ impl RouteStats {
     }
 
     /// Get the transfer stats
-    #[expect(dead_code)]
     pub fn transfer_stats(&self) -> &TransferStatsDownUp {
         &self.transfer
     }
@@ -174,8 +173,8 @@ impl RouteStats {
         // Has the route been tested within the idle time we'd want to check things?
         // (also if we've received successfully over the route, this will get set)
         if let Some(last_tested_ts) = self.last_known_valid_ts {
-            if cur_ts.saturating_sub(last_tested_ts)
-                > TimestampDuration::new(ROUTE_MIN_IDLE_TIME_MS as u64 * 1000u64)
+            if cur_ts.duration_since(last_tested_ts)
+                > TimestampDuration::new_ms(ROUTE_MIN_IDLE_TIME_MS as u64)
             {
                 return true;
             }
@@ -185,5 +184,58 @@ impl RouteStats {
         }
 
         false
+    }
+}
+
+impl RouteSpecStore {
+    /// Get the route statistics for any route we know about, allocated or remote
+    pub fn with_route_stats_mut<F, R>(&self, cur_ts: Timestamp, key: &PublicKey, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut RouteStats) -> R,
+    {
+        let inner = &mut *self.inner.lock();
+
+        // Check for stub route
+        if self.routing_table().public_keys().contains(key) {
+            return None;
+        }
+
+        // Check for allocated route
+        if let Some(rsid) = inner.content.get_id_by_key(key) {
+            if let Some(rsd) = inner.content.get_detail_mut(&rsid) {
+                return Some(f(rsd.get_stats_mut()));
+            }
+        }
+
+        // Check for remote route
+        if let Some(rrid) = inner.cache.get_remote_private_route_id_by_key(key) {
+            if let Some(rpri) = inner.cache.peek_remote_private_route_mut(cur_ts, &rrid) {
+                return Some(f(rpri.get_stats_mut()));
+            }
+        }
+
+        None
+    }
+
+    /// Process transfer statistics to get averages
+    pub fn roll_transfers(&self, last_ts: Timestamp, cur_ts: Timestamp) {
+        let inner = &mut *self.inner.lock();
+
+        // Roll transfers for allocated routes
+        inner.content.roll_transfers(last_ts, cur_ts);
+
+        // Roll transfers for remote private routes
+        inner.cache.roll_transfers(last_ts, cur_ts);
+    }
+
+    /// Process answer statistics
+    pub fn roll_answers(&self, cur_ts: Timestamp) {
+        let inner = &mut *self.inner.lock();
+
+        // Roll transfers for allocated routes
+        inner.content.roll_answers(cur_ts);
+
+        // Roll transfers for remote private routes
+        inner.cache.roll_answers(cur_ts);
     }
 }

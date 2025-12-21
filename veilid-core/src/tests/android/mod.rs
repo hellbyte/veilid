@@ -1,4 +1,5 @@
 use super::native::*;
+use crate::tests::*;
 use crate::*;
 use backtrace::Backtrace;
 use jni::{objects::JClass, objects::JObject, JNIEnv};

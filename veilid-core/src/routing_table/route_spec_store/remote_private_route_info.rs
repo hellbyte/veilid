@@ -13,6 +13,18 @@ pub struct RemotePrivateRouteInfo {
     stats: RouteStats,
 }
 
+impl fmt::Display for RemotePrivateRouteInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "last_seen_our_ni={} last_touched={} latency={} transfer={}",
+            self.last_seen_our_node_info_ts,
+            self.last_touched_ts,
+            self.get_stats().latency_stats(),
+            self.get_stats().transfer_stats(),
+        )
+    }
+}
 impl RemotePrivateRouteInfo {
     pub fn new(private_routes: Vec<PrivateRoute>, cur_ts: Timestamp) -> Self {
         RemotePrivateRouteInfo {
@@ -35,7 +47,7 @@ impl RemotePrivateRouteInfo {
                     acc
                 }
             })
-            .filter(|x| VALID_CRYPTO_KINDS.contains(&x.public_key.kind))
+            .filter(|x| VALID_CRYPTO_KINDS.contains(&x.public_key.kind()))
             .cloned()
     }
     pub fn get_stats(&self) -> &RouteStats {
@@ -54,7 +66,7 @@ impl RemotePrivateRouteInfo {
 
     // Check to see if this remote private route has expired
     pub fn did_expire(&self, cur_ts: Timestamp) -> bool {
-        cur_ts.saturating_sub(self.last_touched_ts) >= REMOTE_PRIVATE_ROUTE_CACHE_EXPIRY
+        cur_ts.duration_since(self.last_touched_ts) >= REMOTE_PRIVATE_ROUTE_CACHE_EXPIRY
     }
 
     /// Start fresh if this had expired

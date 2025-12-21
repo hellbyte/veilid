@@ -1,12 +1,10 @@
+use crate::crypto::tests::fixtures::*;
+use crate::routing_table::tests::fixtures::*;
+
 use super::*;
-use crate::tests::mock_registry;
 
 fn make_mock_bootstrap_record(include_timestamp: bool) -> BootstrapRecord {
-    let mut node_ids = CryptoTypedGroup::new();
-    node_ids.add(
-        TypedNodeId::from_str("VLD0:f8G4Ckr1UR8YXnmAllwfvBEvXGgfYicZllb7jEpJeSU")
-            .expect("should parse key"),
-    );
+    let public_keys = PublicKeyGroup::from(fix_public_key());
     let envelope_support = VALID_ENVELOPE_VERSIONS.to_vec();
     let dial_info_details = vec![
         DialInfoDetail {
@@ -17,6 +15,7 @@ fn make_mock_bootstrap_record(include_timestamp: bool) -> BootstrapRecord {
             )
             .expect("should make ws dialinfo"),
         },
+        #[cfg(feature = "enable-protocol-wss")]
         DialInfoDetail {
             class: DialInfoClass::Direct,
             dial_info: DialInfo::try_wss(
@@ -32,7 +31,7 @@ fn make_mock_bootstrap_record(include_timestamp: bool) -> BootstrapRecord {
         None
     };
     BootstrapRecord::new(
-        node_ids,
+        public_keys,
         envelope_support,
         dial_info_details,
         opt_timestamp,
@@ -64,23 +63,18 @@ pub async fn test_bootstrap_v1() {
     let dial_info_converter = MockDialInfoConverter::default();
 
     let bsrec = make_mock_bootstrap_record(true);
-    let signing_key_pairs = [
-        #[cfg(feature = "enable-crypto-vld0")]
-        TypedKeyPair::from_str("VLD0:W7ENB-SUWpPA7usY8ORVQf_si5QmFbD1Uqa89Jg2Uc0:hbdjau5sr3rBNwN68XeWLg3rfXnXLaLqfbbqhELqV1E").expect("should parse keypair"),
-        #[cfg(feature = "enable-crypto-vld0")]
-        TypedKeyPair::from_str("VLD0:v6XPfyOoCP_ZP-CWFNrf_pF_dpxsq74p2LW_Q5Q4yPQ:n-DhHtOU7KWQkdp5to8cpBa_u0RFt2IDZzXPqMTq4O0").expect("should parse keypair"),
-        #[cfg(feature = "enable-crypto-none")]
-        TypedKeyPair::from_str("NONE:xMzvYmY1C0B-pUrB9V1pnUf6A1hSqNTOju39UaFxQoU:OzMQnZnK9L-BWrU-CqKWYrgF_KetVysxcRICrl6OvXo").expect("should parse keypair"),
-        #[cfg(feature = "enable-crypto-none")]
-        TypedKeyPair::from_str("NONE:xuYisL8R7-qoUQiJtHVpvemzd1x3mH246cMJSkMp6BQ:ORndT0DuEBVXrvd2S4qWQhZMiKOIZ4JHFjz2tbzWF-s").expect("should parse keypair"),
-    ];
+    let signing_key_pairs = fix_keypairs();
     println!("signing_key_pairs: {:?}", signing_key_pairs);
     let signing_keys = signing_key_pairs
         .iter()
-        .map(|skp| TypedPublicKey::new(skp.kind, skp.value.key))
+        .map(|skp| PublicKey::new(skp.kind(), skp.ref_value().key()))
         .collect::<Vec<_>>();
     let v1str = bsrec
-        .to_v1_string(&network_manager, &dial_info_converter, signing_key_pairs[0])
+        .to_v1_string(
+            &network_manager,
+            &dial_info_converter,
+            signing_key_pairs[0].clone(),
+        )
         .await
         .expect("should make string");
     let bsrec2 = BootstrapRecord::new_from_v1_str(
@@ -94,9 +88,4 @@ pub async fn test_bootstrap_v1() {
     assert_eq!(bsrec, bsrec2);
 
     mock_registry::terminate(registry).await;
-}
-
-pub async fn test_all() {
-    test_bootstrap_v0().await;
-    test_bootstrap_v1().await;
 }

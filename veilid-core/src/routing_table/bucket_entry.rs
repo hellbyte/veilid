@@ -105,7 +105,7 @@ pub(crate) struct LastSenderInfoKey(pub RoutingDomain, pub ProtocolType, pub Add
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BucketEntryPublicInternet {
     /// The PublicInternet node info
-    signed_node_info: Option<Box<SignedNodeInfo>>,
+    peer_info: Option<Arc<PeerInfo>>,
     /// The last node info timestamp of ours that this entry has seen
     last_seen_our_node_info_ts: Timestamp,
     /// Last known node status
@@ -114,11 +114,11 @@ pub(crate) struct BucketEntryPublicInternet {
 
 impl fmt::Display for BucketEntryPublicInternet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(sni) = &self.signed_node_info {
-            writeln!(f, "signed_node_info:")?;
-            write!(f, "    {}", indent_string(sni))?;
+        if let Some(pi) = &self.peer_info {
+            writeln!(f, "peer_info:")?;
+            write!(f, "    {}", indent_string(pi))?;
         } else {
-            writeln!(f, "signed_node_info: None")?;
+            writeln!(f, "peer_info: None")?;
         }
         writeln!(
             f,
@@ -133,8 +133,8 @@ impl fmt::Display for BucketEntryPublicInternet {
 /// Bucket entry information specific to the LocalNetwork RoutingDomain
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BucketEntryLocalNetwork {
-    /// The LocalNetwork node info
-    signed_node_info: Option<Box<SignedNodeInfo>>,
+    /// The LocalNetwork peerinfo
+    peer_info: Option<Arc<PeerInfo>>,
     /// The last node info timestamp of ours that this entry has seen
     last_seen_our_node_info_ts: Timestamp,
     /// Last known node status
@@ -143,11 +143,11 @@ pub(crate) struct BucketEntryLocalNetwork {
 
 impl fmt::Display for BucketEntryLocalNetwork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(sni) = &self.signed_node_info {
-            writeln!(f, "signed_node_info:")?;
-            write!(f, "    {}", indent_string(sni))?;
+        if let Some(pi) = &self.peer_info {
+            writeln!(f, "peer_info:")?;
+            write!(f, "    {}", indent_string(pi))?;
         } else {
-            writeln!(f, "signed_node_info: None")?;
+            writeln!(f, "peer_info: None")?;
         }
         writeln!(
             f,
@@ -162,12 +162,10 @@ impl fmt::Display for BucketEntryLocalNetwork {
 /// The data associated with each bucket entry
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BucketEntryInner {
-    /// The node ids matching this bucket entry, with the cryptography versions supported by this node as the 'kind' field
-    validated_node_ids: TypedNodeIdGroup,
-    /// The node ids claimed by the remote node that use cryptography versions we do not support
-    unsupported_node_ids: TypedNodeIdGroup,
+    /// The node ids matching this bucket entry
+    node_ids: NodeIdGroup,
     /// The set of envelope versions supported by the node inclusive of the requirements of any relay the node may be using
-    envelope_support: Vec<u8>,
+    envelope_support: Vec<EnvelopeVersion>,
     /// If this node has updated it's SignedNodeInfo since our network
     /// and dial info has last changed, for example when our IP address changes
     /// Used to determine if we should make this entry 'live' again when we receive a signednodeinfo update that
@@ -182,17 +180,10 @@ pub(crate) struct BucketEntryInner {
     last_sender_info: HashMap<LastSenderInfoKey, SenderInfo>,
     /// The node info for this entry on the publicinternet routing domain
     public_internet: BucketEntryPublicInternet,
-    /// Node location
-    #[cfg(feature = "geolocation")]
-    #[serde(skip)]
-    geolocation_info: GeolocationInfo,
     /// The node info for this entry on the localnetwork routing domain
     local_network: BucketEntryLocalNetwork,
     /// Statistics gathered for the peer
     peer_stats: PeerStats,
-    /// The peer info cache for speedy access to fully encapsulated per-routing-domain peer info
-    #[serde(skip)]
-    peer_info_cache: Mutex<BTreeMap<RoutingDomain, Option<Arc<PeerInfo>>>>,
     /// The accounting for the latency statistics
     #[serde(skip)]
     latency_stats_accounting: LatencyStatsAccounting,
@@ -211,6 +202,10 @@ pub(crate) struct BucketEntryInner {
     /// If the entry is being punished and should be considered dead
     #[serde(skip)]
     punishment: Option<PunishmentReason>,
+    /// Node location
+    #[cfg(feature = "geolocation")]
+    #[serde(skip)]
+    geolocation_info: GeolocationInfo,
     /// Tracking identifier for NodeRef debugging
     #[cfg(feature = "tracking")]
     #[serde(skip)]
@@ -223,8 +218,7 @@ pub(crate) struct BucketEntryInner {
 
 impl fmt::Display for BucketEntryInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "validated_node_ids: {}", self.validated_node_ids)?;
-        writeln!(f, "unsupported_node_ids: {}", self.unsupported_node_ids)?;
+        writeln!(f, "node_ids: {}", self.node_ids)?;
         writeln!(f, "envelope_support: {:?}", self.envelope_support)?;
         writeln!(
             f,
@@ -283,47 +277,65 @@ impl BucketEntryInner {
     }
 
     /// Get all node ids
-    pub fn node_ids(&self) -> TypedNodeIdGroup {
-        let mut node_ids = self.validated_node_ids.clone();
-        node_ids.add_all(&self.unsupported_node_ids);
-        node_ids
+    pub fn node_ids(&self) -> NodeIdGroup {
+        self.node_ids.clone()
+    }
+
+    /// Get public keys
+    pub fn public_keys(&self, routing_domain: RoutingDomain) -> PublicKeyGroup {
+        match routing_domain {
+            RoutingDomain::LocalNetwork => self
+                .local_network
+                .peer_info
+                .as_ref()
+                .map(|x| x.node_info().public_keys())
+                .unwrap_or_default(),
+            RoutingDomain::PublicInternet => self
+                .public_internet
+                .peer_info
+                .as_ref()
+                .map(|x| x.node_info().public_keys())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Get best node id
+    pub fn best_node_id(&self) -> Option<NodeId> {
+        self.node_ids.first().cloned()
+    }
+
+    /// Get best public key
+    pub fn best_public_key(&self, routing_domain: RoutingDomain) -> Option<PublicKey> {
+        match routing_domain {
+            RoutingDomain::LocalNetwork => self
+                .local_network
+                .peer_info
+                .as_ref()
+                .and_then(|x| x.node_info().public_keys().first().cloned()),
+            RoutingDomain::PublicInternet => self
+                .public_internet
+                .peer_info
+                .as_ref()
+                .and_then(|x| x.node_info().public_keys().first().cloned()),
+        }
     }
 
     /// Add a node id for a particular crypto kind.
     /// Returns Ok(Some(node)) any previous existing node id associated with that crypto kind
     /// Returns Ok(None) if no previous existing node id was associated with that crypto kind, or one existed but nothing changed.
     /// Results Err() if this operation would add more crypto kinds than we support
-    pub fn add_node_id(&mut self, node_id: TypedNodeId) -> EyreResult<Option<TypedNodeId>> {
-        let total_node_id_count = self.validated_node_ids.len() + self.unsupported_node_ids.len();
-        let node_ids = if VALID_CRYPTO_KINDS.contains(&node_id.kind) {
-            &mut self.validated_node_ids
-        } else {
-            &mut self.unsupported_node_ids
-        };
-
-        if let Some(old_node_id) = node_ids.get(node_id.kind) {
+    pub fn add_node_id(&mut self, node_id: NodeId) -> EyreResult<Option<NodeId>> {
+        if let Some(old_node_id) = self.node_ids.get(node_id.kind()) {
             // If this was already there we do nothing
             if old_node_id == node_id {
                 return Ok(None);
             }
             // Won't change number of crypto kinds, but the node id changed
-            node_ids.add(node_id);
-
-            // Also clear the peerinfo cache since the node ids changed
-            let mut pi_cache = self.peer_info_cache.lock();
-            pi_cache.clear();
+            self.node_ids.add(node_id);
 
             return Ok(Some(old_node_id));
         }
-        // Check to ensure we aren't adding more crypto kinds than we support
-        if total_node_id_count == MAX_CRYPTO_KINDS {
-            bail!("too many crypto kinds for this node");
-        }
-        node_ids.add(node_id);
-
-        // Also clear the peerinfo cache since the node ids changed
-        let mut pi_cache = self.peer_info_cache.lock();
-        pi_cache.clear();
+        self.node_ids.add(node_id);
 
         Ok(None)
     }
@@ -331,34 +343,35 @@ impl BucketEntryInner {
     /// Remove a node id for a particular crypto kind.
     /// Returns Some(node) any previous existing node id associated with that crypto kind
     /// Returns None if no previous existing node id was associated with that crypto kind
-    pub fn remove_node_id(&mut self, crypto_kind: CryptoKind) -> Option<TypedNodeId> {
-        let node_ids = if VALID_CRYPTO_KINDS.contains(&crypto_kind) {
-            &mut self.validated_node_ids
-        } else {
-            &mut self.unsupported_node_ids
-        };
-
-        let opt_dead_id = node_ids.remove(crypto_kind);
-        if opt_dead_id.is_some() {
-            // Also clear the peerinfo cache since the node ids changed
-            let mut pi_cache = self.peer_info_cache.lock();
-            pi_cache.clear();
-        }
-
-        opt_dead_id
+    pub fn remove_node_id(&mut self, crypto_kind: CryptoKind) -> Option<NodeId> {
+        self.node_ids.remove(crypto_kind)
     }
 
-    pub fn best_node_id(&self) -> Option<TypedNodeId> {
-        self.validated_node_ids.best()
+    pub fn relay_ids(&self, routing_domain: RoutingDomain) -> Vec<NodeIdGroup> {
+        // Get the correct PeerInfo for the chosen routing domain
+        let opt_current_pi = match routing_domain {
+            RoutingDomain::LocalNetwork => &self.local_network.peer_info,
+            RoutingDomain::PublicInternet => &self.public_internet.peer_info,
+        };
+
+        let Some(pi) = opt_current_pi.clone() else {
+            return vec![];
+        };
+
+        let mut out = vec![];
+        for ri in pi.node_info().relay_info_list() {
+            out.push(ri.node_ids().clone());
+        }
+        out
     }
 
     /// Get crypto kinds
     pub fn crypto_kinds(&self) -> Vec<CryptoKind> {
-        self.validated_node_ids.kinds()
+        self.node_ids.kinds()
     }
     /// Compare sets of crypto kinds
     pub fn common_crypto_kinds(&self, other: &[CryptoKind]) -> Vec<CryptoKind> {
-        common_crypto_kinds(&self.validated_node_ids.kinds(), other)
+        common_crypto_kinds(&self.node_ids.kinds(), other)
     }
 
     /// All-of capability check
@@ -446,32 +459,32 @@ impl BucketEntryInner {
         }
     }
 
-    pub fn update_signed_node_info(
+    pub fn update_peer_info(
         &mut self,
         routing_domain: RoutingDomain,
-        signed_node_info: &SignedNodeInfo,
+        peer_info: Arc<PeerInfo>,
     ) -> bool {
-        // Get the correct signed_node_info for the chosen routing domain
-        let opt_current_sni = match routing_domain {
-            RoutingDomain::LocalNetwork => &mut self.local_network.signed_node_info,
-            RoutingDomain::PublicInternet => &mut self.public_internet.signed_node_info,
+        // Get the correct PeerInfo for the chosen routing domain
+        let opt_current_pi = match routing_domain {
+            RoutingDomain::LocalNetwork => &mut self.local_network.peer_info,
+            RoutingDomain::PublicInternet => &mut self.public_internet.peer_info,
         };
 
-        // See if we have an existing signed_node_info to update or not
+        // See if we have an existing PeerInfo to update or not
         let mut node_info_changed = false;
-        let mut had_previous_node_info = false;
-        if let Some(current_sni) = opt_current_sni {
-            had_previous_node_info = true;
+        // let mut had_previous_node_info = false;
+        if let Some(current_pi) = opt_current_pi {
+            // had_previous_node_info = true;
 
             // Always allow overwriting unsigned node (bootstrap)
-            if current_sni.has_any_signature() {
+            if !current_pi.signatures().is_empty() {
                 // If the timestamp hasn't changed or is less, ignore this update
-                if signed_node_info.timestamp() <= current_sni.timestamp() {
+                if peer_info.node_info().timestamp() <= current_pi.node_info().timestamp() {
                     // If we received a node update with the same timestamp
                     // we can make this node live again, but only if our network has recently changed
                     // which may make nodes that were unreachable now reachable with the same dialinfo
                     if !self.updated_since_last_network_change
-                        && signed_node_info.timestamp() == current_sni.timestamp()
+                        && peer_info.node_info().timestamp() == current_pi.node_info().timestamp()
                     {
                         // No need to update the signednodeinfo though since the timestamp is the same
                         // Let the node try to live again but don't mark it as seen yet
@@ -482,18 +495,18 @@ impl BucketEntryInner {
                 }
 
                 // See if anything has changed in this update beside the timestamp
-                if !signed_node_info.equivalent(current_sni) {
+                if !peer_info.equivalent(current_pi) {
                     node_info_changed = true;
                 }
             }
         }
 
         // Update the envelope version support we have to use
-        let envelope_support = signed_node_info.node_info().envelope_support().to_vec();
+        let envelope_support = peer_info.node_info().envelope_support().to_vec();
 
         // Update the signed node info
         // Let the node try to live again but don't mark it as seen yet
-        *opt_current_sni = Some(Box::new(signed_node_info.clone()));
+        *opt_current_pi = Some(peer_info.clone());
         self.set_envelope_support(envelope_support);
         self.updated_since_last_network_change = true;
         self.make_not_dead(Timestamp::now());
@@ -501,7 +514,7 @@ impl BucketEntryInner {
         // Update geolocation info
         #[cfg(feature = "geolocation")]
         {
-            self.geolocation_info = signed_node_info.get_geolocation_info(routing_domain);
+            self.geolocation_info = peer_info.node_info().get_geolocation_info(routing_domain);
         }
 
         // If we're updating an entry's node info, purge all
@@ -513,19 +526,15 @@ impl BucketEntryInner {
             self.clear_last_flows_except_latest();
         }
 
-        // Clear the peerinfo cache since the node info changed or was added
-        if node_info_changed || !had_previous_node_info {
-            let mut pi_cache = self.peer_info_cache.lock();
-            pi_cache.remove(&routing_domain);
-        }
-
         node_info_changed
     }
 
     #[cfg(feature = "geolocation")]
     pub(super) fn update_geolocation_info(&mut self) {
-        if let Some(ref sni) = self.public_internet.signed_node_info {
-            self.geolocation_info = sni.get_geolocation_info(RoutingDomain::PublicInternet);
+        if let Some(ref peerinfo) = self.public_internet.peer_info {
+            self.geolocation_info = peerinfo
+                .node_info()
+                .get_geolocation_info(RoutingDomain::PublicInternet);
         }
     }
 
@@ -533,8 +542,8 @@ impl BucketEntryInner {
         for routing_domain in routing_domain_set {
             // Get the correct signed_node_info for the chosen routing domain
             let opt_current_sni = match routing_domain {
-                RoutingDomain::LocalNetwork => &self.local_network.signed_node_info,
-                RoutingDomain::PublicInternet => &self.public_internet.signed_node_info,
+                RoutingDomain::LocalNetwork => &self.local_network.peer_info,
+                RoutingDomain::PublicInternet => &self.public_internet.peer_info,
             };
             if opt_current_sni.is_some() {
                 return true;
@@ -543,64 +552,37 @@ impl BucketEntryInner {
         false
     }
 
-    pub fn exists_in_routing_domain(
-        &self,
-        rti: &RoutingTableInner,
-        routing_domain: RoutingDomain,
-    ) -> bool {
-        // Check node info
-        if self.has_node_info(routing_domain.into()) {
-            return true;
-        }
+    // pub fn exists_in_routing_domain(
+    //     &self,
+    //     rti: &RoutingTableInner,
+    //     routing_domain: RoutingDomain,
+    // ) -> bool {
+    //     // Check node info
+    //     if self.has_node_info(routing_domain.into()) {
+    //         return true;
+    //     }
 
-        // Check connections
-        let last_flows = self.last_flows(rti, true, NodeRefFilter::from(routing_domain));
-        !last_flows.is_empty()
-    }
+    //     // Check connections
+    //     let last_flows = self.last_flows(rti, true, NodeRefFilter::from(routing_domain));
+    //     !last_flows.is_empty()
+    // }
 
     pub fn node_info(&self, routing_domain: RoutingDomain) -> Option<&NodeInfo> {
-        let opt_current_sni = match routing_domain {
-            RoutingDomain::LocalNetwork => &self.local_network.signed_node_info,
-            RoutingDomain::PublicInternet => &self.public_internet.signed_node_info,
+        let opt_peer_info = match routing_domain {
+            RoutingDomain::LocalNetwork => &self.local_network.peer_info,
+            RoutingDomain::PublicInternet => &self.public_internet.peer_info,
         };
-        opt_current_sni.as_ref().map(|s| s.node_info())
-    }
-
-    pub fn signed_node_info(&self, routing_domain: RoutingDomain) -> Option<&SignedNodeInfo> {
-        let opt_current_sni = match routing_domain {
-            RoutingDomain::LocalNetwork => &self.local_network.signed_node_info,
-            RoutingDomain::PublicInternet => &self.public_internet.signed_node_info,
-        };
-        opt_current_sni.as_ref().map(|s| s.as_ref())
+        opt_peer_info.as_ref().map(|s| s.node_info())
     }
 
     pub fn get_peer_info(&self, routing_domain: RoutingDomain) -> Option<Arc<PeerInfo>> {
-        // Return cached peer info if we have it
-        let mut pi_cache = self.peer_info_cache.lock();
-        if let Some(opt_pi) = pi_cache.get(&routing_domain).cloned() {
-            return opt_pi;
-        }
-
-        // Create a new peerinfo
-        let opt_current_sni = match routing_domain {
-            RoutingDomain::LocalNetwork => &self.local_network.signed_node_info,
-            RoutingDomain::PublicInternet => &self.public_internet.signed_node_info,
+        let opt_current_pi = match routing_domain {
+            RoutingDomain::LocalNetwork => &self.local_network.peer_info,
+            RoutingDomain::PublicInternet => &self.public_internet.peer_info,
         };
-        // Peer info includes all node ids, even unvalidated ones
-        let node_ids = self.node_ids();
-        let opt_pi = match opt_current_sni {
-            Some(s) => match PeerInfo::new(routing_domain, node_ids, *s.clone()) {
-                Ok(v) => Some(Arc::new(v)),
-                Err(_) => None,
-            },
-            None => None,
-        };
-
-        // Cache the peerinfo
-        pi_cache.insert(routing_domain, opt_pi.clone());
 
         // Return the peerinfo
-        opt_pi
+        opt_current_pi.clone()
     }
 
     pub fn best_routing_domain(
@@ -610,11 +592,11 @@ impl BucketEntryInner {
     ) -> Option<RoutingDomain> {
         // Check node info
         for routing_domain in routing_domain_set {
-            let opt_current_sni = match routing_domain {
-                RoutingDomain::LocalNetwork => &self.local_network.signed_node_info,
-                RoutingDomain::PublicInternet => &self.public_internet.signed_node_info,
+            let opt_current_pi = match routing_domain {
+                RoutingDomain::LocalNetwork => &self.local_network.peer_info,
+                RoutingDomain::PublicInternet => &self.public_internet.peer_info,
             };
-            if opt_current_sni.is_some() {
+            if opt_current_pi.is_some() {
                 return Some(routing_domain);
             }
         }
@@ -622,7 +604,7 @@ impl BucketEntryInner {
         let mut best_routing_domain: Option<RoutingDomain> = None;
         let last_connections = self.last_flows(rti, true, NodeRefFilter::from(routing_domain_set));
         for lc in last_connections {
-            if let Some(rd) = rti.routing_domain_for_address(lc.0.remote_address().address()) {
+            if let Some(rd) = rti.routing_domain_for_flow(lc.0) {
                 if let Some(brd) = best_routing_domain {
                     if rd < brd {
                         best_routing_domain = Some(rd);
@@ -711,8 +693,7 @@ impl BucketEntryInner {
             .iter()
             .filter_map(|(k, v)| {
                 let include = {
-                    let remote_address = v.0.remote_address().address();
-                    rti.routing_domain_for_address(remote_address).map(|rd| {
+                    rti.routing_domain_for_flow(v.0).map(|rd| {
                         filter.routing_domain_set.contains(rd)
                             && filter.dial_info_filter.protocol_type_set.contains(k.0)
                             && filter.dial_info_filter.address_type_set.contains(k.1)
@@ -730,7 +711,7 @@ impl BucketEntryInner {
                 // Check if the connection is still considered live
                 let alive =
                     // Should we check the connection table?
-                    if v.0.protocol_type().is_ordered() {
+                    if matches!(v.0.protocol_type().sequence_ordering(), SequenceOrdering::Ordered) {
                         // Look the connection up in the connection manager and see if it's still there
                         if let Some(connection_manager) = &opt_connection_manager {
                             connection_manager.get_connection(v.0).is_some()
@@ -741,7 +722,7 @@ impl BucketEntryInner {
                         // If this is not connection oriented, then we check our last seen time
                         // to see if this mapping has expired (beyond our timeout)
                         let cur_ts = Timestamp::now();
-                        (v.1 + TimestampDuration::new(CONNECTIONLESS_TIMEOUT_SECS as u64 * 1_000_000u64)) >= cur_ts
+                        v.1.later(CONNECTIONLESS_TIMEOUT) >= cur_ts
                     };
 
                 if alive {
@@ -756,30 +737,33 @@ impl BucketEntryInner {
         out
     }
 
-    pub(super) fn add_envelope_version(&mut self, envelope_version: u8) {
+    pub(super) fn add_envelope_version(&mut self, envelope_version: EnvelopeVersion) {
+        assert!(VALID_ENVELOPE_VERSIONS.contains(&envelope_version));
         if self.envelope_support.contains(&envelope_version) {
             return;
         }
         self.envelope_support.push(envelope_version);
-        self.envelope_support.sort();
-        self.envelope_support.dedup();
+        self.envelope_support.sort_by(|a, b| {
+            let a_sort = VALID_ENVELOPE_VERSIONS.iter().position(|x| x == a).unwrap();
+            let b_sort = VALID_ENVELOPE_VERSIONS.iter().position(|x| x == b).unwrap();
+            a_sort.cmp(&b_sort)
+        });
     }
 
-    pub(super) fn set_envelope_support(&mut self, mut envelope_support: Vec<u8>) {
+    pub(super) fn set_envelope_support(&mut self, mut envelope_support: Vec<EnvelopeVersion>) {
         envelope_support.sort();
         envelope_support.dedup();
         self.envelope_support = envelope_support;
     }
 
     #[expect(dead_code)]
-    pub fn envelope_support(&self) -> Vec<u8> {
+    pub fn envelope_support(&self) -> Vec<EnvelopeVersion> {
         self.envelope_support.clone()
     }
 
-    pub fn best_envelope_version(&self) -> Option<u8> {
+    pub fn best_envelope_version(&self) -> Option<EnvelopeVersion> {
         self.envelope_support
             .iter()
-            .rev()
             .find(|x| VALID_ENVELOPE_VERSIONS.contains(x))
             .copied()
     }
@@ -840,13 +824,29 @@ impl BucketEntryInner {
         }
     }
 
-    pub fn set_seen_our_node_info_ts(&mut self, routing_domain: RoutingDomain, seen_ts: Timestamp) {
+    pub fn set_seen_our_node_info_ts(
+        &mut self,
+        routing_domain: RoutingDomain,
+        seen_ts: Timestamp,
+    ) -> Option<Timestamp> {
         match routing_domain {
             RoutingDomain::LocalNetwork => {
-                self.local_network.last_seen_our_node_info_ts = seen_ts;
+                let old_ts = self.local_network.last_seen_our_node_info_ts;
+                if old_ts != seen_ts {
+                    self.local_network.last_seen_our_node_info_ts = seen_ts;
+                    Some(old_ts)
+                } else {
+                    None
+                }
             }
             RoutingDomain::PublicInternet => {
-                self.public_internet.last_seen_our_node_info_ts = seen_ts;
+                let old_ts = self.public_internet.last_seen_our_node_info_ts;
+                if old_ts != seen_ts {
+                    self.public_internet.last_seen_our_node_info_ts = seen_ts;
+                    Some(old_ts)
+                } else {
+                    None
+                }
             }
         }
     }
@@ -926,8 +926,8 @@ impl BucketEntryInner {
             None => return Some(BucketEntryUnreliableReason::NotSeenConsecutively),
             // If not have seen the node consistently for longer than UNRELIABLE_PING_SPAN_SECS then it is unreliable
             Some(ts) => {
-                let seen_consecutively = cur_ts.saturating_sub(ts)
-                    >= TimestampDuration::new(UNRELIABLE_PING_SPAN_SECS as u64 * 1_000_000u64);
+                let seen_consecutively = cur_ts.duration_since(ts)
+                    >= TimestampDuration::new_secs(UNRELIABLE_PING_SPAN_SECS);
                 if !seen_consecutively {
                     return Some(BucketEntryUnreliableReason::InUnreliablePingSpan);
                 }
@@ -957,8 +957,8 @@ impl BucketEntryInner {
             // return dead if we have not heard from the node at all for the duration of the unreliable ping span
             // and we have tried to reach it and failed the entire time of unreliable ping span
             Some(ts) => {
-                let not_seen = cur_ts.saturating_sub(ts)
-                    >= TimestampDuration::new(UNRELIABLE_PING_SPAN_SECS as u64 * 1_000_000u64);
+                let not_seen = cur_ts.duration_since(ts)
+                    >= TimestampDuration::new_secs(UNRELIABLE_PING_SPAN_SECS);
                 let no_answers = self.peer_stats.rpc_stats.recent_lost_answers_unordered
                     + self.peer_stats.rpc_stats.recent_lost_answers_ordered
                     >= (UNRELIABLE_PING_SPAN_SECS / UNRELIABLE_PING_INTERVAL_SECS);
@@ -990,7 +990,7 @@ impl BucketEntryInner {
     //     self.peer_stats.rpc_stats.last_question_ts
     // }
 
-    fn needs_constant_ping(&self, cur_ts: Timestamp, interval_us: TimestampDuration) -> bool {
+    fn needs_constant_ping(&self, cur_ts: Timestamp, interval_duration: TimestampDuration) -> bool {
         // If we have not either seen the node in the last 'interval' then we should ping it
         let latest_contact_time = self.last_outbound_contact_time();
 
@@ -998,7 +998,7 @@ impl BucketEntryInner {
             None => true,
             Some(latest_contact_time) => {
                 // If we haven't done anything with this node in 'interval' seconds
-                cur_ts.saturating_sub(latest_contact_time) >= interval_us
+                cur_ts.duration_since(latest_contact_time) >= interval_duration
             }
         }
     }
@@ -1026,13 +1026,13 @@ impl BucketEntryInner {
                     Some(latest_contact_time) => {
                         let first_consecutive_seen_ts =
                             self.peer_stats.rpc_stats.first_consecutive_seen_ts.unwrap();
-                        let start_of_reliable_time = first_consecutive_seen_ts
-                            + TimestampDuration::new_secs(
+                        let start_of_reliable_time =
+                            first_consecutive_seen_ts.later(TimestampDuration::new_secs(
                                 UNRELIABLE_PING_SPAN_SECS - UNRELIABLE_PING_INTERVAL_SECS,
-                            );
-                        let reliable_cur = cur_ts.saturating_sub(start_of_reliable_time);
+                            ));
+                        let reliable_cur = cur_ts.duration_since(start_of_reliable_time);
                         let reliable_last =
-                            latest_contact_time.saturating_sub(start_of_reliable_time);
+                            latest_contact_time.duration_since(start_of_reliable_time);
 
                         retry_falloff_log(
                             reliable_last.as_u64(),
@@ -1048,7 +1048,7 @@ impl BucketEntryInner {
                 // If we are in an unreliable state, we need a ping every UNRELIABLE_PING_INTERVAL_SECS seconds
                 self.needs_constant_ping(
                     cur_ts,
-                    TimestampDuration::new(UNRELIABLE_PING_INTERVAL_SECS as u64 * 1_000_000u64),
+                    TimestampDuration::new_secs(UNRELIABLE_PING_INTERVAL_SECS),
                 )
             }
             BucketEntryState::Dead => {
@@ -1091,18 +1091,12 @@ impl BucketEntryInner {
         let first_consecutive_seen_ts = if let Some(first_consecutive_seen_ts) =
             self.peer_stats.rpc_stats.first_consecutive_seen_ts
         {
-            format!(
-                "{}s ago",
-                timestamp_to_secs(cur_ts.saturating_sub(first_consecutive_seen_ts).as_u64())
-            )
+            format!("{} ago", cur_ts.duration_since(first_consecutive_seen_ts))
         } else {
             "never".to_owned()
         };
         let last_seen_ts_str = if let Some(last_seen_ts) = self.peer_stats.rpc_stats.last_seen_ts {
-            format!(
-                "{}s ago",
-                timestamp_to_secs(cur_ts.saturating_sub(last_seen_ts).as_u64())
-            )
+            format!("{} ago", cur_ts.duration_since(last_seen_ts))
         } else {
             "never".to_owned()
         };
@@ -1123,13 +1117,16 @@ impl BucketEntryInner {
         ts: Timestamp,
         bytes: ByteCount,
         expects_answer: bool,
-        ordered: bool,
+        ordering: SequenceOrdering,
     ) {
         self.transfer_stats_accounting.add_up(bytes);
-        if ordered {
-            self.answer_stats_accounting_ordered.record_question(ts);
-        } else {
-            self.answer_stats_accounting_unordered.record_question(ts);
+        match ordering {
+            SequenceOrdering::Ordered => {
+                self.answer_stats_accounting_ordered.record_question(ts);
+            }
+            SequenceOrdering::Unordered => {
+                self.answer_stats_accounting_unordered.record_question(ts);
+            }
         }
         self.peer_stats.rpc_stats.messages_sent += 1;
         self.peer_stats.rpc_stats.failed_to_send = 0;
@@ -1153,43 +1150,53 @@ impl BucketEntryInner {
         send_ts: Timestamp,
         recv_ts: Timestamp,
         bytes: ByteCount,
-        ordered: bool,
+        ordering: SequenceOrdering,
     ) {
         self.transfer_stats_accounting.add_down(bytes);
-        if ordered {
-            self.answer_stats_accounting_ordered.record_answer(recv_ts);
-            self.peer_stats.rpc_stats.recent_lost_answers_ordered = 0;
-        } else {
-            self.answer_stats_accounting_unordered
-                .record_answer(recv_ts);
-            self.peer_stats.rpc_stats.recent_lost_answers_unordered = 0;
+
+        match ordering {
+            SequenceOrdering::Ordered => {
+                self.answer_stats_accounting_ordered.record_answer(recv_ts);
+                self.peer_stats.rpc_stats.recent_lost_answers_ordered = 0;
+            }
+            SequenceOrdering::Unordered => {
+                self.answer_stats_accounting_unordered
+                    .record_answer(recv_ts);
+                self.peer_stats.rpc_stats.recent_lost_answers_unordered = 0;
+            }
         }
+
         self.peer_stats.rpc_stats.messages_rcvd += 1;
         self.peer_stats.rpc_stats.questions_in_flight -= 1;
-        self.record_latency(recv_ts.saturating_sub(send_ts));
+        self.record_latency(recv_ts.duration_since(send_ts));
         self.touch_last_seen(recv_ts);
     }
-    pub(super) fn lost_answer(&mut self, ordered: bool) {
+    pub(super) fn lost_answer(&mut self, ordering: SequenceOrdering) {
         let cur_ts = Timestamp::now();
-        if ordered {
-            self.answer_stats_accounting_ordered
-                .record_lost_answer(cur_ts);
-            self.peer_stats.rpc_stats.recent_lost_answers_ordered += 1;
-            if self.peer_stats.rpc_stats.recent_lost_answers_ordered
-                > UNRELIABLE_LOST_ANSWERS_ORDERED
-            {
-                self.peer_stats.rpc_stats.first_consecutive_seen_ts = None;
+
+        match ordering {
+            SequenceOrdering::Ordered => {
+                self.answer_stats_accounting_ordered
+                    .record_lost_answer(cur_ts);
+                self.peer_stats.rpc_stats.recent_lost_answers_ordered += 1;
+                if self.peer_stats.rpc_stats.recent_lost_answers_ordered
+                    > UNRELIABLE_LOST_ANSWERS_ORDERED
+                {
+                    self.peer_stats.rpc_stats.first_consecutive_seen_ts = None;
+                }
             }
-        } else {
-            self.answer_stats_accounting_unordered
-                .record_lost_answer(cur_ts);
-            self.peer_stats.rpc_stats.recent_lost_answers_unordered += 1;
-            if self.peer_stats.rpc_stats.recent_lost_answers_unordered
-                > UNRELIABLE_LOST_ANSWERS_UNORDERED
-            {
-                self.peer_stats.rpc_stats.first_consecutive_seen_ts = None;
+            SequenceOrdering::Unordered => {
+                self.answer_stats_accounting_unordered
+                    .record_lost_answer(cur_ts);
+                self.peer_stats.rpc_stats.recent_lost_answers_unordered += 1;
+                if self.peer_stats.rpc_stats.recent_lost_answers_unordered
+                    > UNRELIABLE_LOST_ANSWERS_UNORDERED
+                {
+                    self.peer_stats.rpc_stats.first_consecutive_seen_ts = None;
+                }
             }
         }
+
         self.peer_stats.rpc_stats.questions_in_flight -= 1;
     }
     pub(super) fn failed_to_send(&mut self, ts: Timestamp, expects_answer: bool) {
@@ -1221,26 +1228,25 @@ pub(crate) struct BucketEntry {
 }
 
 impl BucketEntry {
-    pub(super) fn new(first_node_id: TypedNodeId) -> Self {
+    pub(super) fn new(first_node_id: NodeId) -> Self {
         // First node id should always be one we support since TypedKeySets are sorted and we must have at least one supported key
-        assert!(VALID_CRYPTO_KINDS.contains(&first_node_id.kind));
+        assert!(VALID_CRYPTO_KINDS.contains(&first_node_id.kind()));
 
         let now = Timestamp::now();
         let inner = BucketEntryInner {
-            validated_node_ids: TypedNodeIdGroup::from(first_node_id),
-            unsupported_node_ids: TypedNodeIdGroup::new(),
+            node_ids: NodeIdGroup::from(first_node_id),
             envelope_support: Vec::new(),
             updated_since_last_network_change: false,
             last_flows: BTreeMap::new(),
             last_sender_info: HashMap::new(),
             local_network: BucketEntryLocalNetwork {
                 last_seen_our_node_info_ts: Timestamp::new(0u64),
-                signed_node_info: None,
+                peer_info: None,
                 node_status: None,
             },
             public_internet: BucketEntryPublicInternet {
                 last_seen_our_node_info_ts: Timestamp::new(0u64),
-                signed_node_info: None,
+                peer_info: None,
                 node_status: None,
             },
             #[cfg(feature = "geolocation")]
@@ -1252,7 +1258,6 @@ impl BucketEntry {
                 transfer: TransferStatsDownUp::default(),
                 state: StateStats::default(),
             },
-            peer_info_cache: Mutex::new(BTreeMap::new()),
             latency_stats_accounting: LatencyStatsAccounting::new(),
             transfer_stats_accounting: TransferStatsAccounting::new(),
             state_stats_accounting: Mutex::new(StateStatsAccounting::new()),

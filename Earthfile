@@ -15,10 +15,14 @@ VERSION 0.8
 # Ensure we are using an amd64 platform because some of these targets use cross-platform tooling
 FROM ubuntu:18.04
 ENV ZIG_VERSION=0.13.0
-ENV CMAKE_VERSION_MINOR=3.30
-ENV CMAKE_VERSION_PATCH=3.30.1
-ENV WASM_BINDGEN_CLI_VERSION=0.2.100
+ENV CMAKE_VERSION_MINOR=4.0
+ENV CMAKE_VERSION_PATCH=4.0.2
+ENV WASM_BINDGEN_CLI_VERSION=0.2.106
 ENV RUST_VERSION=1.86.0
+ENV NDK_VERSION=28.2.13676358
+ENV ANDROID_VERSION=36
+ENV ANDROID_BUILD_TOOLS_VERSION=35.0.0
+ENV ANDROID_COMMAND_LINE_TOOLS=https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
 ENV CARGO_HOME=/usr/local/cargo
@@ -118,9 +122,9 @@ deps-android:
     COPY +deps-rust/zig /usr/local/zig
     RUN apt-get install -y openjdk-9-jdk-headless
     RUN mkdir /Android; mkdir /Android/Sdk
-    RUN curl --retry $RETRY_COUNT --retry-connrefused -o /Android/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip
+    RUN curl --retry $RETRY_COUNT --retry-connrefused -o /Android/cmdline-tools.zip $ANDROID_COMMAND_LINE_TOOLS
     RUN cd /Android; unzip /Android/cmdline-tools.zip
-    RUN yes | /Android/cmdline-tools/bin/sdkmanager --sdk_root=/Android/Sdk build-tools\;34.0.0 ndk\;27.0.12077973 cmake\;3.22.1 platform-tools platforms\;android-34 cmdline-tools\;latest
+    RUN yes | /Android/cmdline-tools/bin/sdkmanager --sdk_root=/Android/Sdk build-tools\;$ANDROID_BUILD_TOOLS_VERSION ndk\;$NDK_VERSION cmake\;$CMAKE_VERSION_PATCH platform-tools platforms\;android-$ANDROID_VERSION cmdline-tools\;latest
     RUN rm -rf /Android/cmdline-tools
     RUN apt-get clean
 
@@ -176,7 +180,7 @@ code-linux:
         ARG CACHE_TAG
         FROM $CI_REGISTRY_IMAGE/$CACHE_NAME:$CACHE_TAG
     END
-    COPY --keep-ts --dir .cargo build_docs.sh files scripts veilid-cli veilid-core veilid-server veilid-tools veilid-flutter veilid-wasm veilid-remote-api Cargo.lock Cargo.toml /veilid
+    COPY --keep-ts --dir .cargo build_docs.sh scripts veilid-cli veilid-core veilid-server veilid-tools veilid-flutter veilid-wasm veilid-remote-api Cargo.lock Cargo.toml /veilid
     # Check to make sure Cargo.lock is up to date
     RUN cargo update -w --locked
     # Restore original Cargo.lock
@@ -185,7 +189,7 @@ code-linux:
 # Code + Linux + Android deps
 code-android:
     FROM +deps-android
-    COPY --keep-ts --dir .cargo files scripts veilid-cli veilid-core veilid-server veilid-tools veilid-flutter veilid-wasm veilid-remote-api Cargo.lock Cargo.toml /veilid
+    COPY --keep-ts --dir .cargo scripts veilid-cli veilid-core veilid-server veilid-tools veilid-flutter veilid-wasm veilid-remote-api Cargo.lock Cargo.toml /veilid
     COPY --keep-ts scripts/earthly/cargo-android/config.toml /veilid/.cargo/config.toml
 
 # Clippy only
@@ -241,7 +245,7 @@ build-linux-arm64:
 build-android:
     FROM +code-android
     WORKDIR /veilid/veilid-core
-    ENV PATH=$PATH:/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/
+    ENV PATH=$PATH:/Android/Sdk/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/
     RUN cargo build --locked --target aarch64-linux-android --release
     RUN cargo build --locked --target armv7-linux-androideabi --release
     RUN cargo build --locked --target i686-linux-android --release
@@ -272,7 +276,7 @@ unit-tests-clippy-macos-linux:
 unit-tests-docs-linux:
     FROM +code-linux
     RUN ./build_docs.sh
-        
+
 unit-tests-native-linux:
     FROM +code-linux
     RUN cargo test --locked --tests --target $DEFAULT_CARGO_TARGET -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core -p veilid-remote-api
@@ -281,7 +285,7 @@ unit-tests-wasm-linux:
     FROM +code-linux
     # Just run build now because actual unit tests require network access
     # which should be moved to a separate integration test
-    RUN veilid-wasm/wasm_build.sh release
+    RUN veilid-wasm/wasm_build_dart.sh release
 
 unit-tests-linux:
     WAIT
@@ -306,7 +310,7 @@ unit-tests-linux:
         BUILD +unit-tests-wasm-linux
     END
 
-# Package 
+# Package
 package-linux-amd64-deb:
     ARG IS_NIGHTLY="false"
     FROM +build-linux-amd64
@@ -344,7 +348,7 @@ package-linux-amd64-rpm:
     RUN veilid/package/rpm/veilid-cli/earthly_make_veilid_cli_rpm.sh x86_64 x86_64-unknown-linux-gnu "$IS_NIGHTLY"
     # save artifacts
     SAVE ARTIFACT --keep-ts /root/rpmbuild/RPMS/x86_64/*.rpm AS LOCAL ./target/packages/
-    
+
 package-linux-arm64-deb:
     ARG IS_NIGHTLY="false"
     FROM +build-linux-arm64
@@ -398,7 +402,7 @@ package-linux-arm64:
     WAIT
         BUILD +package-linux-arm64-rpm
     END
-    
+
 package-linux:
     WAIT
         BUILD +package-linux-amd64

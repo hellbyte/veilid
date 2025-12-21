@@ -1056,7 +1056,7 @@ impl CursiveUI {
     }
 
     pub fn set_start_time() {
-        START_TIME.store(get_timestamp(), Ordering::Relaxed)
+        START_TIME.store(get_raw_timestamp(), Ordering::Relaxed)
     }
 
     pub fn get_start_time() -> u64 {

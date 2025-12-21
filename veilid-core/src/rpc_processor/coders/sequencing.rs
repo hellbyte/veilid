@@ -1,17 +1,22 @@
 use super::*;
 
-pub fn encode_sequencing(sequencing: Sequencing) -> veilid_capnp::Sequencing {
+pub const FOURCC_SEQUENCING_NO_PREFERENCE: u32 = u32::from_be_bytes(*b"sqNP");
+pub const FOURCC_SEQUENCING_PREFER_ORDERED: u32 = u32::from_be_bytes(*b"sqPO");
+pub const FOURCC_SEQUENCING_ENSURE_ORDERED: u32 = u32::from_be_bytes(*b"sqEO");
+
+pub fn decode_sequencing(sequencing: u32) -> Result<Sequencing, RPCError> {
     match sequencing {
-        Sequencing::NoPreference => veilid_capnp::Sequencing::NoPreference,
-        Sequencing::PreferOrdered => veilid_capnp::Sequencing::PreferOrdered,
-        Sequencing::EnsureOrdered => veilid_capnp::Sequencing::EnsureOrdered,
+        FOURCC_SEQUENCING_NO_PREFERENCE => Ok(Sequencing::NoPreference),
+        FOURCC_SEQUENCING_PREFER_ORDERED => Ok(Sequencing::PreferOrdered),
+        FOURCC_SEQUENCING_ENSURE_ORDERED => Ok(Sequencing::EnsureOrdered),
+        _ => Err(RPCError::ignore("unsupported sequencing")),
     }
 }
 
-pub fn decode_sequencing(sequencing: veilid_capnp::Sequencing) -> Sequencing {
+pub fn encode_sequencing(sequencing: Sequencing) -> u32 {
     match sequencing {
-        veilid_capnp::Sequencing::NoPreference => Sequencing::NoPreference,
-        veilid_capnp::Sequencing::PreferOrdered => Sequencing::PreferOrdered,
-        veilid_capnp::Sequencing::EnsureOrdered => Sequencing::EnsureOrdered,
+        Sequencing::NoPreference => FOURCC_SEQUENCING_NO_PREFERENCE,
+        Sequencing::PreferOrdered => FOURCC_SEQUENCING_PREFER_ORDERED,
+        Sequencing::EnsureOrdered => FOURCC_SEQUENCING_ENSURE_ORDERED,
     }
 }

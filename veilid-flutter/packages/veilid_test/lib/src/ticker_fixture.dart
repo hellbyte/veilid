@@ -9,13 +9,15 @@ abstract class TickerFixtureTickable {
 }
 
 class TickerFixture {
-  TickerFixture({required this.updateProcessorFixture});
-
   static final _fixtureMutex = Mutex();
 
   UpdateProcessorFixture updateProcessorFixture;
+
   Timer? _tickTimer;
+
   final List<TickerFixtureTickable> _tickables = [];
+
+  TickerFixture({required this.updateProcessorFixture});
 
   Future<void> setUp() async {
     await _fixtureMutex.acquire();

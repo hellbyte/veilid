@@ -42,7 +42,7 @@ while true; do
         fi
 
         # ensure ndk is installed
-        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
         if [ -f "$ANDROID_NDK_HOME/ndk-build" ]; then
             echo '[X] Android NDK is installed at the location $ANDROID_NDK_HOME'
         else

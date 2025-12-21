@@ -26,10 +26,10 @@ impl RPCProcessor {
         );
 
         // Send the app call question
-        let waitable_reply = network_result_try!(self.question(dest, question, None).await?);
+        let waitable_reply = network_result_try!(self.question(dest, question, None, None).await?);
 
         // Keep the reply private route that was used to return with the answer
-        let reply_private_route = waitable_reply.context.reply_private_route;
+        let reply_private_route = waitable_reply.context.reply_private_route.clone();
 
         // Wait for reply
         let (msg, latency) = match self.wait_for_reply(waitable_reply, debug_string).await? {
@@ -69,11 +69,7 @@ impl RPCProcessor {
 
         let has_capability_app_message = routing_table
             .get_published_peer_info(msg.header.routing_domain())
-            .map(|ppi| {
-                ppi.signed_node_info()
-                    .node_info()
-                    .has_capability(CAP_APPMESSAGE)
-            })
+            .map(|ppi| ppi.node_info().has_capability(VEILID_CAPABILITY_APPMESSAGE))
             .unwrap_or(false);
         if !has_capability_app_message {
             return Ok(NetworkResult::service_unavailable(
@@ -82,11 +78,7 @@ impl RPCProcessor {
         }
 
         // Get the private route this came over
-        let opt_pr_pubkey = match &msg.header.detail {
-            RPCMessageHeaderDetail::Direct(_) | RPCMessageHeaderDetail::SafetyRouted(_) => None,
-            RPCMessageHeaderDetail::PrivateRouted(pr) => Some(pr.private_route),
-        };
-        let route_id = if let Some(pr_pubkey) = opt_pr_pubkey {
+        let route_id = if let Some(pr_pubkey) = msg.header.get_private_route_public_key() {
             let rss = routing_table.route_spec_store();
             let Some(route_id) = rss.get_route_id_for_key(&pr_pubkey) else {
                 return Ok(NetworkResult::invalid_message(format!(
@@ -100,7 +92,8 @@ impl RPCProcessor {
         };
 
         // Get the question
-        let (op_id, _, kind) = msg.operation.clone().destructure();
+        let op_id = msg.operation.op_id();
+        let kind = msg.operation.kind().clone();
         let app_call_q = match kind {
             RPCOperationKind::Question(q) => match q.destructure() {
                 (_, RPCQuestionDetail::AppCallQ(q)) => q,
@@ -122,7 +115,7 @@ impl RPCProcessor {
         {
             if sender.is_some() {
                 return Ok(NetworkResult::invalid_message(
-                    "Direct NodeId senders are not allowed for AppCall when footgun is disabled",
+                    "Direct BareNodeId senders are not allowed for AppCall when footgun is disabled",
                 ));
             }
         }
@@ -131,15 +124,15 @@ impl RPCProcessor {
         let handle = self.waiting_app_call_table.add_op_waiter(op_id, ());
 
         // Pass the call up through the update callback
-        let message_q = app_call_q.destructure();
+        let message = app_call_q.destructure();
         (self.update_callback())(VeilidUpdate::AppCall(Box::new(VeilidAppCall::new(
-            sender, route_id, message_q, op_id,
+            sender, route_id, message, op_id,
         ))));
 
         // Wait for an app call answer to come back from the app
         let res = self
             .waiting_app_call_table
-            .wait_for_op(handle, self.timeout_us)
+            .wait_for_op(handle, self.timeout)
             .await?;
         let (message_a, _latency) = match res {
             TimeoutOr::Timeout => {
@@ -157,6 +150,7 @@ impl RPCProcessor {
         self.answer(
             msg,
             RPCAnswer::new(RPCAnswerDetail::AppCallA(Box::new(app_call_a))),
+            None,
         )
         .await
     }

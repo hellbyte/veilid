@@ -27,7 +27,7 @@ impl NetworkManager {
             indent_all_string(&stats.self_stats.transfer_stats)
         );
         out += &self.debug_info_nodeinfo();
-
+        out += "\n";
         out += "Node Contact Method Cache\n";
         out += "-------------------------\n";
         out += &self.inner.lock().node_contact_method_cache.debug();
