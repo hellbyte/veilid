@@ -62,15 +62,19 @@ build_cache:
       # Tagged releases first
       if [[ -n "$CI_COMMIT_TAG" ]]; then
         CACHE_TAG="main" 
+        CACHE_NAME="build-cache"
       # Then branch commits
       elif [[ -n "$CI_COMMIT_BRANCH" ]]; then
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        CACHE_NAME="build-cache"
       # Then MR tests
       elif [[ -n "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ]]; then
         CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        CACHE_NAME="build-cache"
       # Catch all fallback to main
       else
         CACHE_TAG="main"
+        CACHE_NAME="build-cache"
       fi
     - 'echo "Using cache tag: $CACHE_TAG in image: $CACHE_NAME"'
     # Check if cache exists
@@ -467,4 +471,3 @@ nightly_failed_pipeline_actions:
     - uv --directory scripts/cicd-python run veilid_release_utils.py --delete-build-machine
   when: on_failure
 
-# Just a comment so I can make a commit (TC)
