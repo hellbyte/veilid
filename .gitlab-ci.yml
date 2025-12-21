@@ -135,11 +135,21 @@ test_build:
   script:
     # Use branch name as tag, sanitize for Docker tag compatibility
     - |
-      if [[ -z "$CI_COMMIT_BRANCH" ]]; then
+      # Tagged releases first
+      if [[ -n "$CI_COMMIT_TAG" ]]; then
+        CACHE_TAG="main" 
+        CACHE_NAME="build-cache"
+      # Then branch commits
+      elif [[ -n "$CI_COMMIT_BRANCH" ]]; then
+        CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        CACHE_NAME="build-cache"
+      # Then MR tests
+      elif [[ -n "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ]]; then
         CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
         CACHE_NAME="build-cache"
+      # Catch all fallback to main
       else
-        CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        CACHE_TAG="main"
         CACHE_NAME="build-cache"
       fi
     - 'echo "Using cache from: $CACHE_NAME:$CACHE_TAG"'
