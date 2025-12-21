@@ -59,12 +59,18 @@ build_cache:
     - apk update && apk add jq && apk add curl
     # Determine cache tag based on branch use branch name as tag, sanitize for Docker tag compatibility
     - |
-      if [[ -z "$CI_COMMIT_BRANCH" ]]; then
-        CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-        CACHE_NAME="build-cache"
-      else
+      # Tagged releases first
+      if [[ -n "$CI_COMMIT_TAG" ]]; then
+        CACHE_TAG="main" 
+      # Then branch commits
+      elif [[ -n "$CI_COMMIT_BRANCH" ]]; then
         CACHE_TAG=$(echo "$CI_COMMIT_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g')
-        CACHE_NAME="build-cache"
+      # Then MR tests
+      elif [[ -n "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ]]; then
+        CACHE_TAG="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      # Catch all fallback to main
+      else
+        CACHE_TAG="main"
       fi
     - 'echo "Using cache tag: $CACHE_TAG in image: $CACHE_NAME"'
     # Check if cache exists
