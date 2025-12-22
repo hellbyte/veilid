@@ -1,6 +1,6 @@
 [project]
 name = "veilid"
-version = "0.5.0"
+version = "0.5.1"
 # ---
 description = "Create an application in Python using the distributed Veilid framework for private, E2EE, app-to-app communication."
 authors = [{ name = "Veilid Team", email = "contact@veilid.com" }]

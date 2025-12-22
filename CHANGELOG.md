@@ -1,3 +1,14 @@
+**Changed in Veilid 0.5.1**
+
+- No veilid-server/cli or packages are being built for this release. This is solely a Rust crates update.
+- Bugfixes:
+  - Fix docs building for veilid-remote-api crate
+  - Add missing files
+  - Clean up .gitignore and remove files that did not need to be committed
+  - Fix docs.rs / build_docs.sh/bat scripts to better check for docs problems
+  - Improve veilid-flutter schema validation code (will go away eventually)
+  - Bump minimum flutter version to 3.35.0
+
 **Changed in Veilid 0.5.0**
 
 - _0.5.0 BREAKING CHANGES_
