@@ -99,36 +99,6 @@ pub(crate) mod veilid_capnp {
 #[doc(hidden)]
 pub mod tests;
 
-/// Return the cargo package version of veilid-core in string format.
-#[must_use]
-pub fn veilid_version_string() -> String {
-    env!("CARGO_PKG_VERSION").to_owned()
-}
-
-/// Return the cargo package version of veilid-core in tuple format.
-#[must_use]
-pub fn veilid_version() -> (u32, u32, u32) {
-    (
-        u32::from_str(env!("CARGO_PKG_VERSION_MAJOR")).unwrap(),
-        u32::from_str(env!("CARGO_PKG_VERSION_MINOR")).unwrap(),
-        u32::from_str(env!("CARGO_PKG_VERSION_PATCH")).unwrap(),
-    )
-}
-
-#[cfg(all(not(docsrs), not(doc)))]
-include!(env!("BOSION_PATH"));
-
-/// Return the features that were enabled when veilid-core was built.
-#[must_use]
-pub fn veilid_features() -> Vec<String> {
-    if cfg!(docsrs) {
-        vec!["default".to_string()]
-    } else {
-        let features = Bosion::CRATE_FEATURES.to_vec();
-        features.into_iter().map(String::from).collect()
-    }
-}
-
 #[cfg(target_os = "android")]
 pub use intf::android::veilid_core_setup_android;
 
@@ -151,5 +121,39 @@ cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
         pub use wasm_bindgen::prelude::*;
         pub use tsify::*;
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////
+
+/// Return the cargo package version of veilid-core in string format.
+#[must_use]
+pub fn veilid_version_string() -> String {
+    env!("CARGO_PKG_VERSION").to_owned()
+}
+
+/// Return the cargo package version of veilid-core in tuple format.
+#[must_use]
+pub fn veilid_version() -> (u32, u32, u32) {
+    (
+        u32::from_str(env!("CARGO_PKG_VERSION_MAJOR")).unwrap(),
+        u32::from_str(env!("CARGO_PKG_VERSION_MINOR")).unwrap(),
+        u32::from_str(env!("CARGO_PKG_VERSION_PATCH")).unwrap(),
+    )
+}
+
+#[cfg(not(build_docs))]
+include!(env!("BOSION_PATH"));
+
+/// Return the features that were enabled when veilid-core was built.
+#[must_use]
+pub fn veilid_features() -> Vec<String> {
+    cfg_if! {
+        if #[cfg(build_docs)] {
+            vec!["default".to_string()]
+        } else {
+            let features = Bosion::CRATE_FEATURES.to_vec();
+            features.into_iter().map(String::from).collect()
+        }
     }
 }

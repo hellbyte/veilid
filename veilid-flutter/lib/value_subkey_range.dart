@@ -9,10 +9,8 @@ class ValueSubkeyRange extends Equatable {
 
   final int high;
 
-  const ValueSubkeyRange({
-    required this.low,
-    required this.high,
-  }) : assert(low >= 0 && low <= high, 'range is invalid');
+  const ValueSubkeyRange({required this.low, required this.high})
+    : assert(low >= 0 && low <= high, 'range is invalid');
 
   factory ValueSubkeyRange.single(int val) =>
       ValueSubkeyRange(low: val, high: val);
@@ -54,7 +52,7 @@ extension ValueSubkeyRangeExt on ValueSubkeyRange {
     } else {
       return [
         ValueSubkeyRange(low: low, high: v - 1),
-        ValueSubkeyRange(low: v + 1, high: high)
+        ValueSubkeyRange(low: v + 1, high: high),
       ];
     }
   }
@@ -64,7 +62,9 @@ extension ValueSubkeyRangeExt on ValueSubkeyRange {
       return null;
     }
     return ValueSubkeyRange(
-        low: max(low, other.low), high: min(high, other.high));
+      low: max(low, other.low),
+      high: min(high, other.high),
+    );
   }
 
   ValueSubkeyRange? union(ValueSubkeyRange other) {
@@ -72,7 +72,9 @@ extension ValueSubkeyRangeExt on ValueSubkeyRange {
       return null;
     }
     return ValueSubkeyRange(
-        low: min(low, other.low), high: max(high, other.high));
+      low: min(low, other.low),
+      high: max(high, other.high),
+    );
   }
 }
 
@@ -83,13 +85,16 @@ extension ListValueSubkeyRangeExt on List<ValueSubkeyRange> {
   void validate() {
     int? lastHigh;
     for (final r in this) {
-      assert(lastHigh == null || r.low > lastHigh,
-          'subrange not in order or disjoint');
+      assert(
+        lastHigh == null || r.low > lastHigh,
+        'subrange not in order or disjoint',
+      );
       lastHigh = r.high;
     }
   }
 
   bool containsSubkey(int v) => indexWhere((e) => e.contains(v)) != -1;
+
   List<ValueSubkeyRange> removeSubkey(int v) {
     for (var i = 0; i < length; i++) {
       if (this[i].contains(v)) {
@@ -98,6 +103,9 @@ extension ListValueSubkeyRangeExt on List<ValueSubkeyRange> {
     }
     return toList();
   }
+
+  List<ValueSubkeyRange> insertSubkey(int v) =>
+      unionSubkeys([ValueSubkeyRange.single(v)]);
 
   int? get firstSubkey => isNotEmpty ? first.low : null;
 
@@ -156,7 +164,9 @@ extension ListValueSubkeyRangeExt on List<ValueSubkeyRange> {
 
       if (out.isNotEmpty && out.last.high >= (current.low - 1)) {
         out[out.length - 1] = ValueSubkeyRange(
-            low: out.last.low, high: max(out.last.high, current.high));
+          low: out.last.low,
+          high: max(out.last.high, current.high),
+        );
       } else {
         out.add(current);
       }

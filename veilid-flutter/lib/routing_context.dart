@@ -14,7 +14,7 @@ part 'routing_context.g.dart';
 
 extension ValidateDFLT on DHTSchemaDFLT {
   bool validate() {
-    if (oCnt > 65535) {
+    if (oCnt > DHTSchema.maxSubkeyCount) {
       return false;
     }
     if (oCnt <= 0) {
@@ -29,12 +29,30 @@ extension ValidateDFLT on DHTSchemaDFLT {
 extension ValidateSMPL on DHTSchemaSMPL {
   bool validate() {
     final totalsv = subkeyCount;
-    if (totalsv > 65535) {
+    if (totalsv > DHTSchema.maxSubkeyCount) {
       return false;
     }
     if (totalsv <= 0) {
       return false;
     }
+
+    var writerCount = 0;
+    if (oCnt > 0) {
+      writerCount += 1;
+    }
+    final writers = <BareMemberId>{
+      ...members.where((m) => m.mCnt > 0).map((m) => m.mKey),
+    };
+
+    if (members.length > DHTSchema.maxMemberCount) {
+      return false;
+    }
+
+    writerCount += writers.length;
+    if (writerCount > DHTSchema.maxWriterCount) {
+      return false;
+    }
+
     return true;
   }
 
@@ -66,6 +84,10 @@ extension Validate on DHTSchema {
 
 @Freezed(unionKey: 'kind', unionValueCase: FreezedUnionCase.pascal)
 sealed class DHTSchema with _$DHTSchema {
+  static const maxSubkeyCount = 1024;
+  static const maxWriterCount = 256;
+  static const maxMemberCount = 256;
+
   @FreezedUnionValue('DFLT')
   const factory DHTSchema.dflt({required int oCnt}) = DHTSchemaDFLT;
 
@@ -83,7 +105,7 @@ const defaultDHTSchema = DHTSchema.dflt(oCnt: 1);
 
 @freezed
 sealed class DHTSchemaMember with _$DHTSchemaMember {
-  @Assert('mCnt > 0 && mCnt <= 65535', 'value out of range')
+  @Assert('mCnt > 0 && mCnt <= DHTSchema.maxMemberCount', 'value out of range')
   const factory DHTSchemaMember({
     required BareMemberId mKey,
     required int mCnt,

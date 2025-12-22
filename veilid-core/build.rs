@@ -235,10 +235,13 @@ fn download_geoip_database_files() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(build_docs,values(none()))");
+
     if std::env::var("DOCS_RS").is_ok()
         || std::env::var("CARGO_CFG_DOC").is_ok()
         || std::env::var("BUILD_DOCS").is_ok()
     {
+        println!("cargo:rustc-cfg=build_docs");
         return;
     }
 

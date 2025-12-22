@@ -1,8 +1,9 @@
 @echo off
 setlocal
 
-SET BUILD_DOCS=1
-cargo rustdoc -p veilid-core
-cargo rustdoc -p veilid-tools
+cargo install cargo-docs-rs
+cargo +nightly docs-rs -p veilid-core
+cargo +nightly docs-rs -p veilid-tools
+cargo +nightly docs-rs -p veilid-remote-api
 
 endlocal

@@ -575,7 +575,7 @@ return $default(_that.mKey,_that.mCnt);case _:
 @JsonSerializable()
 
 class _DHTSchemaMember implements DHTSchemaMember {
-  const _DHTSchemaMember({required this.mKey, required this.mCnt}): assert(mCnt > 0 && mCnt <= 65535, 'value out of range');
+  const _DHTSchemaMember({required this.mKey, required this.mCnt}): assert(mCnt > 0 && mCnt <= DHTSchema.maxMemberCount, 'value out of range');
   factory _DHTSchemaMember.fromJson(Map<String, dynamic> json) => _$DHTSchemaMemberFromJson(json);
 
 @override final  BareMemberId mKey;
