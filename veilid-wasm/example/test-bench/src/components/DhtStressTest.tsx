@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { veilidCrypto, DHTSchema } from 'veilid-wasm';
+
 import { getRoutingContext } from '../veilid/veilid-core';
 
 async function dhtStressTest() {
@@ -18,37 +20,34 @@ async function dhtStressTest() {
     }
 
     let a = Array();
-    for (var r = 0; r < recordCount; r++) {
-        let dhtRecord = await routingContext.createDhtRecord(
-            {
-                kind: 'DFLT',
-                o_cnt: subkeyCount,
-            },
-        );
+    for (let r = 0; r < recordCount; r++) {
+        const schema: DHTSchema = {DFLT: {oCnt: subkeyCount}};
+
+        const dhtRecord = await routingContext.createDHTRecord(veilidCrypto.CRYPTO_KIND_VLD0, schema)
 
         // Set all subkeys
-        for (var n = 0; n < subkeyCount; n++) {
+        for (let n = 0; n < subkeyCount; n++) {
             a.push((async () => {
-                // const measureName = `${r}-setDhtValue-${n}`;
+                const measureName = `${r}-setDhtValue-${n}`;
 
-                // performance.mark(measureName + "-start")
-                await routingContext.setDhtValue(
+                performance.mark(measureName + "-start")
+                await routingContext.setDHTValue(
                     dhtRecord.key,
                     n,
                     dataArray,
                 );
 
-                // performance.measure(measureName, measureName + "-start")
+                performance.measure(measureName, measureName + "-start")
             })());
         }
 
         // Inspect all records N times while sets are happening
-        for (var n = 0; n < inspectCount; n++) {
+        for (let n = 0; n < inspectCount; n++) {
             a.push((async () => {
                 const measureName = `${r}-inspectDhtRecord-${n}`;
 
                 performance.mark(measureName + "-start")
-                await routingContext.inspectDhtRecord(
+                await routingContext.inspectDHTRecord(
                     dhtRecord.key,
                     null,
                     "SyncSet",

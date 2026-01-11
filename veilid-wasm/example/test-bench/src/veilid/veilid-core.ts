@@ -46,7 +46,7 @@ export async function startVeilid() {
 
 // Listen to updates, and `attach()` once startup is complete.
 veilidEventEmitter.on('Log', (data) => {
-    switch (data?.log_level) {
+    switch (data?.logLevel) {
         case 'Warn':
             console.warn(data.message);
             break;

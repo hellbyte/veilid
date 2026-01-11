@@ -9,14 +9,14 @@ export const veildCoreInitConfig: VeilidWASMConfig = {
         api: {
             enabled: true,
             level: 'Info',
-            ignore_log_targets: [],
+            ignoreLogTargets: [],
         },
         performance: {
             enabled: false,
             level: 'Info',
-            logs_in_timings: false,
-            logs_in_console: false,
-            ignore_log_targets: [],
+            logsInTimings: false,
+            logsInConsole: "Off",
+            ignoreLogTargets: [],
         },
     },
 };
@@ -24,9 +24,9 @@ export const veildCoreInitConfig: VeilidWASMConfig = {
 export function getVeilidCoreStartupConfig(options: VeilidConfigOptions) {
     const defaultConfig = veilidClient.defaultConfig();
 
-    defaultConfig.program_name = 'veilid-wasm-test-bench';
+    defaultConfig.programName = 'veilid-wasm-test-bench';
     defaultConfig.namespace = options.namespace;
-    defaultConfig.protected_store.device_encryption_key_password = options.password;
+    defaultConfig.protectedStore.deviceEncryptionKeyPassword = options.password
 
     return defaultConfig;
 }
