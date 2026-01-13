@@ -19,6 +19,8 @@ ENV CMAKE_VERSION_MINOR=4.0
 ENV CMAKE_VERSION_PATCH=4.0.2
 ENV WASM_BINDGEN_CLI_VERSION=0.2.106
 ENV RUST_VERSION=1.86.0
+ENV RUST_UNIT_TESTS_NIGHTLY_VERSION=nightly-2026-01-01
+ENV RUST_PACKAGE_TESTS_NIGHTLY_VERSION=nightly
 ENV NDK_VERSION=28.2.13676358
 ENV ANDROID_VERSION=36
 ENV ANDROID_BUILD_TOOLS_VERSION=35.0.0
@@ -91,6 +93,13 @@ deps-rust:
                 x86_64-linux-android \
             # WASM
                 wasm32-unknown-unknown \
+            && break; \
+            retry=$((retry+1)); \
+            echo "retry #$retry..."; \
+            sleep 10; \
+        done
+    RUN retry=0; until [ "$retry" -ge $RETRY_COUNT ]; do \
+        rustup toolchain install $RUST_UNIT_TESTS_NIGHTLY_VERSION \
             && break; \
             retry=$((retry+1)); \
             echo "retry #$retry..."; \
@@ -275,7 +284,7 @@ unit-tests-clippy-macos-linux:
 
 unit-tests-docs-linux:
     FROM +code-linux
-    RUN ./build_docs.sh
+    RUN ./build_docs.sh $RUST_UNIT_TESTS_NIGHTLY_VERSION
 
 unit-tests-native-linux:
     FROM +code-linux
@@ -403,7 +412,14 @@ package-linux-arm64:
         BUILD +package-linux-arm64-rpm
     END
 
+package-tests-docs-linux:
+    FROM +code-linux
+    RUN ./build_docs.sh $RUST_PACKAGE_TESTS_NIGHTLY_VERSION
+
 package-linux:
+    WAIT
+        BUILD +package-tests-docs-linux
+    END
     WAIT
         BUILD +package-linux-amd64
     END

@@ -4,7 +4,7 @@ PODMAN_MACHINE="${1:-podman-machine-default}"
 podman machine inspect podman-machine-default > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo "* Creating $PODMAN_MACHINE"
-    podman machine init -m 8192 --now $PODMAN_MACHINE
+    podman machine init -m 10240 --now $PODMAN_MACHINE
 fi
 
 echo "* Configuring $PODMAN_MACHINE"

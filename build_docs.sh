@@ -1,6 +1,8 @@
 #!/bin/bash
 
+TOOLCHAIN=${1:-nightly}
+
 cargo install cargo-docs-rs
-cargo +nightly docs-rs -p veilid-core
-cargo +nightly docs-rs -p veilid-tools
-cargo +nightly docs-rs -p veilid-remote-api
+cargo +$TOOLCHAIN docs-rs -p veilid-core
+cargo +$TOOLCHAIN docs-rs -p veilid-tools
+cargo +$TOOLCHAIN docs-rs -p veilid-remote-api

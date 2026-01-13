@@ -94,3 +94,6 @@ perf.data.old
 
 ## Ignore log files
 *.log
+
+## Ignore rustc crash files
+rustc-ice-*

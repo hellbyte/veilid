@@ -12,6 +12,8 @@ CMAKE_VERSION_MINOR = "4.0"
 CMAKE_VERSION_PATCH = "4.0.2"
 WASM_BINDGEN_CLI_VERSION = "0.2.106"
 RUST_VERSION = "1.86.0"
+RUST_UNIT_TESTS_NIGHTLY_VERSION="nightly-2026-01-01"
+RUST_PACKAGE_TESTS_NIGHTLY_VERSION="nightly"
 RETRY_COUNT = "12"
 
 DIRECTORY_IGNORE_PATTERNS = [
@@ -350,7 +352,7 @@ class Veilid:
         # Install rustup and Rust toolchain
         container = container.with_exec([
             "sh", "-c",
-            f"curl --retry {RETRY_COUNT} --retry-connrefused --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain={RUST_VERSION} -y -c clippy --no-modify-path --profile minimal"
+            f"curl --retry {RETRY_COUNT} --retry-connrefused --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain={RUST_VERSION} -y --no-modify-path"
         ])
 
         # Set permissions and verify installation
@@ -381,6 +383,9 @@ class Veilid:
         # Add targets (simplified without complex retry logic for now)
         for target in rust_targets:
             container = container.with_exec(["rustup", "target", "add", target])
+
+        # Add a single default-target nightly toolchain for some tests
+        container = container.with_exec(["rustup", "toolchain", "install", f"nightly-{RUST_NIGHTLY_VERSION}"])
 
         # Install cargo tools
         container = container.with_exec([
@@ -632,12 +637,12 @@ class Veilid:
         return f"Native tests completed:\n{result}"
 
     @function
-    async def test_docs(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> str:
+    async def test_docs(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], rust_nightly_version: str , base: str = "local", ci_registry_image: str = VEILID_REPO) -> str:
         """Build and test documentation"""
         container = self.code_linux(source, base, ci_registry_image)
 
         # Run documentation build and capture output
-        result = await container.with_exec(["./build_docs.sh"]).stdout()
+        result = await container.with_exec(["./build_docs.sh", rust_nightly_version]).stdout()
 
         return f"Documentation build completed:\n{result}"
 
@@ -666,7 +671,7 @@ class Veilid:
         results.append(native_result)
 
         # Build docs
-        docs_result = await self.test_docs(source, base, ci_registry_image)
+        docs_result = await self.test_docs(source, RUST_UNIT_TESTS_NIGHTLY_VERSION, base, ci_registry_image)
         results.append(docs_result)
 
         # Build WASM
@@ -676,7 +681,18 @@ class Veilid:
         return "\n\n=== TEST SUMMARY ===\n" + "\n\n".join(results)
 
     @function
-    def package_deb(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False) -> dagger.Directory:
+    async def release_test_all(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> str:
+        """Tests to run before packaging releases"""
+        results = []
+
+        # Test DOCS.RS build with most recent nightly
+        docs_result = await self.test_docs(source, RUST_PACKAGE_TESTS_NIGHTLY_VERSION, base, ci_registry_image)
+        results.append(docs_result)
+
+        return "\n\n=== TEST SUMMARY ===\n" + "\n\n".join(results)
+
+    @function
+    def package_deb(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package DEB files for specified architecture"""
         # Get built binaries
         if target_arch == "amd64":
@@ -689,7 +705,7 @@ class Veilid:
             raise ValueError(f"Unsupported architecture: {target_arch}")
 
         # Start with code-linux for the packaging scripts
-        container = self.code_linux(source)
+        container = self.code_linux(source, base, ci_registry_image)
 
         # Copy build artifacts into container
         container = (
@@ -719,15 +735,15 @@ class Veilid:
         return container.directory("/dpkg/out")
 
     @function
-    def package_rpm(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False) -> dagger.Directory:
+    def package_rpm(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package RPM files for specified architecture"""
         # Get built binaries
         if target_arch == "x86_64":
-            build_dir = self.build_linux_amd64(source)
+            build_dir = self.build_linux_amd64(source,base,ci_registry_image)
             rust_target = "x86_64-unknown-linux-gnu"
             platform = "linux/amd64"
         elif target_arch == "aarch64":
-            build_dir = self.build_linux_arm64(source)
+            build_dir = self.build_linux_arm64(source,base,ci_registry_image)
             rust_target = "aarch64-unknown-linux-gnu"
             platform = "linux/arm64"
         else:
@@ -779,20 +795,20 @@ class Veilid:
         return container.directory(f"/root/rpmbuild/RPMS/{target_arch}")
 
     @function
-    async def package_zip(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False) -> dagger.Directory:
+    async def package_zip(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], target_arch: str, is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package ZIP files for specified architecture"""
         # Get built binaries
         if target_arch == "amd64":
-            build_dir = self.build_windows_amd64(source)
+            build_dir = self.build_windows_amd64(source, base, ci_registry_image)
             rust_target = "x86_64-pc-windows-gnu"
         # elif target_arch == "arm64":
-        #     build_dir = self.build_windows_arm64(source)
+        #     build_dir = self.build_windows_arm64(source, base, ci_registry_image)
         #     rust_target = "aarch64-pc-windows-gnullvm"
         else:
             raise ValueError(f"Unsupported architecture: {target_arch}")
 
         # Start with code-linux for the packaging scripts
-        container = self.code_linux(source)
+        container = self.code_linux(source, base, ci_registry_image)
 
         # Copy build artifacts into container
         container = container.with_directory(f"/veilid/target/{rust_target}", build_dir)
@@ -830,73 +846,75 @@ class Veilid:
         return container.directory("/out")
 
     @function
-    def package_linux_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False) -> dagger.Directory:
+    def package_linux_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package both DEB and RPM for Linux AMD64"""
         # Create a container to collect all packages
         container = dag.container().from_("alpine:latest").with_exec(["mkdir", "-p", "/packages"])
 
         # Get DEB packages
-        deb_dir = self.package_deb(source, "amd64", is_nightly)
+        deb_dir = self.package_deb(source, "amd64", is_nightly,base,ci_registry_image)
         container = container.with_directory("/packages/deb", deb_dir)
 
         # Get RPM packages
-        rpm_dir = self.package_rpm(source, "x86_64", is_nightly)
+        rpm_dir = self.package_rpm(source, "x86_64", is_nightly,base,ci_registry_image)
         container = container.with_directory("/packages/rpm", rpm_dir)
 
         return container.directory("/packages")
 
     @function
-    def package_linux_arm64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False) -> dagger.Directory:
+    def package_linux_arm64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package both DEB and RPM for Linux ARM64"""
         # Create a container to collect all packages
         container = dag.container().from_("alpine:latest").with_exec(["mkdir", "-p", "/packages"])
 
         # Get DEB packages
-        deb_dir = self.package_deb(source, "arm64", is_nightly)
+        deb_dir = self.package_deb(source, "arm64", is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/deb", deb_dir)
 
         # Get RPM packages
-        rpm_dir = self.package_rpm(source, "aarch64", is_nightly)
+        rpm_dir = self.package_rpm(source, "aarch64", is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/rpm", rpm_dir)
 
         return container.directory("/packages")
 
+
     @function
-    def package_linux(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False) -> dagger.Directory:
+    async def package_linux(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package for all Linux architectures (AMD64 and ARM64)"""
+
         # Create a container to collect all packages
         container = dag.container().from_("alpine:latest").with_exec(["mkdir", "-p", "/packages"])
 
         # Get AMD64 packages
-        amd64_dir = self.package_linux_amd64(source, is_nightly)
+        amd64_dir = self.package_linux_amd64(source, is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/amd64", amd64_dir)
 
         # Get ARM64 packages
-        arm64_dir = self.package_linux_arm64(source, is_nightly)
+        arm64_dir = self.package_linux_arm64(source, is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/arm64", arm64_dir)
 
         return container.directory("/packages")
 
     @function
-    async def package_windows_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False) -> dagger.Directory:
+    async def package_windows_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package ZIP for Windows AMD64"""
         # Create a container to collect all packages
         container = dag.container().from_("alpine:latest").with_exec(["mkdir", "-p", "/packages"])
 
         # Get Zip packages
-        zip_dir = await self.package_zip(source, "amd64", is_nightly)
+        zip_dir = await self.package_zip(source, "amd64", is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/zip", zip_dir)
 
         return container.directory("/packages")
 
     @function
-    async def package_windows(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False) -> dagger.Directory:
+    async def package_windows(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], is_nightly: bool = False, base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Package for all Windows architectures (AMD64)"""
         # Create a container to collect all packages
         container = dag.container().from_("alpine:latest").with_exec(["mkdir", "-p", "/packages"])
 
         # Get AMD64 packages
-        amd64_dir = await self.package_windows_amd64(source, is_nightly)
+        amd64_dir = await self.package_windows_amd64(source, is_nightly, base, ci_registry_image)
         container = container.with_directory("/packages/amd64", amd64_dir)
 
         return container.directory("/packages")
