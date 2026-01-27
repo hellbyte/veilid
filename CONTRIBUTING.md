@@ -4,6 +4,8 @@ Before you get started, please review our [Code of Conduct](./code_of_conduct.md
 
 ## Code Contributions
 
+Note that while the Veilid project does not entirely forbid the use of LLM agents in the crafting on contributions, we do place significant restrictions on them in order to avoid wasting reviewers' time. Please read [AGENTS.md](./AGENTS.md) before using an LLM agent to help you write code.
+
 To begin crafting code to contribute to the Veilid project, first set up a [development environment](./DEVELOPMENT.md). [Fork] and clone the project into your workspace; check out a new local branch and name it in a way that describes the work being done. This is referred to as a [feature branch].
 
 Some contributions might introduce changes that are incompatible with other existing nodes. In this case it is recommended to also setup a [development network](./dev-setup/dev-network-setup.md).
