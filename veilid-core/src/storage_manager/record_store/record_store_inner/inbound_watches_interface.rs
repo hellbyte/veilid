@@ -14,7 +14,10 @@ impl<D> RecordStoreInner<D>
 where
     D: RecordDetail,
 {
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn lookup_inbound_watch_id(
         &mut self,
         raw_id: u64,
@@ -22,7 +25,10 @@ where
         self.inbound_watches.lookup_id(raw_id)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn update_watched_value(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -62,7 +68,10 @@ where
         }
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn create_new_watch(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -128,7 +137,10 @@ where
         Ok(InboundWatchValueResult::Created { id, expiration })
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn change_existing_watch(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -169,7 +181,10 @@ where
 
     /// Clear a specific watch for a record
     /// returns true if the watch was found and cancelled
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn cancel_watch(
         &mut self,
         record_key: OpaqueRecordKey,
@@ -188,7 +203,10 @@ where
     }
 
     /// See if any watched records have expired and clear them out
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn drop_expired_inbound_watches(&mut self) {
         let now = Timestamp::now_non_decreasing();
         let registry = self.registry();
@@ -203,7 +221,10 @@ where
             .remove_expired_watches(now, &debug_logger, &error_logger);
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn take_value_changes(&mut self) -> Vec<EarlyValueChangedInfo> {
         let changed_records = self.inbound_watches.take_changed_records();
 

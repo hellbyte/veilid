@@ -94,7 +94,7 @@ impl NodeTransaction {
 
     pub fn node_ref(&self) -> NodeRef {
         // Safe as long as prepare has been called
-        self.node_ref.clone().unwrap()
+        self.node_ref.clone().unwrap_or_log()
     }
 
     pub fn node_xid(&self) -> &NodeTransactionId {

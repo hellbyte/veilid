@@ -90,7 +90,10 @@ impl IGDManager {
         }
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(dead_code)]
     pub async fn unmap_port(
         &self,
@@ -119,7 +122,7 @@ impl IGDManager {
                 let _pmv = inner
                     .port_maps
                     .remove(&pmk)
-                    .expect("key found but remove failed");
+                    .expect_or_log("key found but remove failed");
 
                 // Get local ip address
                 let local_ip = this.find_local_ip_inner(&mut inner, address_type)?;
@@ -143,7 +146,10 @@ impl IGDManager {
         .await
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn map_any_port(
         &self,
         protocol_type: IGDProtocolType,
@@ -198,7 +204,7 @@ impl IGDManager {
 
             // Map any port
             let desc = this.get_description(protocol_type, local_port);
-            let mapped_port = match gw.add_any_port(convert_protocol_type(protocol_type), SocketAddr::new(local_ip, local_port), UPNP_MAPPING_LIFETIME.millis_u32().unwrap().div_ceil(1000), &desc) {
+            let mapped_port = match gw.add_any_port(convert_protocol_type(protocol_type), SocketAddr::new(local_ip, local_port), UPNP_MAPPING_LIFETIME.millis_u32().unwrap_or_log().div_ceil(1000), &desc) {
                 Ok(mapped_port) => mapped_port,
                 Err(e) => {
                     // Failed to map external port
@@ -227,12 +233,16 @@ impl IGDManager {
         .await
     }
 
-    #[instrument(
-        level = "trace",
-        target = "net",
-        name = "IGDManager::tick",
-        skip_all,
-        err
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(
+            level = "trace",
+            target = "net",
+            name = "IGDManager::tick",
+            skip_all,
+            err,
+            fields(__VEILID_LOG_KEY = self.log_key())
+        )
     )]
     pub async fn tick(&self) -> EyreResult<bool> {
         // Refresh mappings if we have them
@@ -295,7 +305,7 @@ impl IGDManager {
                     match gw.add_any_port(
                         convert_protocol_type(k.protocol_type),
                         SocketAddr::new(local_ip, k.local_port),
-                        UPNP_MAPPING_LIFETIME.millis_u32().unwrap().div_ceil(1000),
+                        UPNP_MAPPING_LIFETIME.millis_u32().unwrap_or_log().div_ceil(1000),
                         &desc,
                     ) {
                         Ok(mapped_port) => {
@@ -342,7 +352,7 @@ impl IGDManager {
                         convert_protocol_type(k.protocol_type),
                         v.mapped_port,
                         SocketAddr::new(local_ip, k.local_port),
-                        UPNP_MAPPING_LIFETIME.millis_u32().unwrap().div_ceil(1000),
+                        UPNP_MAPPING_LIFETIME.millis_u32().unwrap_or_log().div_ceil(1000),
                         &desc,
                     ) {
                         Ok(()) => {
@@ -385,7 +395,10 @@ impl IGDManager {
     /////////////////////////////////////////////////////////////////////
     // Private Implementation
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn get_routed_local_ip_address(&self, address_type: IGDAddressType) -> Option<IpAddr> {
         let socket = match UdpSocket::bind(match address_type {
             IGDAddressType::IPV4 => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -418,7 +431,10 @@ impl IGDManager {
         Some(socket.local_addr().ok()?.ip())
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn find_local_ip_inner(
         &self,
         inner: &mut IGDManagerInner,
@@ -440,7 +456,10 @@ impl IGDManager {
         Some(ip)
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn get_local_ip_inner(
         &self,
         inner: &mut IGDManagerInner,
@@ -452,7 +471,10 @@ impl IGDManager {
         None
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn find_gateway_inner(
         &self,
         inner: &mut IGDManagerInner,
@@ -496,7 +518,6 @@ impl IGDManager {
         Some(gw)
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
     fn get_gateway_inner(inner: &mut IGDManagerInner, local_ip: IpAddr) -> Option<Arc<Gateway>> {
         if let Some(gw) = inner.gateways.get(&local_ip) {
             return Some(gw.clone());

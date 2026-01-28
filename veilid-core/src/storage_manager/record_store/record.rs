@@ -98,12 +98,16 @@ where
         }
     }
 
+    /// Returns false if a previous subkey existed or true if this is a new subkey
     pub fn record_stored_subkey(
         &mut self,
         subkey: ValueSubkey,
         data: &RecordData,
         max_record_data_size: usize,
-    ) -> VeilidAPIResult<()> {
+    ) -> VeilidAPIResult<bool> {
+        if subkey > self.max_subkey() {
+            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
+        }
         let seq = data.signed_value_data().value_data().seq();
         let new_subkey_size = data.data_size() as u16;
         let old_subkey_size = self.subkey_sizes[subkey as usize];
@@ -126,26 +130,24 @@ where
 
         // No failures past this point
         self.record_data_size = new_record_data_size;
-        self.stored_subkeys.insert(subkey);
+        let is_new = self.stored_subkeys.insert(subkey);
         self.subkey_seqs.resize(self.subkey_count, 0);
         self.subkey_seqs[subkey as usize] = u32::from(seq);
         self.subkey_sizes.resize(self.subkey_count, 0);
         self.subkey_sizes[subkey as usize] = new_subkey_size;
 
-        Ok(())
-    }
-
-    #[expect(dead_code)]
-    pub fn subkey_size(&self, subkey: ValueSubkey) -> u16 {
-        self.subkey_sizes[subkey as usize]
+        Ok(is_new)
     }
 
     pub fn subkey_sizes(&self) -> &[u16] {
         &self.subkey_sizes
     }
 
-    pub fn subkey_seq(&self, subkey: ValueSubkey) -> ValueSeqNum {
-        ValueSeqNum::from(self.subkey_seqs[subkey as usize])
+    pub fn subkey_seq(&self, subkey: ValueSubkey) -> VeilidAPIResult<ValueSeqNum> {
+        if subkey > self.max_subkey() {
+            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
+        }
+        Ok(ValueSeqNum::from(self.subkey_seqs[subkey as usize]))
     }
 
     pub fn touch(&mut self) {
@@ -162,7 +164,7 @@ where
 
     pub fn schema(&self) -> DHTSchema {
         // unwrap is safe here because descriptor is immutable and set in new()
-        self.descriptor.schema().unwrap()
+        self.descriptor.schema().unwrap_or_log()
     }
 
     pub fn detail(&self) -> &D {

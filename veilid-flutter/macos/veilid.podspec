@@ -32,7 +32,7 @@ Veilid Network Plugin
     :name => 'Cargo Build',
     :script => File.join(workspace_dir, 'scripts', 'macos_build.sh') + ' veilid_flutter',
     :execution_position => :before_compile
-    #:output_files => [ File.join(cargo_target_dir, 'lipo-darwin', 'libveilid_flutter.dylib') ]
+    # :output_files => [ File.join(cargo_target_dir, 'lipo-darwin', 'libveilid_flutter.dylib') ]
   }
 
 end

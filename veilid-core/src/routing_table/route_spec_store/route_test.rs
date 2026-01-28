@@ -2,7 +2,10 @@ use super::*;
 
 impl RouteSpecStore {
     /// Test an allocated route for continuity
-    #[instrument(level = "trace", target = "route", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn test_route(&self, id: RouteId) -> VeilidAPIResult<Option<bool>> {
         let is_remote = self.is_route_id_remote(&id);
         if is_remote {
@@ -12,7 +15,10 @@ impl RouteSpecStore {
         }
     }
 
-    #[instrument(level = "trace", target = "route", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn test_allocated_route(
         &self,
         private_route_id: RouteId,
@@ -93,7 +99,10 @@ impl RouteSpecStore {
         Ok(Some(true))
     }
 
-    #[instrument(level = "trace", target = "route", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn test_remote_route(&self, private_route_id: RouteId) -> VeilidAPIResult<Option<bool>> {
         // Make private route test
         let dest = {

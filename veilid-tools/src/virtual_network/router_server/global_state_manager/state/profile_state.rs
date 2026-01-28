@@ -30,7 +30,7 @@ impl ProfileState {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn next_instance(&mut self) -> Option<config::Instance> {
         let instance_index = {
             let instance_index = self.fields.next_instance_index;

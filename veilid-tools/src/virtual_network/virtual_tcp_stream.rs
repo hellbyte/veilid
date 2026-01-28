@@ -65,7 +65,7 @@ impl VirtualTcpStream {
         timeout_ms: u32,
         options: VirtualTcpOptions,
     ) -> VirtualNetworkResult<Self> {
-        let machine = default_machine().unwrap();
+        let machine = default_machine().unwrap_or_log();
         Self::connect_with_machine(machine, remote_address, local_address, timeout_ms, options)
             .await
     }
@@ -143,7 +143,7 @@ impl futures_util::AsyncRead for VirtualTcpStream {
                 buf.len(),
             )));
         }
-        let fut = self.current_recv_fut.as_mut().unwrap();
+        let fut = self.current_recv_fut.as_mut().unwrap_or_log();
         fut.poll_unpin(cx).map(|v| match v {
             Ok(v) => {
                 let len = usize::min(buf.len(), v.len());
@@ -169,7 +169,7 @@ impl futures_util::AsyncWrite for VirtualTcpStream {
                 buf.to_vec(),
             )));
         }
-        let fut = self.current_send_fut.as_mut().unwrap();
+        let fut = self.current_send_fut.as_mut().unwrap_or_log();
         fut.poll_unpin(cx).map(|v| match v {
             Ok(v) => {
                 self.current_send_fut = None;
@@ -198,7 +198,7 @@ impl futures_util::AsyncWrite for VirtualTcpStream {
                     .tcp_shutdown(self.machine.id, self.socket_id),
             ));
         }
-        let fut = self.current_tcp_shutdown_fut.as_mut().unwrap();
+        let fut = self.current_tcp_shutdown_fut.as_mut().unwrap_or_log();
         fut.poll_unpin(cx).map(|v| match v {
             Ok(v) => {
                 self.current_tcp_shutdown_fut = None;

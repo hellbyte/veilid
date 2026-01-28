@@ -89,7 +89,10 @@ class DefaultVeilidFixture implements VeilidFixture {
                   enabled: flamePathStr.isNotEmpty, path: flamePathStr)));
       platformConfigJson = platformConfig.toJson();
     }
+
     Veilid.instance.initializeVeilidCore(platformConfigJson);
+
+    print('got here');
 
     var config = await getDefaultVeilidConfig(
       isWeb: kIsWeb,

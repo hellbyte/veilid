@@ -25,6 +25,8 @@ pub trait RoutingDomainEditorCommonTrait {
     fn commit(&mut self, pause_tasks: bool) -> PinBoxFuture<'_, bool>;
     fn shutdown(&mut self) -> PinBoxFuture<'_, ()>;
     fn publish(&mut self);
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
+    fn unpublish(&mut self);
 }
 
 pub(super) trait RoutingDomainDetailApplyCommonChange {

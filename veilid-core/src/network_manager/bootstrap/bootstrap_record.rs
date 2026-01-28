@@ -110,7 +110,7 @@ impl BootstrapRecord {
                 if h != &hostname {
                     bail!(
                         "Inconsistent hostnames for dial info: {} vs {}",
-                        some_hostname.unwrap(),
+                        some_hostname.unwrap_or_log(),
                         hostname
                     );
                 }
@@ -130,7 +130,7 @@ impl BootstrapRecord {
             "|{}|{}|{}|{}",
             valid_envelope_versions,
             public_keys,
-            some_hostname.as_ref().unwrap(),
+            some_hostname.as_ref().unwrap_or_log(),
             short_urls.join(",")
         );
 
@@ -358,7 +358,7 @@ impl BootstrapRecord {
             let dial_infos = match dial_info_converter.try_vec_from_short(&short_dial_info) {
                 Ok(dis) => dis,
                 Err(e) => {
-                    veilid_log!(network_manager warn "Couldn't resolve bootstrap node dial info {}: {}", rec, e);
+                    veilid_log!(network_manager debug "Couldn't resolve bootstrap node dial info {}: {}", rec, e);
                     continue;
                 }
             };
@@ -369,6 +369,11 @@ impl BootstrapRecord {
                     class: DialInfoClass::Direct,
                 });
             }
+        }
+
+        // If no dial info could resolve don't consider this a successful bootstrap
+        if dial_info_details.is_empty() {
+            return Ok(None);
         }
 
         Ok(Some(BootstrapRecord::new(
@@ -402,7 +407,7 @@ impl BootstrapRecord {
         }
 
         // Get signature from last record
-        let sigstring = fields.last().unwrap();
+        let sigstring = fields.last().unwrap_or_log();
         let sig =
             Signature::from_str(sigstring).wrap_err("invalid signature for bootstrap v1 record")?;
 
@@ -493,7 +498,7 @@ impl BootstrapRecord {
             let dial_infos = match dial_info_converter.try_vec_from_short(&short_dial_info) {
                 Ok(dis) => dis,
                 Err(e) => {
-                    veilid_log!(network_manager warn "Couldn't resolve bootstrap node dial info {}: {}", rec, e);
+                    veilid_log!(network_manager debug "Couldn't resolve bootstrap node dial info {}: {}", rec, e);
                     continue;
                 }
             };
@@ -504,6 +509,11 @@ impl BootstrapRecord {
                     class: DialInfoClass::Direct,
                 });
             }
+        }
+
+        // If no dial info could resolve don't consider this a successful bootstrap
+        if dial_info_details.is_empty() {
+            return Ok(None);
         }
 
         // Timestamp

@@ -34,24 +34,22 @@ enum ContactMethodKind {
     InboundRelay,
     OutboundRelay,
 }
-impl From<Option<&NodeContactMethodKind>> for ContactMethodKind {
-    fn from(value: Option<&NodeContactMethodKind>) -> Self {
+impl From<Option<&NodeContactMethod>> for ContactMethodKind {
+    fn from(value: Option<&NodeContactMethod>) -> Self {
         match value {
             None => ContactMethodKind::Unreachable,
-            Some(NodeContactMethodKind::Existing) => ContactMethodKind::Existing,
-            Some(NodeContactMethodKind::Direct { target_di: _ }) => ContactMethodKind::Direct,
-            Some(NodeContactMethodKind::SignalReverse {
-                relay_nr: _,
-                target_nr: _,
-            }) => ContactMethodKind::SignalReverse,
-            Some(NodeContactMethodKind::SignalHolePunch {
-                relay_nr: _,
-                target_nr: _,
-            }) => ContactMethodKind::SignalHolePunch,
-            Some(NodeContactMethodKind::InboundRelay { relay_nr: _ }) => {
+            Some(NodeContactMethod::Existing) => ContactMethodKind::Existing,
+            Some(NodeContactMethod::Direct { target_di: _ }) => ContactMethodKind::Direct,
+            Some(NodeContactMethod::SignalReverse { relay_di: _ }) => {
+                ContactMethodKind::SignalReverse
+            }
+            Some(NodeContactMethod::SignalHolePunch { relay_di: _ }) => {
+                ContactMethodKind::SignalHolePunch
+            }
+            Some(NodeContactMethod::InboundRelay { relay_di: _ }) => {
                 ContactMethodKind::InboundRelay
             }
-            Some(NodeContactMethodKind::OutboundRelay { relay_nr: _ }) => {
+            Some(NodeContactMethod::OutboundRelay { relay_nr: _ }) => {
                 ContactMethodKind::OutboundRelay
             }
         }
@@ -77,7 +75,7 @@ impl fmt::Display for HitMissStats {
 }
 
 pub struct NodeContactMethodCache {
-    cache: LruCache<NodeContactMethodCacheKey, Option<NodeContactMethodKind>>,
+    cache: hashlink::LruCache<NodeContactMethodCacheKey, Option<NodeContactMethod>>,
 
     // Statistics for cache hits/misses
     cache_stats: HitMissStats,
@@ -99,7 +97,7 @@ impl fmt::Debug for NodeContactMethodCache {
 impl NodeContactMethodCache {
     pub fn new() -> Self {
         Self {
-            cache: LruCache::new(NODE_CONTACT_METHOD_CACHE_SIZE),
+            cache: hashlink::LruCache::new(NODE_CONTACT_METHOD_CACHE_SIZE),
             cache_stats: HitMissStats::default(),
             contact_method_kind_stats: HashMap::new(),
         }
@@ -107,7 +105,7 @@ impl NodeContactMethodCache {
     pub fn insert(
         &mut self,
         ncm_key: NodeContactMethodCacheKey,
-        opt_ncm_kind: Option<NodeContactMethodKind>,
+        opt_ncm_kind: Option<NodeContactMethod>,
     ) {
         // Cache this
         self.cache.insert(ncm_key, opt_ncm_kind);
@@ -116,7 +114,7 @@ impl NodeContactMethodCache {
     pub fn get(
         &mut self,
         ncm_key: &NodeContactMethodCacheKey,
-    ) -> Option<Option<NodeContactMethodKind>> {
+    ) -> Option<Option<NodeContactMethod>> {
         if let Some(opt_ncm_kind) = self.cache.get(ncm_key) {
             self.cache_stats.hit += 1;
 
@@ -127,11 +125,11 @@ impl NodeContactMethodCache {
         None
     }
 
-    pub fn record_contact_method_success(&mut self, ncm_kind: Option<&NodeContactMethodKind>) {
+    pub fn record_contact_method_success(&mut self, ncm_kind: Option<&NodeContactMethod>) {
         let cmk = ContactMethodKind::from(ncm_kind);
         self.contact_method_kind_stats.entry(cmk).or_default().hit += 1;
     }
-    pub fn record_contact_method_failure(&mut self, ncm_kind: Option<&NodeContactMethodKind>) {
+    pub fn record_contact_method_failure(&mut self, ncm_kind: Option<&NodeContactMethod>) {
         let cmk = ContactMethodKind::from(ncm_kind);
         self.contact_method_kind_stats.entry(cmk).or_default().miss += 1;
     }
@@ -145,7 +143,7 @@ impl NodeContactMethodCache {
         let mut sorted_kinds: Vec<_> = self.contact_method_kind_stats.keys().collect();
         sorted_kinds.sort();
         for kind in sorted_kinds {
-            let kindstats = self.contact_method_kind_stats.get(kind).unwrap();
+            let kindstats = self.contact_method_kind_stats.get(kind).unwrap_or_log();
             out += &format!("  {:?}: {}\n", kind, kindstats);
         }
         out

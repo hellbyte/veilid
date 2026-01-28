@@ -118,7 +118,7 @@ impl IpcListener {
         };
         Box::pin(async move {
             Ok(IpcStream {
-                internal: this.internal.as_ref().unwrap().accept().await?.0,
+                internal: this.internal.as_ref().unwrap_or_log().accept().await?.0,
             })
         })
     }
@@ -129,8 +129,8 @@ impl IpcListener {
             return Err(io::Error::from(io::ErrorKind::NotConnected));
         }
         Ok(IpcIncoming {
-            path: self.path.take().unwrap(),
-            internal: self.internal.as_ref().unwrap().incoming(),
+            path: self.path.take().unwrap_or_log(),
+            internal: self.internal.as_ref().unwrap_or_log().incoming(),
         })
     }
 }

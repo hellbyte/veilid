@@ -50,7 +50,7 @@ impl fmt::Display for OutboundTransactionManager {
             keys.sort();
 
             for k in keys {
-                let v = self.transactions.get(&k).unwrap();
+                let v = self.transactions.get(&k).unwrap_or_log();
                 out += &format!("  {}:\n{}\n", k, indent_all_by(4, v.to_string()));
             }
         }
@@ -67,7 +67,7 @@ impl Default for OutboundTransactionManager {
 
 impl VeilidComponentRegistryAccessor for OutboundTransactionManager {
     fn registry(&self) -> VeilidComponentRegistry {
-        self.opt_registry.clone().unwrap()
+        self.opt_registry.clone().unwrap_or_log()
     }
 }
 
@@ -692,8 +692,8 @@ impl OutboundTransactionManager {
         };
 
         // Set desired subkey to track goal state
-        let subkey = result.params.opt_subkey.unwrap();
-        let value = result.params.opt_value.clone().unwrap();
+        let subkey = result.params.opt_subkey.unwrap_or_log();
+        let value = result.params.opt_value.clone().unwrap_or_log();
         record_state.set_desired_subkey(subkey, value.clone());
 
         // Record set results and calculate the result state consensus
@@ -868,7 +868,7 @@ impl OutboundTransactionManager {
         };
 
         // Record get results and calculate the result state consensus
-        let subkey = result.params.opt_subkey.unwrap();
+        let subkey = result.params.opt_subkey.unwrap_or_log();
 
         // Calculate the result state consensus
         let mut opt_get_subkey_consensus: Option<SubkeyConsensus> = None;

@@ -184,7 +184,7 @@ impl ConnectionManager {
         // Stop all the connections and the async processor
         veilid_log!(self debug "stopping async processor task");
         drop(inner.stop_source.take());
-        let async_processor_jh = inner.async_processor_jh.take().unwrap();
+        let async_processor_jh = inner.async_processor_jh.take().unwrap_or_log();
         // wait for the async processor to stop
         veilid_log!(self debug "waiting for async processor to stop");
         async_processor_jh.await;
@@ -277,7 +277,7 @@ impl ConnectionManager {
     // Internal routine to register new connection atomically.
     // Registers connection in the connection table for later access
     // and spawns a message processing loop for the connection
-    //#[instrument(level = "trace", skip(self, inner), ret, err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self, inner), ret, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn on_new_protocol_network_connection(
         &self,
         inner: &mut ConnectionManagerInner,
@@ -392,7 +392,7 @@ impl ConnectionManager {
     /// This will kill off any connections that are in conflict with the new connection to be made
     /// in order to make room for the new connection in the system's connection table
     /// This routine needs to be atomic, or connections may exist in the table that are not established
-    //#[instrument(level = "trace", skip(self), ret, err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn get_or_create_connection(
         &self,
         dial_info: DialInfo,

@@ -13,7 +13,7 @@ cfg_if! {
         }
     } else if #[cfg(feature="rt-tokio")] {
         pub fn block_on<F: Future<Output = T>, T>(f: F) -> T {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = tokio::runtime::Runtime::new().unwrap_or_log();
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, f)
         }

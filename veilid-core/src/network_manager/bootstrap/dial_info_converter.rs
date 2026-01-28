@@ -5,7 +5,7 @@ pub struct ShortDialInfo {
     pub hostname: String,
 }
 
-trait DialInfoConverterResolver: Send + Sync {
+pub trait DialInfoConverterResolver: Send + Sync {
     fn ptr_lookup(&self, ip_addr: IpAddr) -> PinBoxFuture<'_, EyreResult<String>>;
     fn to_socket_addrs(
         &self,
@@ -126,7 +126,7 @@ where
                 },
                 DialInfo::WS(di) => {
                     let mut split_url =
-                        SplitUrl::from_str(&format!("ws://{}", di.request)).unwrap();
+                        SplitUrl::from_str(&format!("ws://{}", di.request)).unwrap_or_log();
                     if let SplitUrlHost::IpAddr(a) = split_url.host {
                         if let Ok(host) = self.ptr_lookup(a).await {
                             split_url.host = SplitUrlHost::Hostname(host);
@@ -147,7 +147,7 @@ where
                 #[cfg(feature = "enable-protocol-wss")]
                 DialInfo::WSS(di) => {
                     let mut split_url =
-                        SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap();
+                        SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap_or_log();
                     if let SplitUrlHost::IpAddr(a) = split_url.host {
                         if let Ok(host) = self.ptr_lookup(a).await {
                             split_url.host = SplitUrlHost::Hostname(host);
@@ -184,7 +184,7 @@ where
                     .unwrap_or_else(|_| format!("tcp://{}", di.socket_address)),
                 DialInfo::WS(di) => {
                     let mut split_url =
-                        SplitUrl::from_str(&format!("ws://{}", di.request)).unwrap();
+                        SplitUrl::from_str(&format!("ws://{}", di.request)).unwrap_or_log();
                     if let SplitUrlHost::IpAddr(a) = split_url.host {
                         if let Ok(host) = self.ptr_lookup(a).await {
                             split_url.host = SplitUrlHost::Hostname(host);
@@ -195,7 +195,7 @@ where
                 #[cfg(feature = "enable-protocol-wss")]
                 DialInfo::WSS(di) => {
                     let mut split_url =
-                        SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap();
+                        SplitUrl::from_str(&format!("wss://{}", di.request)).unwrap_or_log();
                     if let SplitUrlHost::IpAddr(a) = split_url.host {
                         if let Ok(host) = self.ptr_lookup(a).await {
                             split_url.host = SplitUrlHost::Hostname(host);
@@ -213,7 +213,7 @@ pub struct BootstrapDialInfoConverter {}
 
 impl DialInfoConverterResolver for BootstrapDialInfoConverter {
     fn ptr_lookup(&self, ip_addr: IpAddr) -> PinBoxFuture<'_, EyreResult<String>> {
-        pin_dyn_future!(async move { intf::ptr_lookup(ip_addr).await })
+        pin_dyn_future!(async move { Resolver::ptr_lookup(ip_addr).await.map_err(|e| e.into()) })
     }
 
     #[allow(unused_variables)]
@@ -233,22 +233,5 @@ impl DialInfoConverterResolver for BootstrapDialInfoConverter {
                 host.to_socket_addrs()
             }
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MockDialInfoConverter {}
-
-impl DialInfoConverterResolver for MockDialInfoConverter {
-    fn ptr_lookup(&self, _ip_addr: IpAddr) -> PinBoxFuture<'_, EyreResult<String>> {
-        pin_dyn_future!(async move { Ok("fake_hostname".to_string()) })
-    }
-
-    fn to_socket_addrs(
-        &self,
-        _host: &str,
-        default: SocketAddr,
-    ) -> std::io::Result<std::vec::IntoIter<SocketAddr>> {
-        Ok(vec![default].into_iter())
     }
 }

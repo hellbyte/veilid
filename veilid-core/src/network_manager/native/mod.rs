@@ -41,43 +41,6 @@ pub const UPNP_TASK_TICK_PERIOD_SECS: u32 = 1;
 pub const HOLE_PUNCH_TTL: u32 = 3;
 pub const PEEK_DETECT_LEN: usize = 64;
 
-cfg_if! {
-    if #[cfg(all(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 8;
-    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 7;
-    } else  {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 6;
-    }
-}
-pub const PUBLIC_INTERNET_CAPABILITIES: [VeilidCapability; PUBLIC_INTERNET_CAPABILITIES_LEN] = [
-    VEILID_CAPABILITY_ROUTE,
-    #[cfg(feature = "unstable-tunnels")]
-    VEILID_CAPABILITY_TUNNEL,
-    VEILID_CAPABILITY_SIGNAL,
-    VEILID_CAPABILITY_RELAY,
-    VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
-    VEILID_CAPABILITY_DHT,
-    VEILID_CAPABILITY_APPMESSAGE,
-    #[cfg(feature = "unstable-blockstore")]
-    VEILID_CAPABILITY_BLOCKSTORE,
-];
-
-#[cfg(feature = "unstable-blockstore")]
-const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 4;
-#[cfg(not(feature = "unstable-blockstore"))]
-const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 3;
-
-pub const LOCAL_NETWORK_CAPABILITIES: [VeilidCapability; LOCAL_NETWORK_CAPABILITIES_LEN] = [
-    VEILID_CAPABILITY_RELAY,
-    VEILID_CAPABILITY_DHT,
-    VEILID_CAPABILITY_APPMESSAGE,
-    #[cfg(feature = "unstable-blockstore")]
-    VEILID_CAPABILITY_BLOCKSTORE,
-];
-
-pub const MAX_CAPABILITIES: usize = 64;
-
 /////////////////////////////////////////////////////////////////
 
 struct NetworkInner {
@@ -267,7 +230,8 @@ impl Network {
             vec![from]
         } else {
             self.last_network_state()
-                .unwrap()
+                .unwrap_or_log()
+                .interface_address_state
                 .interface_addresses
                 .iter()
                 .filter_map(|a| {
@@ -355,7 +319,7 @@ impl Network {
     // This creates a short-lived connection in the case of connection-oriented protocols
     // for the purpose of sending this one message.
     // This bypasses the connection table as it is not a 'node to node' connection.
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_unbound_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -444,7 +408,7 @@ impl Network {
     // This creates a short-lived connection in the case of connection-oriented protocols
     // for the purpose of sending this one message.
     // This bypasses the connection table as it is not a 'node to node' connection.
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_recv_data_unbound_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -575,7 +539,7 @@ impl Network {
         .await
     }
 
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_to_existing_flow(
         &self,
         flow: Flow,
@@ -646,7 +610,7 @@ impl Network {
 
     // Send data directly to a dial info, possibly without knowing which node it is going to
     // Returns a flow for the connection used to send the data
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -707,7 +671,10 @@ impl Network {
 
     // Send hole punch attempt to a specific dialinfo. May not be appropriate for all protocols.
     // Returns a flow for the connection used to send the data
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn send_hole_punch(
         &self,
         dial_info: DialInfo,
@@ -759,7 +726,7 @@ impl Network {
     pub async fn startup_internal(&self) -> EyreResult<StartupDisposition> {
         // Get the initial network state snapshot
         // Caution: this -must- happen first because we use unwrap()
-        let network_state = self.refresh_network_state().await?.unwrap();
+        let network_state = self.refresh_network_state().await?.unwrap_or_log();
 
         // Resolve 'auto'/None config fo detect_address_changes
         let resolved_detect_address_changes = {
@@ -778,10 +745,14 @@ impl Network {
                     veilid_log!(self info "Manually-disabled detection of address changes");
                 }
             } else {
-                // Check for publicly routable IPv4 and IPv6 addresses
+                // Check for publicly routable IPv4 and IPv6 addresses on the local interfaces
                 let mut global_ipv4 = false;
                 let mut global_ipv6 = false;
-                for siaddr in network_state.interface_addresses.iter() {
+                for siaddr in network_state
+                    .interface_address_state
+                    .interface_addresses
+                    .iter()
+                {
                     if Address::from_ip_addr(siaddr.ip()).is_global() {
                         match siaddr {
                             IfAddr::V4(_) => {
@@ -815,8 +786,13 @@ impl Network {
             let mut editor_local_network = routing_table.edit_local_network_routing_domain();
 
             // Setup network
-            editor_local_network
-                .set_interface_addresses(network_state.interface_addresses.as_ref().clone());
+            editor_local_network.set_interface_addresses(
+                network_state
+                    .interface_address_state
+                    .as_ref()
+                    .interface_addresses
+                    .clone(),
+            );
             editor_local_network.setup_network(
                 network_state.protocol_config.outbound,
                 network_state.protocol_config.inbound,
@@ -830,8 +806,13 @@ impl Network {
 
             confirmed_public_internet = !resolved_detect_address_changes
                 || self.config().network.privacy.require_inbound_relay;
-            editor_public_internet
-                .set_interface_addresses(network_state.interface_addresses.as_ref().clone());
+            editor_public_internet.set_interface_addresses(
+                network_state
+                    .interface_address_state
+                    .as_ref()
+                    .interface_addresses
+                    .clone(),
+            );
             editor_public_internet.setup_network(
                 network_state.protocol_config.outbound,
                 network_state.protocol_config.inbound,
@@ -920,7 +901,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "debug", err, skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn register_all_dial_info(
         &self,
         editor_public_internet: &mut RoutingDomainEditorPublicInternet<'_>,
@@ -957,7 +938,7 @@ impl Network {
         Ok(())
     }
 
-    #[instrument(level = "debug", err, skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn startup(&self) -> EyreResult<StartupDisposition> {
         let guard = self.startup_lock.startup()?;
 
@@ -988,12 +969,12 @@ impl Network {
         self.startup_lock.is_started()
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn restart_network(&self) {
         self.inner.lock().network_needs_restart = true;
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn shutdown_internal(&self) {
         let routing_table = self.routing_table();
 
@@ -1028,7 +1009,7 @@ impl Network {
         *self.inner.lock() = Self::new_inner();
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting low level network shutdown");
         let Ok(guard) = self.startup_lock.shutdown().await else {
@@ -1046,7 +1027,7 @@ impl Network {
 
     pub fn needs_update_dial_info(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'needs_update_dial_info' due to not started up");
             return false;
         };
 
@@ -1055,7 +1036,7 @@ impl Network {
 
     pub fn resolved_detect_address_changes(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'resolved_detect_address_changes' due to not started up");
             return false;
         };
 
@@ -1064,7 +1045,7 @@ impl Network {
 
     pub fn trigger_update_dial_info(&self, routing_domain: RoutingDomain) {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'trigger_update_dial_info' due to not started up");
             return;
         };
 

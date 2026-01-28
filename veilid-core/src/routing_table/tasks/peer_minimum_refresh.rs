@@ -1,6 +1,6 @@
 use super::*;
 
-use futures_util::stream::{FuturesOrdered, StreamExt};
+use futures_util::stream::StreamExt;
 use stop_token::future::FutureExt as StopFutureExt;
 
 impl RoutingTable {
@@ -12,7 +12,7 @@ impl RoutingTable {
     // nodes for their PublicInternet peers, which is a very fast way to get
     // a new node online. This finds nodes that have connectivity capabilities
     // specifically, as those are required for most nodes to get online.
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn peer_minimum_refresh_task_routine(
         &self,
         stop_token: StopToken,
@@ -51,7 +51,7 @@ impl RoutingTable {
                 move |rti: &RoutingTableInner,
                       opt_entry: Option<Arc<BucketEntry>>,
                       _cur_ts: Timestamp| {
-                    let entry = opt_entry.unwrap().clone();
+                    let entry = opt_entry.unwrap_or_log().clone();
                     entry.with(rti, |_rti, e| {
                         // Keep only the entries that contain the crypto kind we're looking for
                         let compatible_crypto = e.crypto_kinds().contains(&crypto_kind);
@@ -81,7 +81,7 @@ impl RoutingTable {
                 min_peer_count,
                 filters,
                 |_rti, entry: Option<Arc<BucketEntry>>| {
-                    NodeRef::new(self.registry(), entry.unwrap().clone())
+                    NodeRef::new(self.registry(), entry.unwrap_or_log().clone())
                 },
             );
 

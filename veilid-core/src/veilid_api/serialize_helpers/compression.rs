@@ -1,12 +1,19 @@
 use super::*;
 use lz4_flex::block;
 
-#[instrument(level = "trace", target = "compression", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "compression", skip_all)
+)]
+#[must_use]
 pub fn compress_prepend_size(input: &[u8]) -> Vec<u8> {
     block::compress_prepend_size(input)
 }
 
-#[instrument(level = "trace", target = "compression", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "compression", skip_all)
+)]
 pub fn decompress_size_prepended(
     input: &[u8],
     max_size: Option<usize>,

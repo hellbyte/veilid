@@ -12,7 +12,9 @@ mod stats_accounting;
 mod tasks;
 mod types;
 
-pub mod tests;
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests_routing_table;
 
 pub(crate) use bucket_entry::*;
 pub(crate) use node_ref::*;
@@ -261,6 +263,20 @@ impl RoutingTable {
     /////////////////////////////////////
     // Initialization
 
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new()
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("rtab", ["#common"]).unwrap(),
+            )
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("rtab::route", ["#common"]).unwrap(),
+            )
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("network_result", ["#verbose"])
+                    .unwrap(),
+            )
+    }
+
     /// Called to initialize the routing table after it is created
     async fn init_async(&self) -> EyreResult<()> {
         veilid_log!(self debug "starting routing table init");
@@ -300,8 +316,7 @@ impl RoutingTable {
         Ok(())
     }
 
-    #[expect(clippy::unused_async)]
-    pub(crate) async fn startup(&self) -> EyreResult<()> {
+    pub(crate) fn startup(&self) -> EyreResult<()> {
         let guard = self.startup_context.startup_lock.startup()?;
 
         // Register event handlers
@@ -328,7 +343,7 @@ impl RoutingTable {
             .startup_lock
             .shutdown()
             .await
-            .expect("should be started up");
+            .expect_or_log("should be started up");
 
         // Unpublish peer info
         veilid_log!(self debug "unpublishing peer info");
@@ -381,15 +396,15 @@ impl RoutingTable {
     ///////////////////////////////////////////////////////////////////
 
     pub fn node_id(&self, kind: CryptoKind) -> NodeId {
-        self.node_ids.read().get(kind).unwrap()
+        self.node_ids.read().get(kind).unwrap_or_log()
     }
 
     pub fn public_key(&self, kind: CryptoKind) -> PublicKey {
-        self.public_keys.read().get(kind).unwrap()
+        self.public_keys.read().get(kind).unwrap_or_log()
     }
 
     pub fn secret_key(&self, kind: CryptoKind) -> SecretKey {
-        self.secret_keys.read().get(kind).unwrap()
+        self.secret_keys.read().get(kind).unwrap_or_log()
     }
 
     pub fn node_ids(&self) -> NodeIdGroup {
@@ -545,7 +560,7 @@ impl RoutingTable {
         for ck in VALID_CRYPTO_KINDS {
             let vcrypto = crypto
                 .get_async(ck)
-                .expect("Valid crypto kind is not actually valid.");
+                .expect_or_log("Valid crypto kind is not actually valid.");
 
             #[cfg(test)]
             let (public_key, secret_key) = vcrypto.generate_keypair().await.into_split();
@@ -634,7 +649,7 @@ impl RoutingTable {
                 .to_hash_coordinate()
                 .distance(&self_hash_coordinate)
                 .first_nonzero_bit()
-                .unwrap(),
+                .unwrap_or_log(),
         ))
     }
 
@@ -650,7 +665,7 @@ impl RoutingTable {
             let mut entry_map: HashMap<*const BucketEntry, u32> = HashMap::new();
             let inner = &*self.inner.read();
             for ck in VALID_CRYPTO_KINDS {
-                let buckets = inner.buckets.get(&ck).unwrap();
+                let buckets = inner.buckets.get(&ck).unwrap_or_log();
                 let mut serialized_buckets = Vec::new();
                 for bucket in buckets.iter() {
                     serialized_buckets.push(bucket.save_bucket(&mut all_entries, &mut entry_map))
@@ -795,7 +810,7 @@ impl RoutingTable {
 
         // Recreate buckets
         for (k, v) in serialized_bucket_map {
-            let buckets = inner.buckets.get_mut(&k).unwrap();
+            let buckets = inner.buckets.get_mut(&k).unwrap_or_log();
 
             for n in 0..v.len() {
                 buckets[n].load_bucket(v[n].clone(), &all_entries)?;
@@ -808,7 +823,6 @@ impl RoutingTable {
     /////////////////////////////////////
     // Locked operations
 
-    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
     pub fn routing_domain_for_address(&self, address: Address) -> Option<RoutingDomain> {
         self.inner.read().routing_domain_for_address(address)
     }
@@ -954,7 +968,7 @@ impl RoutingTable {
             // Put it in the kick queue
             let x = self
                 .calculate_bucket_index(node_id)
-                .expect("node ids should already be the right length");
+                .expect_or_log("node ids should already be the right length");
             self.kick_queue.lock().insert(x);
         }
     }
@@ -970,7 +984,7 @@ impl RoutingTable {
     }
 
     /// Resolve an existing routing table entry and return a filtered reference to it
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn lookup_and_filter_noderef(
         &self,
         node_id: NodeId,
@@ -985,7 +999,7 @@ impl RoutingTable {
     /// Shortcut function to add a node to our routing table if it doesn't exist
     /// and add the dial info we have for it. Returns a noderef filtered to
     /// the routing domain in which this node was registered for convenience.
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn register_node_with_peer_info(
         &self,
         peer_info: Arc<PeerInfo>,
@@ -999,7 +1013,7 @@ impl RoutingTable {
     /// Shortcut function to add a node to our routing table if it doesn't exist
     /// Returns a noderef filtered to
     /// the routing domain in which this node was registered for convenience.
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn register_node_with_id(
         &self,
         routing_domain: RoutingDomain,
@@ -1022,7 +1036,7 @@ impl RoutingTable {
         self.inner.read().cached_live_entry_counts()
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn get_recent_peers(&self) -> Vec<(NodeId, RecentPeersEntry)> {
         let mut recent_peers = Vec::new();
         let mut dead_peers = Vec::new();
@@ -1070,6 +1084,15 @@ impl RoutingTable {
                 e.with_mut(rti, |_rti, ei| ei.set_punished(None));
                 Option::<()>::None
             });
+    }
+
+    #[expect(clippy::unused_async)]
+    pub async fn get_outbound_relay_peer(
+        &self,
+        _routing_domain: routing_table::RoutingDomain,
+    ) -> Option<Arc<routing_table::PeerInfo>> {
+        // unimplemented!
+        None
     }
 
     //////////////////////////////////////////////////////////////////////
@@ -1187,7 +1210,10 @@ impl RoutingTable {
             .sort_and_clean_closest_noderefs(hash_coordinate, closest_nodes)
     }
 
-    #[instrument(level = "trace", skip(self, peer_info_list))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, peer_info_list), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn register_nodes_with_peer_info_list(
         &self,
         peer_info_list: Vec<Arc<PeerInfo>>,
@@ -1213,7 +1239,7 @@ impl RoutingTable {
 
     /// Finds nodes near a particular node id
     /// Ensures all returned nodes have a set of capabilities enabled
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn find_nodes_close_to_node_id(
         &self,
         node_ref: FilteredNodeRef,
@@ -1224,7 +1250,7 @@ impl RoutingTable {
 
         let res = network_result_try!(
             Box::pin(rpc_processor.rpc_call_find_node(
-                Destination::direct(node_ref),
+                Destination::direct(node_ref, None),
                 node_id,
                 capabilities
             ))
@@ -1239,7 +1265,7 @@ impl RoutingTable {
 
     /// Ask a remote node to list the nodes it has around the current node
     /// Ensures all returned nodes have a set of capabilities enabled
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn find_nodes_close_to_self(
         &self,
         crypto_kind: CryptoKind,
@@ -1252,7 +1278,7 @@ impl RoutingTable {
 
     /// Ask a remote node to list the nodes it has around itself
     /// Ensures all returned nodes have a set of capabilities enabled
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn find_nodes_close_to_node_ref(
         &self,
         crypto_kind: CryptoKind,
@@ -1267,7 +1293,7 @@ impl RoutingTable {
 
     /// Ask node to 'find node' on own node so we can get some more nodes near ourselves
     /// and then contact those nodes to inform -them- that we exist
-    #[instrument(level = "trace", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn reverse_find_node(
         &self,
         crypto_kind: CryptoKind,
@@ -1309,7 +1335,10 @@ impl RoutingTable {
         }
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(dead_code)]
     pub fn find_fastest_node(
         &self,
@@ -1321,7 +1350,10 @@ impl RoutingTable {
         inner.find_fastest_node(cur_ts, filter, metric)
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_random_fast_node(
         &self,
         cur_ts: Timestamp,
@@ -1333,7 +1365,10 @@ impl RoutingTable {
         inner.find_random_fast_node(cur_ts, filter, percentile, metric)
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(dead_code)]
     pub fn get_node_speed_percentile(
         &self,
@@ -1349,7 +1384,10 @@ impl RoutingTable {
     /// Find the best routing domain for a node info
     /// Returns Some(rd) if there is a 'best' routing domain for this node info given its stated origin
     /// Returns None if no node info from this origin is acceptable
-    #[instrument(level = "trace", target = "rtab", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_best_node_info_routing_domain(
         &self,
         origin_routing_domain: RoutingDomain,

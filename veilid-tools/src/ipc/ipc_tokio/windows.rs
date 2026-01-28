@@ -170,10 +170,10 @@ impl IpcListener {
                 io::ErrorKind::NotConnected,
             ))));
         }
-        let internal = self.internal.as_ref().unwrap();
+        let internal = self.internal.as_ref().unwrap_or_log();
         let mut opt_server = internal.lock();
-        let server = opt_server.take().unwrap();
-        let path = self.path.clone().unwrap();
+        let server = opt_server.take().unwrap_or_log();
+        let path = self.path.clone().unwrap_or_log();
         *opt_server = match ServerOptions::new().create(path) {
             Ok(v) => Some(v),
             Err(e) => return Box::pin(std::future::ready(Err(e))),

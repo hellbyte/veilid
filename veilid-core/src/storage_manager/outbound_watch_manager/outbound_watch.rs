@@ -73,7 +73,7 @@ impl OutboundWatch {
         if self.state.is_none() {
             self.state = Some(OutboundWatchState::new(make_parameters()));
         }
-        self.state.as_mut().unwrap()
+        self.state.as_mut().unwrap_or_log()
     }
 
     /// Get desired watch parameters if it exists

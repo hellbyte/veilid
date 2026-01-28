@@ -923,9 +923,14 @@ class VeilidJS extends Veilid {
   }
 
   @override
-  void changeLogLevel(String layer, VeilidConfigLogLevel logLevel) {
-    final logLevelJsonString = jsonEncode(logLevel);
-    _wasmCallVoid('change_log_level', [layer.toJS, logLevelJsonString.toJS]);
+  void changeLogLevel(String layer, String directives) {
+    final out = _wasmCallInt('change_log_level', [layer.toJS, directives.toJS]);
+    if (out == 1) {
+      throw VeilidAPIExceptionParseError('Invalid layer', layer);
+    }
+    if (out == 2) {
+      throw VeilidAPIExceptionParseError('Invalid directives', directives);
+    }
   }
 
   @override

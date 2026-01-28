@@ -383,11 +383,11 @@ pub fn emit_schemas(out: &mut HashMap<String, String>) {
 
     out.insert(
         "Request".to_owned(),
-        serde_json::to_string_pretty(&schema_request).unwrap(),
+        serde_json::to_string_pretty(&schema_request).unwrap_or_log(),
     );
 
     out.insert(
         "RecvMessage".to_owned(),
-        serde_json::to_string_pretty(&schema_recv_message).unwrap(),
+        serde_json::to_string_pretty(&schema_recv_message).unwrap_or_log(),
     );
 }

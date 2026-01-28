@@ -15,7 +15,7 @@ pub use txt_bootstrap::*;
 impl_veilid_log_facility!("net");
 
 impl NetworkManager {
-    //#[instrument(level = "trace", skip(self), err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn bootstrap_with_peer(
         &self,
         crypto_kinds: Vec<CryptoKind>,
@@ -52,7 +52,7 @@ impl NetworkManager {
                         let bsdi = match network_manager
                             .get_node_contact_method(nr.default_filtered_with_sequencing(Sequencing::PreferOrdered))
                         {
-                            Ok(Some(ncm)) if ncm.is_direct() => ncm.direct_dial_info().unwrap(),
+                            Ok(Some(ncm)) if ncm.is_direct() => ncm.direct_dial_info().unwrap_or_log(),
                             Ok(v) => {
                                 veilid_log!(nr debug "invalid contact method for bootstrap, ignoring peer: {:?}", v);
                                 // let _ =
@@ -95,7 +95,7 @@ impl NetworkManager {
 
     /// Takes in a list of bootstrap peer info, and attempts bootstrapping
     /// A list of valid bootstrap peer noderefs is returned
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn bootstrap_with_peer_list(
         &self,
         bootstrap_peers: Vec<Arc<PeerInfo>>,

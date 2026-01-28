@@ -1,3 +1,34 @@
+**Changed in Veilid 0.5.2**
+
+- _BREAKING API CHANGES_:
+  - Added support for `RUST_LOG` environment variable and its syntax and deprecated the `log ignore` syntax
+  - `change_log_level`/`changeLogLevel` now takes in a log directive string in `RUST_LOG` / `EnvLogger` format rather than a single log level
+    - To upgrade, change the `log_level` parameter from a single level name (`VeilidConfigLogLevel::Debug`) to something like `"#enabled=debug`
+  - `VeilidLayerFilter` now has a more flexible powerful and supports setting a default configuration in its constructor
+- Minimum Supported Rust Version (MSRV) is now 1.88.0
+- Clean up dependencies across the board
+- Revamped logging everywhere
+- veilid-core:
+  - Added `VeilidTracing` simple log setup and extended examples to use it
+  - Log facility 'tags' (groups) starting with `#` are now supported
+  - `VeilidComponent` now registers log facilities and tags at initialization time in prep for an eventual crate split
+  - Change route test failure during allocation to a `VeilidAPIError::TryAgain`
+  - Fix connectivity problem resulting in `couldn't look up relay for inbound relay` in logs
+  - Update keyvaluedb to 0.1.5 to fix sqlite WAL file explosion
+  - Faster DialInfo detection, faster IPV4/IPV6 routability check
+  - Fix for LimitedSize underflow in StorageManager
+  - Add `instrument` feature to enable tracing instrumentation (on by default)
+  - Remove `intf` module, moving remaining platform-specific code to `veilid-tools`
+  - Several concurrency and correctness fixes for `StorageManager`'s internal `TableDB` transactions
+
+- veilid-tools:
+  - Add `debug-locks` feature implementation for AsyncRwLock, AsyncSemaphore, AsyncMutex
+  - Improved `interval()` tick accuracy
+  - Fixed subkeys aging out on a record individually [#432](https://gitlab.com/veilid/veilid/-/issues/432)
+
+- veilid-wasm:
+  - Reduced size of veilid_wasm_bg.wasm by 25% by disabling tracing instrumentation for this platform
+
 **Changed in Veilid 0.5.1**
 
 - No veilid-server/cli or packages are being built for this release. This is solely a Rust crates update.

@@ -2,7 +2,8 @@ use super::*;
 
 impl NetworkManager {
     // Compute transfer statistics for the low level network
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn rolling_transfers_task_routine(
         &self,
         _stop_token: StopToken,

@@ -203,7 +203,7 @@ impl OutboundTransactionState {
         self.record_states
             .push(OutboundTransactionRecordState::new(params));
 
-        Ok(self.record_states.last_mut().unwrap())
+        Ok(self.record_states.last_mut().unwrap_or_log())
     }
 
     pub fn get_record_states(&self) -> &[OutboundTransactionRecordState] {

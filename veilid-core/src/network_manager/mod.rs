@@ -21,8 +21,9 @@ mod stats;
 mod tasks;
 mod types;
 
+#[cfg(any(test, feature = "test-util"))]
 #[doc(hidden)]
-pub mod tests;
+pub mod tests_network_manager;
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
@@ -40,19 +41,13 @@ use address_check::*;
 use address_filter::*;
 use connection_handle::*;
 use crypto::*;
-use futures_util::stream::FuturesUnordered;
-use hashlink::LruCache;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use native::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use native::{MAX_CAPABILITIES, PUBLIC_INTERNET_CAPABILITIES};
 use relay_worker::*;
 use routing_table::*;
 use rpc_processor::*;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use wasm::*;
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use wasm::{/* LOCAL_NETWORK_CAPABILITIES, */ MAX_CAPABILITIES, PUBLIC_INTERNET_CAPABILITIES,};
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
@@ -96,20 +91,17 @@ struct ClientAllowlistEntry {
 #[derive(Clone, Debug)]
 pub struct SendDataResult {
     /// How the data was sent, possibly to a relay
-    opt_contact_method: Option<NodeContactMethod>,
-    /// Original contact method for the destination if it was relayed
-    opt_relayed_contact_method: Option<NodeContactMethod>,
+    opt_node_contact_method: Option<NodeContactMethod>,
     /// The specific flow used to send the data
     unique_flow: UniqueFlow,
 }
 
 impl SendDataResult {
     pub fn is_direct(&self) -> bool {
-        self.opt_relayed_contact_method.is_none()
-            && matches!(
-                &self.opt_contact_method,
-                Some(ncm) if ncm.is_direct()
-            )
+        matches!(
+            &self.opt_node_contact_method,
+            Some(ncm) if ncm.is_direct()
+        )
     }
     pub fn sequence_ordering(&self) -> SequenceOrdering {
         self.unique_flow.flow.protocol_type().sequence_ordering()
@@ -124,88 +116,41 @@ impl fmt::Display for SendDataResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "flow={}{}{}",
+            "flow={}{}",
             self.unique_flow.flow,
-            if let Some(cm) = &self.opt_contact_method {
-                format!(" contact_method={}", cm)
+            if let Some(ncm) = &self.opt_node_contact_method {
+                format!(" node_contact_method={}", ncm)
             } else {
                 "".to_string()
             },
-            if let Some(cm) = &self.opt_relayed_contact_method {
-                format!(" relayed_contact_method={}", cm)
-            } else {
-                "".to_string()
-            }
         )
     }
 }
 
 /// Mechanism required to contact another node
 #[derive(Clone, Debug)]
-pub enum NodeContactMethodKind {
+pub enum NodeContactMethod {
     /// Connection should have already existed
     Existing,
     /// Contact the node directly
     Direct { target_di: DialInfo },
-    /// Request via signal the node connect back directly (relay, target)
-    SignalReverse {
-        relay_nr: FilteredNodeRef,
-        target_nr: FilteredNodeRef,
-    },
-    /// Request via signal the node negotiate a hole punch (relay, target)
-    SignalHolePunch {
-        relay_nr: FilteredNodeRef,
-        target_nr: FilteredNodeRef,
-    },
+    /// Request via signal the node connect back directly
+    SignalReverse { relay_di: DialInfo },
+    /// Request via signal the node negotiate a hole punch
+    SignalHolePunch { relay_di: DialInfo },
     /// Must use an inbound relay to reach the node
-    InboundRelay { relay_nr: FilteredNodeRef },
+    InboundRelay { relay_di: DialInfo },
     /// Must use outbound relay to reach the node
     OutboundRelay { relay_nr: FilteredNodeRef },
 }
 
-impl fmt::Display for NodeContactMethodKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            NodeContactMethodKind::Existing => write!(f, "Existing"),
-            NodeContactMethodKind::Direct { target_di } => write!(f, "Direct({})", target_di),
-            NodeContactMethodKind::SignalReverse {
-                relay_nr,
-                target_nr,
-            } => write!(f, "SignalReverse(relay={}, target={})", relay_nr, target_nr),
-            NodeContactMethodKind::SignalHolePunch {
-                relay_nr,
-                target_nr,
-            } => write!(
-                f,
-                "SignalHolePunch(relay={}, target={})",
-                relay_nr, target_nr
-            ),
-            NodeContactMethodKind::InboundRelay { relay_nr } => {
-                write!(f, "InboundRelay(relay={})", relay_nr)
-            }
-            NodeContactMethodKind::OutboundRelay { relay_nr } => {
-                write!(f, "OutboundRelay(relay={})", relay_nr)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NodeContactMethod {
-    ncm_key: NodeContactMethodCacheKey,
-    ncm_kind: NodeContactMethodKind,
-}
-
 impl NodeContactMethod {
     pub fn is_direct(&self) -> bool {
-        matches!(
-            self.ncm_kind,
-            NodeContactMethodKind::Direct { target_di: _ }
-        )
+        matches!(self, NodeContactMethod::Direct { target_di: _ })
     }
     pub fn direct_dial_info(&self) -> Option<DialInfo> {
-        match &self.ncm_kind {
-            NodeContactMethodKind::Direct { target_di } => Some(target_di.clone()),
+        match &self {
+            NodeContactMethod::Direct { target_di } => Some(target_di.clone()),
             _ => None,
         }
     }
@@ -213,7 +158,22 @@ impl NodeContactMethod {
 
 impl fmt::Display for NodeContactMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.ncm_kind)
+        match self {
+            NodeContactMethod::Existing => write!(f, "Existing"),
+            NodeContactMethod::Direct { target_di } => write!(f, "Direct({})", target_di),
+            NodeContactMethod::SignalReverse { relay_di } => {
+                write!(f, "SignalReverse(relay={})", relay_di)
+            }
+            NodeContactMethod::SignalHolePunch { relay_di } => {
+                write!(f, "SignalHolePunch(relay={})", relay_di)
+            }
+            NodeContactMethod::InboundRelay { relay_di } => {
+                write!(f, "InboundRelay(relay={})", relay_di)
+            }
+            NodeContactMethod::OutboundRelay { relay_nr } => {
+                write!(f, "OutboundRelay(relay={})", relay_nr)
+            }
+        }
     }
 }
 
@@ -249,7 +209,7 @@ impl Default for NetworkManagerStartupContext {
 #[derive(Debug)]
 struct NetworkManagerInner {
     stats: NetworkManagerStats,
-    client_allowlist: LruCache<NodeId, ClientAllowlistEntry>,
+    client_allowlist: hashlink::LruCache<NodeId, ClientAllowlistEntry>,
     node_contact_method_cache: NodeContactMethodCache,
     address_check: Option<AddressCheck>,
     tick_subscription: Option<EventBusSubscription>,
@@ -257,7 +217,7 @@ struct NetworkManagerInner {
     socket_address_change_subscription: Option<EventBusSubscription>,
 
     // TXT lookup cache
-    txt_lookup_cache: LruCache<String, (Timestamp, Vec<String>)>,
+    txt_lookup_cache: hashlink::LruCache<String, (Timestamp, Vec<String>)>,
 
     // Relay workers
     relay_stop_source: Option<StopSource>,
@@ -310,13 +270,13 @@ impl NetworkManager {
     fn new_inner() -> NetworkManagerInner {
         NetworkManagerInner {
             stats: NetworkManagerStats::default(),
-            client_allowlist: LruCache::new_unbounded(),
+            client_allowlist: hashlink::LruCache::new_unbounded(),
             node_contact_method_cache: NodeContactMethodCache::new(),
             address_check: None,
             tick_subscription: None,
             peer_info_change_subscription: None,
             socket_address_change_subscription: None,
-            txt_lookup_cache: LruCache::new(TXT_LOOKUP_CACHE_SIZE),
+            txt_lookup_cache: hashlink::LruCache::new(TXT_LOOKUP_CACHE_SIZE),
             //
             relay_send_channel: None,
             relay_stop_source: None,
@@ -346,7 +306,7 @@ impl NetworkManager {
                             bcs.generate_hash(network_key_password.as_bytes())
                                 .ref_value(),
                         )
-                        .expect("failed to derive network key")
+                        .expect_or_log("failed to derive network key")
                         .value(),
                     )
                 } else {
@@ -410,7 +370,7 @@ impl NetworkManager {
     }
 
     fn net(&self) -> Network {
-        self.components.read().as_ref().unwrap().net.clone()
+        self.components.read().as_ref().unwrap_or_log().net.clone()
     }
     fn opt_net(&self) -> Option<Network> {
         self.components.read().as_ref().map(|x| x.net.clone())
@@ -419,7 +379,7 @@ impl NetworkManager {
         self.components
             .read()
             .as_ref()
-            .unwrap()
+            .unwrap_or_log()
             .receipt_manager
             .clone()
     }
@@ -428,7 +388,7 @@ impl NetworkManager {
         self.components
             .read()
             .as_ref()
-            .unwrap()
+            .unwrap_or_log()
             .connection_manager
             .clone()
     }
@@ -439,7 +399,17 @@ impl NetworkManager {
             .map(|x| x.connection_manager.clone())
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new()
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("net", ["#common"]).unwrap(),
+            )
+            .with_facility(VeilidComponentLogFacility::try_new("protocol").unwrap())
+            .with_facility(VeilidComponentLogFacility::try_new("receipt").unwrap())
+    }
+
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     async fn init_async(&self) -> EyreResult<()> {
         Ok(())
     }
@@ -458,10 +428,11 @@ impl NetworkManager {
         );
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     async fn terminate_async(&self) {}
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn internal_startup(&self) -> EyreResult<StartupDisposition> {
         if self.components.read().is_some() {
             veilid_log!(self debug "NetworkManager::internal_startup already started");
@@ -524,7 +495,7 @@ impl NetworkManager {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn startup(&self) -> EyreResult<StartupDisposition> {
         let guard = self.startup_context.startup_lock.startup()?;
 
@@ -544,7 +515,7 @@ impl NetworkManager {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn shutdown_internal(&self) {
         // Shutdown event bus subscriptions and address check
         {
@@ -593,7 +564,7 @@ impl NetworkManager {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn shutdown(&self) {
         // Proceed with shutdown
         veilid_log!(self debug "starting network manager shutdown");
@@ -602,7 +573,7 @@ impl NetworkManager {
             .startup_lock
             .shutdown()
             .await
-            .expect("should be started up");
+            .expect_or_log("should be started up");
 
         self.shutdown_internal().await;
 
@@ -625,7 +596,7 @@ impl NetworkManager {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn check_client_allowlist(&self, client: NodeId) -> bool {
         let mut inner = self.inner.lock();
 
@@ -650,7 +621,7 @@ impl NetworkManager {
             .map(|v| v.1.last_seen_ts < cutoff_timestamp)
             .unwrap_or_default()
         {
-            let (k, v) = inner.client_allowlist.remove_lru().unwrap();
+            let (k, v) = inner.client_allowlist.remove_lru().unwrap_or_log();
             trace!(target: "net", key=?k, value=?v, "purge_client_allowlist: remove_lru")
         }
     }
@@ -670,7 +641,10 @@ impl NetworkManager {
     }
 
     /// Generates a multi-shot/normal receipt
-    #[instrument(level = "trace", skip(self, extra_data, callback))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, extra_data, callback), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(dead_code)]
     pub fn generate_receipt<D: AsRef<[u8]>>(
         &self,
@@ -716,7 +690,10 @@ impl NetworkManager {
     }
 
     /// Generates a single-shot/normal receipt
-    #[instrument(level = "trace", skip(self, extra_data))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, extra_data), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn generate_single_shot_receipt<D: AsRef<[u8]>>(
         &self,
         expiration_duration: TimestampDuration,
@@ -762,7 +739,10 @@ impl NetworkManager {
     }
 
     /// Process a received out-of-band receipt
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_out_of_band_receipt<R: AsRef<[u8]>>(
         &self,
         receipt_data: R,
@@ -787,7 +767,10 @@ impl NetworkManager {
     }
 
     /// Process a received in-band receipt
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_in_band_receipt<R: AsRef<[u8]>>(
         &self,
         receipt_data: R,
@@ -813,7 +796,10 @@ impl NetworkManager {
     }
 
     /// Process a received safety receipt
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_safety_receipt<R: AsRef<[u8]>>(
         &self,
         receipt_data: R,
@@ -838,7 +824,10 @@ impl NetworkManager {
     }
 
     /// Process a received private receipt
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_private_receipt<R: AsRef<[u8]>>(
         &self,
         receipt_data: R,
@@ -864,7 +853,10 @@ impl NetworkManager {
     }
 
     // Process a received signal
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_signal(
         &self,
         signal_flow: Flow,
@@ -899,7 +891,7 @@ impl NetworkManager {
                 peer_nr.set_sequencing(sequencing);
 
                 // Make a reverse connection to the peer and send the receipt to it
-                rpc.rpc_call_return_receipt(Destination::direct(peer_nr), receipt)
+                rpc.rpc_call_return_receipt(Destination::direct(peer_nr, None), receipt)
                     .await
                     .wrap_err("rpc failure")
             }
@@ -952,7 +944,7 @@ impl NetworkManager {
                 self.set_last_flow(peer_nr.unfiltered(), unique_flow.flow, Timestamp::now());
 
                 // Return the receipt using the same dial info send the receipt to it
-                rpc.rpc_call_return_receipt(Destination::direct(peer_nr), receipt)
+                rpc.rpc_call_return_receipt(Destination::direct(peer_nr, None), receipt)
                     .await
                     .wrap_err("rpc failure")
             }
@@ -960,7 +952,10 @@ impl NetworkManager {
     }
 
     /// Builds an envelope for sending over the network
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn build_envelope<B: AsRef<[u8]>>(
         &self,
         timestamp: Timestamp,
@@ -1012,22 +1007,24 @@ impl NetworkManager {
     }
 
     /// Called by the RPC handler when we want to issue an RPC request or response
-    /// node_ref is the direct destination to which the envelope will be sent
-    /// If 'destination_node_ref' is specified, it can be different than the node_ref being sent to
-    /// which will cause the envelope to be relayed
-    #[instrument(level = "trace", target = "net", skip_all)]
+    /// node_ref is the final destination to which the envelope will be sent
+    /// If `relay_di` is specified, then it will be directly sent to this dialinfo without
+    /// resolving the contact method
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn send_envelope<B: AsRef<[u8]>>(
         &self,
         node_ref: FilteredNodeRef,
-        destination_node_ref: Option<NodeRef>,
+        opt_relay_di: Option<DialInfo>,
         body: B,
     ) -> EyreResult<NetworkResult<SendDataResult>> {
         let Ok(_guard) = self.startup_context.startup_lock.enter() else {
             return Ok(NetworkResult::no_connection_other("network is not started"));
         };
 
-        let destination_node_ref = destination_node_ref.unwrap_or_else(|| node_ref.unfiltered());
-        let Some(best_node_id) = destination_node_ref.best_node_id() else {
+        let Some(best_node_id) = node_ref.best_node_id() else {
             bail!(
                 "can't talk to this node {} because we dont support its cryptosystem",
                 node_ref
@@ -1036,7 +1033,7 @@ impl NetworkManager {
 
         // Get node's envelope versions and see if we can send to it
         // and if so, get the max version we can use
-        let Some(envelope_version) = destination_node_ref.best_envelope_version() else {
+        let Some(envelope_version) = node_ref.best_envelope_version() else {
             bail!(
                 "can't talk to this node {} because we dont support its envelope versions",
                 node_ref
@@ -1053,11 +1050,11 @@ impl NetworkManager {
             )
             .await?;
 
-        if !node_ref.same_entry(&destination_node_ref) {
+        if let Some(relay_di) = &opt_relay_di {
             veilid_log!(self trace
                 "sending envelope to {:?} via {:?}, len={}, timestamp={:?}",
-                destination_node_ref,
                 node_ref,
+                relay_di,
                 out.len(),
                 timestamp
             );
@@ -1066,11 +1063,21 @@ impl NetworkManager {
         }
 
         // Send the envelope via whatever means necessary
-        self.send_data(node_ref, out).await
+        if let Some(relay_di) = opt_relay_di {
+            // Have direct dialinfo already
+            self.send_data_direct(node_ref.unfiltered(), relay_di, out)
+                .await
+        } else {
+            // Must calculate node contact method
+            self.send_data(node_ref, out).await
+        }
     }
 
     /// Called by the RPC handler when we want to issue an direct receipt
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn send_out_of_band_receipt(
         &self,
         dial_info: DialInfo,
@@ -1101,7 +1108,10 @@ impl NetworkManager {
     // Called when a packet potentially containing an RPC envelope is received by a low-level
     // network protocol handler. Processes the envelope, authenticates and decrypts the RPC message
     // and passes it to the RPC handler
-    #[instrument(level = "trace", target = "net", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn on_recv_envelope(&self, data: &mut [u8], flow: Flow) -> EyreResult<bool> {
         let Ok(_guard) = self.startup_context.startup_lock.enter() else {
             return Ok(false);
@@ -1373,19 +1383,20 @@ impl NetworkManager {
         Ok(true)
     }
 
-    /// Record the last flow for a peer in the routing table and the  connection table appropriately
+    /// Record the last flow for a peer in the routing table and the connection table appropriately
     pub(super) fn set_last_flow(&self, node_ref: NodeRef, flow: Flow, timestamp: Timestamp) {
+        // Set the last flow on the routing table entry
+        node_ref.set_last_flow(flow, timestamp);
+
         // Get the routing domain for the flow
         let Some(routing_domain) = self.routing_table().routing_domain_for_flow(flow) else {
-            error!(
+            // Flow may be dead because of a network change
+            veilid_log!(self debug
                 "flow found with no routing domain: {} for {}",
                 flow, node_ref
             );
             return;
         };
-
-        // Set the last flow on the routing table entry
-        node_ref.set_last_flow(flow, timestamp);
 
         // Inform the connection table about the flow's priority
         let is_relaying_flow = node_ref.is_relaying(routing_domain);

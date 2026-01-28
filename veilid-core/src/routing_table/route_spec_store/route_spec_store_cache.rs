@@ -74,7 +74,7 @@ impl RouteSpecStoreCache {
                     .or_insert(1);
             }
             self.used_end_nodes
-                .entry(rsd.hops.last().unwrap().clone())
+                .entry(rsd.hops.last().unwrap_or_log().clone())
                 .and_modify(|e| *e += 1)
                 .or_insert(1);
         }
@@ -114,7 +114,10 @@ impl RouteSpecStoreCache {
                 }
             }
             // Remove from end nodes cache
-            match self.used_end_nodes.entry(rsd.hops.last().cloned().unwrap()) {
+            match self
+                .used_end_nodes
+                .entry(rsd.hops.last().cloned().unwrap_or_log())
+            {
                 std::collections::hash_map::Entry::Occupied(mut o) => {
                     *o.get_mut() -= 1;
                     if *o.get() == 0 {
@@ -176,7 +179,7 @@ impl RouteSpecStoreCache {
                 let _ = self
                     .remote_private_routes_by_key
                     .remove(&dead_private_route.public_key)
-                    .unwrap();
+                    .unwrap_or_log();
                 self.invalidate_compiled_route_cache(&dead_private_route.public_key);
             }
             self.dead_remote_routes.push(dead_id);
@@ -304,7 +307,7 @@ impl RouteSpecStoreCache {
             let _ = self
                 .remote_private_routes_by_key
                 .remove(&private_route.public_key)
-                .unwrap();
+                .unwrap_or_log();
             self.invalidate_compiled_route_cache(&private_route.public_key);
         }
         self.dead_remote_routes.push(id);

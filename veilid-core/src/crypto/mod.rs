@@ -5,8 +5,10 @@ mod receipt;
 mod types;
 
 pub mod crypto_system;
+
+#[cfg(any(test, feature = "test-util"))]
 #[doc(hidden)]
-pub mod tests;
+pub mod tests_crypto;
 
 pub use crypto_system::*;
 use dh_cache::*;
@@ -116,14 +118,27 @@ impl Crypto {
         }
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all, err)]
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new().with_facility(
+            VeilidComponentLogFacility::try_new_with_tags("crypto", ["#common"]).unwrap(),
+        )
+    }
+
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    #[allow(clippy::unused_async)]
     async fn init_async(&self) -> EyreResult<()> {
         // Nothing to initialize at this time
         Ok(())
     }
 
     // Setup called by table store after it get initialized
-    #[instrument(level = "trace", target = "crypto", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(crate) async fn table_store_setup(&self, table_store: &TableStore) -> EyreResult<()> {
         // load caches if they are valid for this node id
         let caches_valid = {
@@ -152,7 +167,11 @@ impl Crypto {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    #[allow(clippy::unused_async)]
     async fn post_init_async(&self) -> EyreResult<()> {
         Ok(())
     }
@@ -203,12 +222,12 @@ impl Crypto {
 
     // Factory method to get the best crypto version
     pub(crate) fn best(&self) -> CryptoSystemGuard<'_> {
-        self.get(best_crypto_kind()).unwrap()
+        self.get(best_crypto_kind()).unwrap_or_log()
     }
 
     // Factory method to get the best crypto version for async use
     pub(crate) fn best_async(&self) -> AsyncCryptoSystemGuard<'_> {
-        self.get_async(best_crypto_kind()).unwrap()
+        self.get_async(best_crypto_kind()).unwrap_or_log()
     }
 
     // Convenience validators

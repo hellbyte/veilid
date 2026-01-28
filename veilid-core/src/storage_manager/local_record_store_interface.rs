@@ -1,7 +1,10 @@
 use super::*;
 
 impl StorageManager {
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_get_single_local_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -21,7 +24,10 @@ impl StorageManager {
         Ok(GetResult::default())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_offline_set_single_local_value_with_subkey_lock(
         &self,
         subkey_lock: &StorageManagerSubkeyLockGuard,
@@ -57,7 +63,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_set_single_local_value_with_subkey_lock(
         &self,
         subkey_lock: &StorageManagerSubkeyLockGuard,
@@ -86,7 +95,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_set_single_local_value_with_single_record_lock(
         &self,
         record_lock: &StorageManagerRecordLockGuard,
@@ -115,7 +127,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(dead_code)]
     pub(super) async fn handle_set_local_values_with_single_record_lock(
         &self,
@@ -145,7 +160,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_set_local_values_with_multiple_records_lock(
         &self,
         records_lock: &StorageManagerRecordsLockGuard,
@@ -177,7 +195,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn handle_inspect_local_values_with_peek_lock(
         &self,
         peek_lock: &StorageManagerPeekLockGuard,
@@ -199,7 +220,10 @@ impl StorageManager {
         Ok(InspectResult::default())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn get_value_nodes(
         &self,
         opaque_record_key: &OpaqueRecordKey,

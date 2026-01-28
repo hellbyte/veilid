@@ -1,6 +1,6 @@
+use crate::logs::Logs;
 use crate::settings::*;
 use crate::tools::*;
-use crate::veilid_logs::VeilidLogs;
 use cfg_if::*;
 use futures_util::{future::join_all, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -44,7 +44,7 @@ struct RequestLine {
 
 struct ClientApiInner {
     veilid_api: veilid_core::VeilidAPI,
-    veilid_logs: VeilidLogs,
+    veilid_logs: Logs,
     settings: Settings,
     stop: Option<StopSource>,
     join_handle: Option<ClientApiAllFuturesJoinHandle>,
@@ -58,11 +58,7 @@ pub struct ClientApi {
 
 impl ClientApi {
     #[instrument(level = "trace", skip_all)]
-    pub fn new(
-        veilid_api: veilid_core::VeilidAPI,
-        veilid_logs: VeilidLogs,
-        settings: Settings,
-    ) -> Self {
+    pub fn new(veilid_api: veilid_core::VeilidAPI, veilid_logs: Logs, settings: Settings) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ClientApiInner {
                 veilid_api,
@@ -82,15 +78,11 @@ impl ClientApi {
         crate::server::shutdown();
     }
 
-    fn change_log_level(
-        &self,
-        layer: String,
-        log_level: VeilidConfigLogLevel,
-    ) -> VeilidAPIResult<()> {
+    fn change_log_level(&self, layer: String, directives: String) -> VeilidAPIResult<()> {
         trace!(target: "client_api", "ClientApi::change_log_level");
 
         let veilid_logs = self.inner.lock().veilid_logs.clone();
-        veilid_logs.change_log_level(layer, log_level)
+        veilid_logs.change_log_level(layer, directives)
     }
 
     fn change_log_ignore(&self, layer: String, log_ignore: String) -> VeilidAPIResult<()> {
@@ -110,7 +102,7 @@ impl ClientApi {
                 return;
             }
             drop(inner.stop.take());
-            inner.join_handle.take().unwrap()
+            inner.join_handle.take().unwrap_or_log()
         };
         trace!(target: "client_api", "ClientApi::stop: waiting for stop");
         jh.await;
@@ -222,8 +214,7 @@ impl ClientApi {
             if args.len() != 3 {
                 apibail_generic!("wrong number of arguments");
             }
-            let log_level = VeilidConfigLogLevel::from_str(&args[2])?;
-            self.change_log_level(args[1].clone(), log_level)?;
+            self.change_log_level(args[1].clone(), args[2].clone())?;
             Ok("".to_owned())
         } else if args[0] == "ChangeLogIgnore" {
             if args.len() != 3 {
@@ -469,7 +460,7 @@ impl ClientApi {
         );
 
         // Make stop token to quit when stop() is requested externally
-        let stop_token = self.inner.lock().stop.as_ref().unwrap().token();
+        let stop_token = self.inner.lock().stop.as_ref().unwrap_or_log().token();
 
         // Split into reader and writer halves
         // with line buffering on the reader
@@ -500,7 +491,7 @@ impl ClientApi {
         debug!("Accepted IPC Client API Connection");
 
         // Make stop token to quit when stop() is requested externally
-        let stop_token = self.inner.lock().stop.as_ref().unwrap().token();
+        let stop_token = self.inner.lock().stop.as_ref().unwrap_or_log().token();
 
         // Split into reader and writer halves
         // with line buffering on the reader

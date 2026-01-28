@@ -37,7 +37,10 @@ enum GetValueLockShortcutResult {
 
 impl StorageManager {
     /// Get the value of a subkey from an opened local record
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn get_value(
         &self,
         record_key: RecordKey,
@@ -94,14 +97,12 @@ impl StorageManager {
             .as_ref()
             .map(|v| v.value_data().seq())
             .unwrap_or_default();
-        let res_rx = self
-            .outbound_get_value(
-                opaque_record_key.clone(),
-                subkey,
-                safety_selection,
-                last_get_result,
-            )
-            .await?;
+        let res_rx = self.outbound_get_value(
+            opaque_record_key.clone(),
+            subkey,
+            safety_selection,
+            last_get_result,
+        )?;
 
         // Wait for the first result
         let Ok(result) = res_rx.recv_async().await else {
@@ -136,7 +137,10 @@ impl StorageManager {
     }
 
     /// Handle a received 'Get Value' query
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn inbound_get_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -229,8 +233,11 @@ impl StorageManager {
 
     /// Perform a 'get value' query on the network
     /// Performs the work without a transaction
-    #[instrument(level = "trace", target = "dht", skip_all, err)]
-    pub(super) async fn outbound_get_value(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    pub(super) fn outbound_get_value(
         &self,
         opaque_record_key: OpaqueRecordKey,
         subkey: ValueSubkey,
@@ -297,8 +304,7 @@ impl StorageManager {
                         let gva = match
                             rpc_processor
                                 .rpc_call_get_value(
-                                    Destination::direct(next_node.routing_domain_filtered(routing_domain))
-                                        .with_safety(safety_selection),
+                                    Destination::direct(next_node.routing_domain_filtered(routing_domain), Some(safety_selection)),
                                     opaque_record_key.clone(),
                                     subkey,
                                     descriptor_mode,
@@ -512,7 +518,7 @@ impl StorageManager {
                         veilid_log!(registry debug "Sending GetValue result failed: {}", e);
                     }
                 }
-                .instrument(tracing::trace_span!("outbound_get_value result")),
+                .instrument(tracing::trace_span!("outbound_get_value result", __VEILID_LOG_KEY = self.log_key())),
             ),
         )
         .detach();
@@ -520,7 +526,10 @@ impl StorageManager {
         Ok(out_rx)
     }
 
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn process_deferred_outbound_get_value_result(
         &self,
         res_rx: flume::Receiver<Result<get_value::OutboundGetValueResult, VeilidAPIError>>,
@@ -601,7 +610,10 @@ impl StorageManager {
         );
     }
 
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn process_outbound_get_value_result_locked(
         &self,
         subkey_lock: &StorageManagerSubkeyLockGuard,

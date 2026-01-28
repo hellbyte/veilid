@@ -97,8 +97,10 @@ impl StartupLock {
     /// One must call 'success()' on the returned startup lock guard if startup was successful
     /// otherwise the startup lock will not shift to the 'started' state.
     pub fn startup(&self) -> Result<StartupLockGuard<'_>, StartupLockAlreadyStartedError> {
-        let guard =
-            asyncrwlock_try_write!(self.startup_state).ok_or(StartupLockAlreadyStartedError)?;
+        let guard = self
+            .startup_state
+            .try_write()
+            .ok_or(StartupLockAlreadyStartedError)?;
         if *guard {
             return Err(StartupLockAlreadyStartedError);
         }
@@ -119,7 +121,7 @@ impl StartupLock {
     /// Check if this StartupLock is currently in a started state
     /// Returns false is the state is in transition
     pub fn is_started(&self) -> bool {
-        let Some(guard) = asyncrwlock_try_read!(self.startup_state) else {
+        let Some(guard) = self.startup_state.try_read() else {
             return false;
         };
         *guard
@@ -128,7 +130,7 @@ impl StartupLock {
     /// Check if this StartupLock is currently in a shut down state
     /// Returns false is the state is in transition
     pub fn is_shut_down(&self) -> bool {
-        let Some(guard) = asyncrwlock_try_read!(self.startup_state) else {
+        let Some(guard) = self.startup_state.try_read() else {
             return false;
         };
         !*guard
@@ -167,7 +169,10 @@ impl StartupLock {
     /// If this module has not yet started up or is in the process of startup or shutdown
     /// this will fail.
     pub fn enter(&self) -> Result<StartupLockEnterGuard<'_>, StartupLockNotStartedError> {
-        let guard = asyncrwlock_try_read!(self.startup_state).ok_or(StartupLockNotStartedError)?;
+        let guard = self
+            .startup_state
+            .try_read()
+            .ok_or(StartupLockNotStartedError)?;
         if !*guard {
             return Err(StartupLockNotStartedError);
         }
@@ -191,8 +196,10 @@ impl StartupLock {
     /// If this module has not yet started up or is in the process of startup or shutdown
     /// this will fail.
     pub fn enter_arc(&self) -> Result<StartupLockEnterGuardArc, StartupLockNotStartedError> {
-        let guard =
-            asyncrwlock_try_read_arc!(self.startup_state).ok_or(StartupLockNotStartedError)?;
+        let guard = self
+            .startup_state
+            .try_read_arc()
+            .ok_or(StartupLockNotStartedError)?;
         if !*guard {
             return Err(StartupLockNotStartedError);
         }

@@ -1,6 +1,6 @@
 # Veilid Development
 
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](code_of_conduct.md)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 ## Introduction
 
@@ -13,6 +13,53 @@ This guide covers setting up environments for core, Flutter/Dart, and Python dev
 ```shell
 git clone https://gitlab.com/[USERNAME]/veilid.git
 ```
+
+## Platform Support
+
+Veilid can be built for a number of platforms and targets. Here is a non-exhaustive support matrix:
+
+### Executables
+
+* `veilid-server`
+* `veilid-cli`
+
+| **Target**                   | **Compiles**<br>✅ = Known Working<br>🟡 = Likely Works<br>❓= Unknown Status | **Testing**<br>✅ = Tested In CI<br>🟡 = Tested Manually<br>❓= Untested | **Packages**<br>✅ = Official Package<br>🟡 = Community Package<br>❓= No Known Package |
+|------------------------------|----|----|----|
+| `x86_64-unknown-linux-gnu`   | ✅ | ✅ | ✅ [RPM/YUM/DEB/APT](https://gitlab.com/veilid/veilid/-/blob/main/INSTALL.md)<br>Maintainer: [Veilid Core Team](mailto:support@veilid.com)<br><br>🟡 [Nix](https://github.com/NixOS/nixpkgs/blob/nixos-unstable/nixos/modules/services/networking/veilid.nix)<br>Maintainer: [Bruno Bigras](mailto:support@veilid.com)<br> |
+| `aarch64-apple-darwin`       | ✅ | 🟡 | 🟡 [Brew](https://formulae.brew.sh/formula/veilid)<br>Maintainer: [Salvatore Testa](mailto:support@veilid.com)<br>  |
+| `x86_64-pc-windows-gnu`      | ✅ | 🟡 | ❓ |
+| `aarch64-pc-windows-gnullvm` | ✅ | 🟡 | ❓ |
+| `x86_64-apple-darwin`        | 🟡 | ❓ | ❓ |
+| `x86_64-unknown-openbsd`     | ❓ | ❓ | ❓ |
+
+### Libraries
+
+| Name                | Language | Packages<br>✅ = Official Package<br>🟡 = Community Package<br>❌ = Not Published |
+|---------------------|------|-------------------------------------------------------------------|
+| `veilid-core`       | Rust       | ✅ [Crates.io](https://crates.io/crates/veilid-core)        |
+| `veilid-tools`      | Rust       | ✅ [Crates.io](https://crates.io/crates/veilid-tools)       |
+| `veilid-remote-api` | Rust       | ✅ [Crates.io](https://crates.io/crates/veilid-remote-api)  |
+| `veilid-wasm`       | Rust       | ❌ Not published directly                                   |
+|                     | Typescript | 🟡 [NPM](https://www.npmjs.com/package/@bmv437/veilid-wasm) |
+| `veilid-flutter`    | Rust       | ❌ Not published directly                                   |
+|                     | Dart       | ❌ _Builds from source_                                     |
+| `veilid-python`     | Python     | ✅ [PyPi](https://pypi.org/project/veilid/)                 |
+###
+
+### Development Targets
+
+| **Target**                   | **Libraries** | **Compiles**<br>✅ = Known Working<br>🟡 = Likely Works<br>❓= Unknown Status | **Clippy/Fmt**<br>✅ = Verified In CI<br>🟡 = Verified manually<br>❓= Unverified | **Unit Testing**<br>✅ = Tested In CI<br>🟡 = Tested Manually<br>❓= Untested |
+|------------------------------|------------------------------------------------|----------|----------|----------|
+| `x86_64-unknown-linux-gnu`   | `veilid-core`<br>`veilid-flutter`              | ✅<br>✅ | ✅<br>✅ | ✅<br>🟡 |
+| `wasm32-unknown-unknown`     | `veilid-wasm`<br>`veilid-flutter`              | ✅<br>✅ | ✅<br>✅ | 🟡<br>🟡 |
+| `aarch64-apple-darwin`       | `veilid-core`<br>`veilid-flutter`              | ✅<br>✅ | ✅<br>✅ | 🟡<br>🟡 |
+| `x86_64-pc-windows-gnu`      | `veilid-core`<br>`veilid-flutter`              | ✅<br>✅ | ✅<br>✅ | 🟡<br>🟡 |
+| `aarch64-apple-ios`          | `veilid-core`<br>`veilid-flutter`              | ✅<br>✅ | ❓<br>❓ | 🟡<br>🟡 |
+| `aarch64-linux-android`<br>`armv7-linux-androideabi`<br>`x86_64-linux-android`<br>`i686-linux-android`    | `veilid-core`<br>`veilid-flutter` | ✅<br>✅ | ❓<br>❓ | 🟡<br>🟡 |
+| `aarch64-pc-windows-gnullvm` | `veilid-core`           | ✅ | ❓ | 🟡 |
+| `x86_64-apple-darwin`        | `veilid-core`           | 🟡 | ❓ | ❓ |
+| `x86_64-unknown-openbsd`     | `veilid-core`           | ❓ | ❓ | ❓ |
+
 
 ## Dependencies
 

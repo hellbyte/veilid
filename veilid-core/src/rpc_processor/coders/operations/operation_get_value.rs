@@ -98,7 +98,7 @@ impl RPCOperationGetValueA {
         let question_context = validate_context
             .question_context
             .as_ref()
-            .expect("GetValueA requires question context");
+            .expect_or_log("GetValueA requires question context");
         let QuestionContext::GetValue(get_value_context) = question_context else {
             panic!("Wrong context type for GetValueA");
         };

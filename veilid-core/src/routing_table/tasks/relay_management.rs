@@ -102,7 +102,7 @@ impl RoutingTable {
     }
 
     // Keep relays assigned and accessible
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn relay_management_task_routine(
         &self,
         _stop_token: StopToken,
@@ -150,8 +150,9 @@ impl RoutingTable {
 
         // Drop outbound relay if it changed
         let mut has_outbound_relay = false;
-        if let Some(outbound_relay_peerinfo) =
-            intf::get_outbound_relay_peer(RoutingDomain::PublicInternet).await
+        if let Some(outbound_relay_peerinfo) = self
+            .get_outbound_relay_peer(RoutingDomain::PublicInternet)
+            .await
         {
             valid_relays.retain(|rdr| {
                 if matches!(rdr.relay_kind, RelayKind::Outbound) {
@@ -173,8 +174,9 @@ impl RoutingTable {
 
         // Allocate outbound relay if one is needed
         let mut attempted_relays = HashSet::<NodeId>::new();
-        if let Some(outbound_relay_peerinfo) =
-            intf::get_outbound_relay_peer(RoutingDomain::PublicInternet).await
+        if let Some(outbound_relay_peerinfo) = self
+            .get_outbound_relay_peer(RoutingDomain::PublicInternet)
+            .await
         {
             if !has_outbound_relay {
                 // Register new outbound relay
@@ -259,7 +261,7 @@ impl RoutingTable {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn make_public_internet_relay_node_filter(&self) -> impl Fn(&BucketEntryInner) -> bool {
         let ip6_prefix_size = self.config().network.max_connections_per_ip6_prefix_size as usize;
 

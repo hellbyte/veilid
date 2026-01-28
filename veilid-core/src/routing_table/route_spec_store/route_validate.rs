@@ -2,7 +2,10 @@ use super::*;
 
 impl RouteSpecStore {
     /// validate data using a private route's key and signature chain
-    #[instrument(level = "trace", target = "route", skip(self, data, callback), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self, data, callback), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn with_signature_validated_route<F, R>(
         &self,
         public_key: &PublicKey,

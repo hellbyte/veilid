@@ -1,6 +1,5 @@
 pub mod rolling_transfers;
 use super::*;
-use crate::attachment_manager::TickEvent;
 
 impl NetworkManager {
     pub fn setup_tasks(&self) {
@@ -34,7 +33,10 @@ impl NetworkManager {
         }
     }
 
-    #[instrument(level = "trace", name = "NetworkManager::tick", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", name = "NetworkManager::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn tick(&self) -> EyreResult<()> {
         let net = self.net();
         let receipt_manager = self.receipt_manager();

@@ -31,7 +31,7 @@ impl RPCProcessor {
         for task_n in 0..self.concurrency {
             let registry = self.registry();
             let receiver = channel.1.clone();
-            let stop_token = inner.rpc_stop_source.as_ref().unwrap().token();
+            let stop_token = inner.rpc_stop_source.as_ref().unwrap_or_log().token();
             let jh = spawn(&format!("relay worker {}", task_n), async move {
                 let this = registry.rpc_processor();
                 Box::pin(this.rpc_worker(stop_token, receiver)).await
@@ -59,7 +59,10 @@ impl RPCProcessor {
         while unord.next().await.is_some() {}
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn rpc_worker(&self, stop_token: StopToken, receiver: flume::Receiver<RPCWorkerRequest>) {
         while let Ok(Ok(request)) = receiver.recv_async().timeout_at(stop_token.clone()).await {
             let rpc_request_span = tracing::trace_span!("rpc request");
@@ -103,7 +106,10 @@ impl RPCProcessor {
         }
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn enqueue_direct_message(
         &self,
         envelope: Envelope,
@@ -155,7 +161,10 @@ impl RPCProcessor {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn enqueue_safety_routed_message(
         &self,
         direct: RPCMessageHeaderDetailDirect,
@@ -202,7 +211,10 @@ impl RPCProcessor {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn enqueue_private_routed_message(
         &self,
         direct: RPCMessageHeaderDetailDirect,

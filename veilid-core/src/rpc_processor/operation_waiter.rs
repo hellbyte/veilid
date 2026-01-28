@@ -57,7 +57,18 @@ where
     T: Unpin,
     C: Unpin + Clone,
 {
+    registry: VeilidComponentRegistry,
     inner: Arc<Mutex<OperationWaiterInner<T, C>>>,
+}
+
+impl<T, C> VeilidComponentRegistryAccessor for OperationWaiter<T, C>
+where
+    T: Unpin,
+    C: Unpin + Clone,
+{
+    fn registry(&self) -> VeilidComponentRegistry {
+        self.registry.clone()
+    }
 }
 
 impl<T, C> Clone for OperationWaiter<T, C>
@@ -67,6 +78,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
+            registry: self.registry.clone(),
             inner: self.inner.clone(),
         }
     }
@@ -77,8 +89,9 @@ where
     T: Unpin,
     C: Unpin + Clone,
 {
-    pub fn new() -> Self {
+    pub fn new(registry: VeilidComponentRegistry) -> Self {
         Self {
+            registry,
             inner: Arc::new(Mutex::new(OperationWaiterInner {
                 waiting_op_table: HashMap::new(),
             })),
@@ -137,7 +150,10 @@ where
     }
 
     /// Remove wait for op
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn cancel_op_waiter(&self, op_id: OperationId) {
         let mut inner = self.inner.lock();
         {
@@ -148,7 +164,10 @@ where
     }
 
     /// Complete the waiting op
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn complete_op_waiter(&self, op_id: OperationId, message: T) -> Result<(), RPCError> {
         let mut inner = self.inner.lock();
         let res = {
@@ -170,7 +189,10 @@ where
     }
 
     /// Wait for operation to complete
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn wait_for_op(
         &self,
         handle: OperationWaitHandle<T, C>,

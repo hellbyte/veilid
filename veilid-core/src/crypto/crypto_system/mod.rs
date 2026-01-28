@@ -32,7 +32,7 @@ pub trait CryptoSystem {
     fn cached_dh(&self, key: &PublicKey, secret: &SecretKey) -> VeilidAPIResult<SharedSecret>;
 
     // Generation
-    fn random_bytes(&self, len: u32) -> Vec<u8>;
+    fn random_bytes(&self, len: usize) -> Vec<u8>;
     fn hash_password(&self, password: &[u8], salt: &[u8]) -> VeilidAPIResult<String>;
     fn verify_password(&self, password: &[u8], password_hash: &str) -> VeilidAPIResult<bool>;
     fn derive_shared_secret(&self, password: &[u8], salt: &[u8]) -> VeilidAPIResult<SharedSecret>;

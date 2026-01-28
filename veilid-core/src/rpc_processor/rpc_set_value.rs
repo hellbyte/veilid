@@ -17,7 +17,7 @@ impl RPCProcessor {
     /// Because this leaks information about the identity of the node itself,
     /// replying to this request received over a private route will leak
     /// the identity of the node and defeat the private route.
-    #[instrument(level = "trace", target = "rpc", skip(self, value),
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, value),
         fields(
             %descriptor_mode,
             value.data.len = value.value_data().data().len(),
@@ -29,7 +29,7 @@ impl RPCProcessor {
             ret.value.data.writer,
             ret.peers.len,
             ret.latency
-        ), err(level=Level::DEBUG))]
+        ), err(level=Level::DEBUG)))]
     pub async fn rpc_call_set_value(
         &self,
         dest: Destination,
@@ -201,7 +201,7 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_set_value_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
         if msg.header.is_private_routed() {

@@ -2,7 +2,10 @@ use super::*;
 
 impl StorageManager {
     /// Builds the record key for a given schema and owner
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn get_record_key(
         &self,
         schema: DHTSchema,

@@ -37,7 +37,7 @@ impl Network {
         Ok(acceptor)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn try_tls_handlers(
         &self,
         tls_acceptor: &TlsAcceptor,
@@ -70,7 +70,7 @@ impl Network {
             .await
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn try_handlers(
         &self,
         stream: AsyncPeekStream,
@@ -91,7 +91,7 @@ impl Network {
         Ok(None)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn tcp_acceptor(
         self,
         tcp_stream: io::Result<TcpStream>,
@@ -182,7 +182,7 @@ impl Network {
 
         let conn = if ls.tls_acceptor.is_some() && first_packet[0] == 0x16 {
             self.try_tls_handlers(
-                ls.tls_acceptor.as_ref().unwrap(),
+                ls.tls_acceptor.as_ref().unwrap_or_log(),
                 ps,
                 peer_addr,
                 local_addr,
@@ -221,7 +221,7 @@ impl Network {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn spawn_socket_listener(&self, addr: SocketAddr) -> EyreResult<bool> {
         // Get config
         let config = self.config();
@@ -244,7 +244,13 @@ impl Network {
 
         // Spawn the socket task
         let this = self.clone();
-        let stop_token = self.inner.lock().stop_source.as_ref().unwrap().token();
+        let stop_token = self
+            .inner
+            .lock()
+            .stop_source
+            .as_ref()
+            .unwrap_or_log()
+            .token();
         let connection_manager = self.network_manager().connection_manager();
 
         ////////////////////////////////////////////////////////////
@@ -287,7 +293,7 @@ impl Network {
     /////////////////////////////////////////////////////////////////
 
     // TCP listener that multiplexes ports so multiple protocols can exist on a single port
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn start_tcp_listener(
         &self,
         bind_set: NetworkBindSet,

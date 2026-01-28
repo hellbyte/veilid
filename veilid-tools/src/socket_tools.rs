@@ -114,7 +114,7 @@ pub fn set_tcp_stream_linger(
         }
     }
     #[cfg(not(feature = "rt-async-std"))]
-    tcp_stream.set_linger(linger)
+    socket2::SockRef::from(tcp_stream).set_linger(linger)
 }
 
 cfg_if! {

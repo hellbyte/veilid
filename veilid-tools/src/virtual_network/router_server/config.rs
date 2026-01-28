@@ -544,7 +544,7 @@ fn expand_validation_errors(errors: ValidationErrors) -> String {
     let mut keys: Vec<&str> = errors.keys().copied().collect();
     keys.sort();
     for k in keys {
-        let v = errors.get(k).unwrap();
+        let v = errors.get(k).unwrap_or_log();
         let v_out = match v.clone() {
             validator::ValidationErrorsKind::Struct(validation_errors) => {
                 expand_validation_errors(*validation_errors)

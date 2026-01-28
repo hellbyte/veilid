@@ -156,7 +156,7 @@ impl TryFrom<&[u8]> for DHTSchemaSMPL {
         if b[0..4] != Self::FCC {
             apibail_generic!("wrong fourcc");
         }
-        if (b.len() - Self::FIXED_SIZE) % (MEMBER_ID_LENGTH + 2) != 0 {
+        if !(b.len() - Self::FIXED_SIZE).is_multiple_of(MEMBER_ID_LENGTH + 2) {
             apibail_generic!("invalid member length");
         }
 

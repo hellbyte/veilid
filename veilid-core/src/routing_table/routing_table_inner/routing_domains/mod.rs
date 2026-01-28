@@ -63,7 +63,7 @@ pub trait RoutingDomainDetail: VeilidComponentRegistryAccessor {
     /// then the dial info filter is applied, and the available
     /// dial info are then sorted by the context_sort. The first item in the list
     /// is then returned.
-    #[instrument(level = "trace", target = "rtab", skip(self, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rtab", skip(self, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret))]
     fn best_dial_info_detail_between_nodes(
         &self,
         from_node: &NodeInfo,
@@ -231,7 +231,7 @@ impl RoutingDomainDetailCommon {
             // Cache the peer info
             *cpi = Some(Arc::new(pi));
         }
-        cpi.as_ref().unwrap().clone()
+        cpi.as_ref().unwrap_or_log().clone()
     }
 
     ///////////////////////////////////////////////////////////////////////
@@ -391,7 +391,7 @@ impl RoutingDomainDetailCommon {
         );
 
         PeerInfo::new_from_node_info(&routing_table, self.routing_domain, &secret_keys, node_info)
-            .expect("our own peerinfo should never fail")
+            .expect_or_log("our own peerinfo should never fail")
     }
 
     fn clear_current_peer_info_cache(&self) {

@@ -139,19 +139,22 @@ impl NetworkState {
         }
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner))
+    )]
     pub fn release(self, gsm_inner: &mut GlobalStateManagerInner) {
         if let NetworkOrigin::Blueprint(generating_blueprint) = self.immutable.origin {
             let mut blueprint_state = gsm_inner
                 .blueprint_states()
                 .get_state(generating_blueprint)
-                .expect("must exist");
+                .expect_or_log("must exist");
             blueprint_state.on_network_released(self.id());
             gsm_inner.blueprint_states_mut().set_state(blueprint_state)
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn set_model(&mut self, params: NetworkStateModelParams) {
         self.fields = Arc::new(NetworkStateFields {
             model: NetworkStateModel { params },
@@ -159,7 +162,10 @@ impl NetworkState {
         });
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -191,7 +197,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv4_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -207,12 +216,12 @@ impl NetworkState {
             let mut external_network_state = gsm_inner
                 .network_states()
                 .get_state(gateway.params.external_network)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
 
             // Release external address
             external_network_state
                 .release_address_v4(gateway.external_interface_address.ip)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
 
             // Update external network
             gsm_inner
@@ -222,7 +231,7 @@ impl NetworkState {
 
         // Release internal address
         self.release_address_v4(gateway.internal_interface_address.ip)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         // Clear gateway
         ipv4.gateway = None;
@@ -236,7 +245,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -267,7 +279,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv4_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -285,7 +300,7 @@ impl NetworkState {
         let internal_interface_address =
             if let Some(internal_address) = gateway_params.internal_address {
                 let scope = address_pool.reserve_allocation_v4(
-                    Ipv4Net::new(internal_address, 32).expect("must succeed"),
+                    Ipv4Net::new(internal_address, 32).expect_or_log("must succeed"),
                     Some(OwnerTag::Gateway(self.id())),
                 )?;
 
@@ -308,7 +323,7 @@ impl NetworkState {
                 // Get the scope this allocation fits in
                 let scope = address_pool
                     .find_scope_v4(internal_address)
-                    .expect("must succeed");
+                    .expect_or_log("must succeed");
 
                 // Make interface address
                 let internal_address = internal_address.addr();
@@ -323,7 +338,7 @@ impl NetworkState {
         let mut external_network_state = gsm_inner
             .network_states()
             .get_state(gateway_params.external_network)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         // Allocate or reserve an external network address for the gateway
         let external_interface_address =
@@ -367,7 +382,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -399,7 +417,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv6_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -415,12 +436,12 @@ impl NetworkState {
             let mut external_network_state = gsm_inner
                 .network_states()
                 .get_state(gateway.params.external_network)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
 
             // Release external address
             external_network_state
                 .release_address_v6(gateway.external_interface_address.ip)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
 
             // Update external network
             gsm_inner
@@ -430,7 +451,7 @@ impl NetworkState {
 
         // Release internal address
         self.release_address_v6(gateway.internal_interface_address.ip)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         // Clear gateway
         ipv6.gateway = None;
@@ -444,7 +465,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -474,7 +498,10 @@ impl NetworkState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv6_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -492,7 +519,7 @@ impl NetworkState {
         let internal_interface_address =
             if let Some(internal_address) = gateway_params.internal_address {
                 let scope = address_pool.reserve_allocation_v6(
-                    Ipv6Net::new(internal_address, 128).expect("must succeed"),
+                    Ipv6Net::new(internal_address, 128).expect_or_log("must succeed"),
                     Some(OwnerTag::Gateway(self.id())),
                 )?;
                 // Make interface address
@@ -513,7 +540,7 @@ impl NetworkState {
                 // Get the scope this allocation fits in
                 let scope = address_pool
                     .find_scope_v6(internal_address)
-                    .expect("must succeed");
+                    .expect_or_log("must succeed");
 
                 // Make interface address
                 let internal_address = internal_address.addr();
@@ -528,7 +555,7 @@ impl NetworkState {
         let mut external_network_state = gsm_inner
             .network_states()
             .get_state(gateway_params.external_network)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         // Allocate or reserve an external network address for the gateway
         let external_interface_address =
@@ -598,7 +625,10 @@ impl NetworkState {
         Ok(can_allocate)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_address_v4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -610,7 +640,7 @@ impl NetworkState {
             .fields
             .address_pool
             .find_scope_v4(net)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
         let ip = net.addr();
         let netmask = scope.netmask();
         let broadcast = scope.broadcast();
@@ -628,7 +658,10 @@ impl NetworkState {
         self.can_allocate_subnet_v4(opt_address, 32)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_subnet_v4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -645,7 +678,7 @@ impl NetworkState {
 
         let net = if let Some(address) = opt_address {
             // Get the net form for this address
-            let net = Ipv4Net::new(address, prefix).expect("must succeed");
+            let net = Ipv4Net::new(address, prefix).expect_or_log("must succeed");
             address_pool.reserve_allocation_v4(net, Some(owner_tag))?;
             net
         } else {
@@ -675,7 +708,7 @@ impl NetworkState {
         // See if we are requesting a specific address
         if let Some(address) = opt_address {
             // Get the net form for this address
-            let net = Ipv4Net::new(address, prefix).expect("must succeed");
+            let net = Ipv4Net::new(address, prefix).expect_or_log("must succeed");
             self.fields.address_pool.get_overlaps_v4(net).is_empty()
         } else {
             // Get a random address if available
@@ -686,15 +719,15 @@ impl NetworkState {
         }
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_address_v4(
         &mut self,
         addr: Ipv4Addr,
     ) -> GlobalStateManagerResult<Option<OwnerTag>> {
-        self.release_subnet_v4(Ipv4Net::new(addr, 32).expect("must succeed"))
+        self.release_subnet_v4(Ipv4Net::new(addr, 32).expect_or_log("must succeed"))
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_subnet_v4(
         &mut self,
         net: Ipv4Net,
@@ -710,7 +743,10 @@ impl NetworkState {
         Ok(opt_tag)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_address_v6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -722,7 +758,7 @@ impl NetworkState {
             .fields
             .address_pool
             .find_scope_v6(net)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         let ip = net.addr();
         let netmask = scope.netmask();
@@ -741,7 +777,10 @@ impl NetworkState {
         self.can_allocate_subnet_v6(opt_address, 128)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_subnet_v6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -758,7 +797,7 @@ impl NetworkState {
 
         let net = if let Some(address) = opt_address {
             // Get the net form for this address
-            let net = Ipv6Net::new(address, prefix).expect("must succeed");
+            let net = Ipv6Net::new(address, prefix).expect_or_log("must succeed");
             address_pool.reserve_allocation_v6(net, Some(owner_tag))?;
             net
         } else {
@@ -788,7 +827,7 @@ impl NetworkState {
         // See if we are requesting a specific address
         if let Some(address) = opt_address {
             // Get the net form for this address
-            let net = Ipv6Net::new(address, prefix).expect("must succeed");
+            let net = Ipv6Net::new(address, prefix).expect_or_log("must succeed");
             self.fields.address_pool.get_overlaps_v6(net).is_empty()
         } else {
             // Get a random address if available
@@ -799,15 +838,15 @@ impl NetworkState {
         }
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_address_v6(
         &mut self,
         addr: Ipv6Addr,
     ) -> GlobalStateManagerResult<Option<OwnerTag>> {
-        self.release_subnet_v6(Ipv6Net::new(addr, 128).expect("must succeed"))
+        self.release_subnet_v6(Ipv6Net::new(addr, 128).expect_or_log("must succeed"))
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_subnet_v6(
         &mut self,
         net: Ipv6Net,

@@ -1,9 +1,12 @@
 use crate::command_processor::*;
+use crate::cursive_ui::CursiveUI;
 use crate::settings::*;
 use crate::tools::*;
 use crate::ui::*;
 
+use flexi_logger::DeferredNow;
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use indent::indent_by;
 use stop_token::future::FutureExt as StopTokenFutureExt;
 use stop_token::*;
 use veilid_tools::AsyncMutex;
@@ -66,7 +69,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> IOReadWriteUI<R,
         let out_io = self.inner.lock().out_io.clone();
 
         let mut out = out_io.lock().await;
-        let done = self.inner.lock().done.as_ref().unwrap().token();
+        let done = self.inner.lock().done.as_ref().unwrap_or_log().token();
 
         while let Ok(Ok(line)) = out_receiver.recv_async().timeout_at(done.clone()).await {
             if line == FINISHED_LINE {
@@ -91,7 +94,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> IOReadWriteUI<R,
                 inner.in_io.clone(),
                 inner.out_sender.clone(),
                 inner.connection_state_receiver.clone(),
-                inner.done.as_ref().unwrap().token(),
+                inner.done.as_ref().unwrap_or_log().token(),
             )
         };
         let mut in_io = in_io.lock().await;
@@ -191,13 +194,26 @@ impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'stat
 
 //////////////////////////////////////////////////////////////////////////////
 
-#[derive(Clone)]
-pub struct IOReadWriteUISender<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> {
+pub struct IOReadWriteUISender<
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+> {
     inner: Arc<Mutex<IOReadWriteUIInner<R, W>>>,
     out_sender: flume::Sender<String>,
     connection_state_sender: flume::Sender<ConnectionState>,
 }
 
+impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'static> Clone
+    for IOReadWriteUISender<R, W>
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            out_sender: self.out_sender.clone(),
+            connection_state_sender: self.connection_state_sender.clone(),
+        }
+    }
+}
 impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'static> UISender
     for IOReadWriteUISender<R, W>
 {
@@ -209,9 +225,8 @@ impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'stat
         })
     }
     fn as_logwriter(&self) -> Option<Box<dyn LogWriter>> {
-        None
+        Some(Box::new(self.clone()) as Box<dyn LogWriter>)
     }
-
     fn display_string_dialog(&self, title: &str, text: &str, close_cb: UICallback) {
         if let Err(e) = self.out_sender.send(format!("{}: {}", title, text)) {
             eprintln!("Error: {:?}", e);
@@ -259,10 +274,54 @@ impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'stat
     }
 
     fn add_node_event(&self, _log_color: Level, event: &str) {
-        if let Err(e) = self.out_sender.send(format!("{}\n", event)) {
+        if let Err(e) = self.out_sender.send(event.to_string()) {
             eprintln!("Error: {:?}", e);
             self.inner.lock().done.take();
         }
     }
     fn add_log_event(&self, _log_color: Level, _event: &str) {}
+}
+
+impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin + Send + 'static> LogWriter
+    for IOReadWriteUISender<R, W>
+{
+    fn write(&self, _now: &mut DeferredNow, record: &Record) -> std::io::Result<()> {
+        let mut lines = String::new();
+        let mut indent = 0;
+
+        let ts_prefix = format!(
+            "[veilid-cli] {} ",
+            CursiveUI::cli_ts(CursiveUI::get_start_time()),
+        );
+        indent += ts_prefix.len();
+        lines += &ts_prefix;
+
+        let filestr = format!(
+            "{}:{} ",
+            record.file().unwrap_or("(unnamed)"),
+            record.line().unwrap_or(0),
+        );
+        indent += filestr.len();
+        lines += &filestr;
+
+        let levstr = format!("{}: ", record.level());
+        indent += levstr.len();
+        lines += &levstr;
+
+        let args = format!("{}", &record.args());
+        lines += &indent_by(indent, args);
+
+        eprintln!("{}", lines);
+
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        // we are not buffering
+        Ok(())
+    }
+
+    fn max_log_level(&self) -> log::LevelFilter {
+        log::LevelFilter::max()
+    }
 }

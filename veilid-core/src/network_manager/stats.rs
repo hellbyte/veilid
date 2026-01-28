@@ -21,7 +21,7 @@ impl Default for PerAddressStatsKey {
 #[derive(Debug, Clone)]
 pub struct NetworkManagerStats {
     pub self_stats: PerAddressStats,
-    pub per_address_stats: LruCache<PerAddressStatsKey, PerAddressStats>,
+    pub per_address_stats: hashlink::LruCache<PerAddressStatsKey, PerAddressStats>,
     pub relay_worker_dequeue_latency: LatencyStats,
     pub relay_worker_process_latency: LatencyStats,
     pub relay_worker_dequeue_latency_accounting: LatencyStatsAccounting,
@@ -32,7 +32,7 @@ impl Default for NetworkManagerStats {
     fn default() -> Self {
         Self {
             self_stats: PerAddressStats::default(),
-            per_address_stats: LruCache::new(IPADDR_TABLE_SIZE),
+            per_address_stats: hashlink::LruCache::new(IPADDR_TABLE_SIZE),
             relay_worker_dequeue_latency: LatencyStats::default(),
             relay_worker_process_latency: LatencyStats::default(),
             relay_worker_dequeue_latency_accounting: LatencyStatsAccounting::new(),

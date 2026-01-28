@@ -89,7 +89,7 @@ impl CryptoSystem for CryptoSystemNONE {
     }
 
     fn crypto(&self) -> VeilidComponentGuard<'_, Crypto> {
-        self.registry.lookup::<Crypto>().unwrap()
+        self.registry.lookup::<Crypto>().unwrap_or_log()
     }
 
     // Cached Operations
@@ -99,8 +99,8 @@ impl CryptoSystem for CryptoSystemNONE {
     }
 
     // Generation
-    fn random_bytes(&self, len: u32) -> Vec<u8> {
-        let mut bytes = unsafe { unaligned_u8_vec_uninit(len as usize) };
+    fn random_bytes(&self, len: usize) -> Vec<u8> {
+        let mut bytes = unsafe { unaligned_u8_vec_uninit(len) };
         random_bytes(bytes.as_mut());
         bytes
     }

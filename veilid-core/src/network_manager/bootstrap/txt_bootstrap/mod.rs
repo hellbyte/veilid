@@ -14,7 +14,10 @@ impl_veilid_log_facility!("net");
 impl NetworkManager {
     /// TXT bootstrap request
     /// Sends a bootstrap request via DNS for TXT records and bootstraps with them
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self))
+    )]
     pub async fn txt_bootstrap(&self, hostname: String) -> EyreResult<Vec<Arc<PeerInfo>>> {
         // Get the minimum bootstrap version we are supporting
         // If no keys are available, allow v0.
@@ -183,7 +186,10 @@ impl NetworkManager {
 
     /// Bootstrap resolution from TXT into strings
     /// This is cached as to minimize the number of outbound network requests on bootstrap servers
-    #[instrument(level = "trace", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self), ret, err)
+    )]
     pub async fn resolve_bootstrap_txt_strings(&self, hostname: String) -> EyreResult<Vec<String>> {
         // Lookup hostname in cache
         let cur_ts = Timestamp::now();
@@ -201,7 +207,7 @@ impl NetworkManager {
         veilid_log!(self debug "Resolving bootstrap TXT: {:?}", hostname);
 
         // Get TXT record for bootstrap (bootstrap.veilid.net, bootstrap-v1.veilid.net, or similar)
-        let txt_strings = match intf::txt_lookup(&hostname).await {
+        let txt_strings = match Resolver::txt_lookup(&hostname).await {
             Ok(v) => v,
             Err(e) => {
                 veilid_log!(self warn

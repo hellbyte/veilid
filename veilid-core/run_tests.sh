@@ -1,9 +1,10 @@
 #!/bin/bash
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+set -e -o pipefail
 
 pushd $SCRIPTDIR 2>/dev/null
 if [[ "$1" == "wasm" ]]; then
-    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --firefox --headless --no-default-features --features=default-wasm
+    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --firefox --headless --no-default-features --features=default-wasm,test-util
 elif [[ "$1" == "ios" ]]; then
     SYMROOT=/tmp/testout
     APPNAME=veilidcore-tests
@@ -59,7 +60,10 @@ elif [[ "$1" == "android" ]]; then
     popd >/dev/null
 
 else
-    cargo test
-    cargo test --no-default-features --features=default-async-std
+    echo Running: RUST_LOG=#common=debug cargo nextest run
+    RUST_LOG=#common=debug cargo nextest run
+    echo Running: RUST_LOG=#common=debug cargo nextest run --no-default-features --features=default-async-std
+    RUST_LOG=#common=debug cargo nextest run --no-default-features --features=default-async-std
+    cargo test --doc
 fi
 popd 2>/dev/null

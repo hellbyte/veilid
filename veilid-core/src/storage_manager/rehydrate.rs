@@ -21,7 +21,10 @@ pub(super) struct RehydrationRequest {
 
 impl StorageManager {
     /// Add a background rehydration request
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn add_rehydration_request(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -52,7 +55,10 @@ impl StorageManager {
     /// If a newer copy of a subkey's data is available online, the background
     /// write will pick up the newest subkey data as it does the SetValue fanout
     /// and will drive the newest values to consensus.
-    #[instrument(level = "trace", target = "stor", skip(self), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self), ret)
+    )]
     pub(super) async fn rehydrate_record(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -135,31 +141,30 @@ impl StorageManager {
                 .opt_descriptor()
                 .is_none()
         {
-            return self
-                .rehydrate_all_subkeys(
-                    opaque_record_key,
-                    subkeys,
-                    consensus_count,
-                    safety_selection,
-                    local_inspect_result,
-                )
-                .await;
-        }
-
-        return self
-            .rehydrate_required_subkeys(
+            return self.rehydrate_all_subkeys(
                 opaque_record_key,
                 subkeys,
                 consensus_count,
                 safety_selection,
                 local_inspect_result,
-                outbound_inspect_result,
-            )
-            .await;
+            );
+        }
+
+        self.rehydrate_required_subkeys(
+            opaque_record_key,
+            subkeys,
+            consensus_count,
+            safety_selection,
+            local_inspect_result,
+            outbound_inspect_result,
+        )
     }
 
-    #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
-    pub(super) async fn rehydrate_all_subkeys(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self), ret, err)
+    )]
+    pub(super) fn rehydrate_all_subkeys(
         &self,
         opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
@@ -187,16 +192,19 @@ impl StorageManager {
             veilid_log!(self debug "Record full rehydrating: record={} subkeys={} rehydrated={}", opaque_record_key, subkeys, rehydrated);
         }
 
-        return Ok(RehydrateReport {
+        Ok(RehydrateReport {
             opaque_record_key,
             subkeys,
             consensus_count,
             rehydrated,
-        });
+        })
     }
 
-    #[instrument(level = "trace", target = "stor", skip(self), ret, err)]
-    pub(super) async fn rehydrate_required_subkeys(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self), ret, err)
+    )]
+    pub(super) fn rehydrate_required_subkeys(
         &self,
         opaque_record_key: OpaqueRecordKey,
         subkeys: ValueSubkeyRangeSet,
@@ -226,7 +234,7 @@ impl StorageManager {
                 let sfr = outbound_inspect_result
                     .subkey_fanout_results
                     .get(n)
-                    .unwrap();
+                    .unwrap_or_log();
 
                 // Does the online subkey have enough consensus?
                 // If not, schedule it to be written in the background
@@ -257,7 +265,7 @@ impl StorageManager {
             .subkeys()
             .iter()
             .map(ValueSubkeyRangeSet::single)
-            .zip(outbound_inspect_result.subkey_fanout_results.into_iter());
+            .zip(outbound_inspect_result.subkey_fanout_results);
 
         let existed = self.process_fanout_results(
             opaque_record_key.clone(),

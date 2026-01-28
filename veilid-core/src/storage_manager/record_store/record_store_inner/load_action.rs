@@ -1,11 +1,13 @@
 use super::*;
 
 #[derive(Debug)]
+#[must_use]
 pub struct LoadAction {
     subkey_table: TableDB,
     subkey_table_key: SubkeyTableKey,
     opt_cached_record_data: Option<RecordData>,
     peek: bool,
+    finished: bool,
 }
 
 impl LoadAction {
@@ -20,6 +22,7 @@ impl LoadAction {
             subkey_table_key,
             opt_cached_record_data,
             peek,
+            finished: false,
         }
     }
 
@@ -42,11 +45,25 @@ impl LoadAction {
         self.peek
     }
 
-    pub(super) fn into_cached_record_data(self) -> (SubkeyTableKey, Option<RecordData>) {
-        (self.subkey_table_key, self.opt_cached_record_data)
+    pub(super) fn into_cached_record_data(mut self) -> (SubkeyTableKey, Option<RecordData>) {
+        self.finished = true;
+        (
+            self.subkey_table_key.clone(),
+            self.opt_cached_record_data.take(),
+        )
     }
 }
 
+impl Drop for LoadAction {
+    fn drop(&mut self) {
+        if !self.finished {
+            error!(target:"stor", "LoadAction dropped without being finished: {}", self.subkey_table_key);
+        }
+    }
+}
+
+#[derive(Debug)]
+#[must_use]
 pub enum LoadActionResult {
     NoRecord,
     NoSubkey {

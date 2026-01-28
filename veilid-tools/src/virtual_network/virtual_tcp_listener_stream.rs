@@ -60,7 +60,7 @@ impl Stream for VirtualTcpListenerStream {
             self.current_accept_fut =
                 Some(Box::pin(router_client.tcp_accept(machine_id, socket_id)));
         }
-        let fut = self.current_accept_fut.as_mut().unwrap();
+        let fut = self.current_accept_fut.as_mut().unwrap_or_log();
         fut.poll_unpin(cx).map(|v| match v {
             Ok(v) => Some(Ok(VirtualTcpStream::new(
                 self.inner.machine.clone(),

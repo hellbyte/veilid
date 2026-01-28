@@ -23,28 +23,13 @@ path = "src/lib.rs"
 default = ["default-tokio"]
 
 # Common features
-default-tokio = ["enable-crypto-vld0", "rt-tokio"]
-default-async-std = ["enable-crypto-vld0", "rt-async-std"]
+default-tokio = ["enable-crypto-vld0", "rt-tokio", "instrument"]
+default-async-std = ["enable-crypto-vld0", "rt-async-std", "instrument"]
 default-wasm = ["enable-crypto-vld0"]
 
 # Runtimes
-rt-async-std = [
-    "async-std",
-    "async-std-resolver",
-    "hickory-resolver",
-    "async_executors/async_std",
-    "veilid-tools/rt-async-std",
-]
-rt-tokio = [
-    "tokio",
-    "tokio-util",
-    "tokio-stream",
-    "hickory-resolver/tokio-runtime",
-    "async_executors/tokio_tp",
-    "async_executors/tokio_io",
-    "async_executors/tokio_timer",
-    "veilid-tools/rt-tokio",
-]
+rt-async-std = ["async-std", "veilid-tools/rt-async-std"]
+rt-tokio = ["tokio", "veilid-tools/rt-tokio"]
 
 # Crypto support features
 enable-crypto-vld0 = [
@@ -55,6 +40,7 @@ enable-crypto-vld0 = [
     "chacha20poly1305",
     "chacha20",
     "argon2",
+    "blake2", # To apply optimization for argon2 code size
 ]
 enable-crypto-none = [
     "ed25519-dalek",
@@ -62,6 +48,7 @@ enable-crypto-none = [
     "blake3",
     "argon2",
     "digest",
+    "blake2", # To apply optimization for argon2 code size
 ]
 
 # Protocol support features
@@ -77,18 +64,27 @@ geolocation = ["maxminddb", "reqwest"]
 # https://gitlab.com/veilid/veilid/-/issues/420
 footgun = []
 
-# Debugging and testing features
-verbose-tracing = []
-tracking = []
-crypto-test = ["enable-crypto-vld0", "enable-crypto-none"]
-crypto-test-none = ["enable-crypto-none"]
-veilid_core_android_tests = ["dep:paranoid-android"]
-veilid_core_ios_tests = ["dep:tracing-oslog"]
-debug-locks = ["veilid-tools/debug-locks"]
+# Reserved for use by future components
 unstable-blockstore = []
 unstable-tunnels = []
 virtual-network = ["veilid-tools/virtual-network"]
 virtual-network-server = ["veilid-tools/virtual-network-server"]
+
+# Debugging and testing features
+test-util = ["veilid-tools/test-util"]
+instrument = []
+verbose-tracing = ["instrument"]
+tracking = []
+crypto-test = ["enable-crypto-vld0", "enable-crypto-none"]
+crypto-test-none = ["enable-crypto-none"]
+veilid_core_android_tests = ["dep:paranoid-android", "test-util"]
+veilid_core_ios_tests = ["dep:tracing-oslog", "test-util"]
+debug-locks = ["veilid-tools/debug-locks"]
+debug-locks-detect = [
+    "veilid-tools/debug-locks",
+    "veilid-tools/debug-locks-detect",
+] # This does not work yet, do not enable
+
 
 ### DEPENDENCIES
 
@@ -103,26 +99,26 @@ once_cell = "1.20.3"
 backtrace = "^0.3.71"
 num-traits = "0.2.19"
 shell-words = "1.1.0"
-static_assertions = "1.1.0"
 cfg-if = "1.0.0"
 hex = "0.4.3"
 lazy_static = "1.5.0"
 directories = "5.0.1"
 get-size = { version = "0.1.4", features = ["derive"] }
+async-trait = "0.1.89"
+macro_rules_attribute = "0.2.2"
 
 # Logging
 tracing = { version = "0.1.41", features = ["log", "attributes"] }
 tracing-subscriber = "0.3.19"
-tracing-error = "0.2.1"
 eyre = "0.6.12"
 thiserror = "1.0.69"
 
 # Data structures
 enumset = { version = "1.1.5", features = ["serde"] }
-keyvaluedb = "0.1.4"
+keyvaluedb = "=0.1.6"
 range-set-blaze = "0.1.16"
 weak-table = "0.3.2"
-hashlink = { package = "veilid-hashlink", version = "0.1.1", features = [
+hashlink = { package = "veilid-hashlink", version = "=0.1.3", features = [
     "serde_impl",
 ] }
 
@@ -132,8 +128,8 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ] }
 flume = { version = "0.11.1", features = ["async"] }
 parking_lot = { version = "0.12.5", features = ["arc_lock"] }
-lock_api = "0.4.12"
 stop-token = { version = "0.7.0", default-features = false }
+arc-swap = { version = "1.8.0" }
 
 # Crypto
 ed25519-dalek = { version = "2.1.1", optional = true, default-features = false, features = [
@@ -154,20 +150,16 @@ curve25519-dalek = { version = "4.1.3", optional = true, default-features = fals
     "precomputed-tables",
 ] }
 blake3 = { version = "1.8.2", optional = true }
+blake2 = { version = "^0", optional = true, default-features = false, features = ["size_opt"]} # Size optimization for argon2 crate (via feature unification)
 chacha20poly1305 = { version = "0.10.1", optional = true }
 chacha20 = { version = "0.9.1", optional = true }
 argon2 = { version = "0.5.3", optional = true }
 digest = { version = "0.10.7", optional = true, features = ["rand_core"] }
 
-# Network
-async-std-resolver = { version = "0.24.4", optional = true }
-hickory-resolver = { version = "0.24.4", optional = true }
-
 # Serialization
 capnp = { version = "0.21.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_json = { version = "1.0.140" }
-serde-big-array = "0.5.1"
 json = "0.12.4"
 data-encoding = { version = "2.8.0" }
 schemars = "1.0.3"
@@ -185,19 +177,18 @@ bytes = { version = "1.10.1", features = ["serde"] }
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 
 # Tools
-config = { version = "0.13.4", default-features = false, features = ["yaml"] }
-bugsalot = { package = "veilid-bugsalot", version = "0.2.0" }
-chrono = "0.4.40"
-libc = "0.2.170"
-nix = "0.27.1"
 maxminddb = { version = "0.24.0", optional = true }
 
 # System
 async-std = { version = "1.13.0", features = ["unstable"], optional = true }
 sysinfo = { version = "^0.30.13", default-features = false }
-tokio = { version = "1.43.0", features = ["full"], optional = true }
-tokio-util = { version = "0.7.13", features = ["compat"], optional = true }
-tokio-stream = { version = "0.1.17", features = ["net"], optional = true }
+tokio = { version = "1.43.0", features = [
+    "rt-multi-thread",
+    "net",
+    "time",
+    "sync",
+    "parking_lot",
+], optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
     "async-await",
     "sink",
@@ -206,15 +197,14 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ] }
 
 # Data structures
-keyring-manager = "0.6.0"
-keyvaluedb-sqlite = "0.1.4"
+keyring-manager = "=0.6.0"
+keyvaluedb-sqlite = "=0.1.6"
+async-sqlite = { version = "=0.5.3" } # Remove this once keyvaluedb-sqlite is updated to 0.1.7
 
 # Network
 async-tungstenite = { version = "0.27.0", features = ["async-tls"] }
 igd = { package = "veilid-igd", version = "0.1.1" }
 async-tls = { version = "0.13.0" }
-webpki = "0.22.4"
-webpki-roots = "0.25.4"
 rustls = "0.21.12"
 rustls-pemfile = "1.0.4"
 
@@ -225,18 +215,9 @@ veilid-tools = { version = "0.5.1", path = "../veilid-tools", default-features =
     "rt-wasm-bindgen",
 ] }
 
-# Tools
-getrandom = { version = "0.2.15", features = ["js"] }
-
 # System
-async_executors = { version = "0.7.0", default-features = false, features = [
-    "bindgen",
-    "timer",
-] }
-
 js-sys = "0.3.83"
-wasm-bindgen = "0.2.106"
-wasm-bindgen-futures = "0.4.56"
+wasm-bindgen = "=0.2.108"
 wasm-bindgen-derive = "0.3.0"
 
 send_wrapper = { version = "0.6.0", features = ["futures"] }
@@ -249,11 +230,8 @@ serde-wasm-bindgen = "0.6.5"
 # Network
 ws_stream_wasm = "0.7.4"
 
-# Logging
-wasm-logger = "0.2.0"
-
 # Data Structures
-keyvaluedb-web = "0.1.4"
+keyvaluedb-web = "=0.1.6"
 
 ### Configuration for WASM32 'web-sys' crate
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.web-sys]
@@ -274,57 +252,40 @@ features = [
 # Dependencies for Android
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21.1"
-jni-sys = "0.3.0"
-ndk = { version = "0.7.0" }
-ndk-glue = { version = "0.7.0", features = ["logger"] }
 paranoid-android = { version = "0.2.2", optional = true }
 
 # Dependencies for Windows
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3.9", features = ["iptypes", "iphlpapi"] }
-windows = { version = "0.51.1", features = [
-    "Win32_NetworkManagement_Dns",
-    "Win32_Foundation",
-] }
-windows-permissions = "0.2.4"
+# Nothing currently
 
 # Dependencies for iOS
 [target.'cfg(target_os = "ios")'.dependencies]
-tracing-oslog = { version = "0.1.2", optional = true }
+tracing-oslog = { version = "0.3.0", optional = true }
 
 ### DEV DEPENDENCIES
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
-simplelog = { version = "0.12.2", features = ["test"] }
-serial_test = "2.0.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+bugsalot = { package = "veilid-bugsalot", version = "0.2.0" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
-serial_test = { version = "2.0.0", default-features = false, features = [
-    "async",
-] }
 wasm-bindgen-test = "0.3.56"
 console_error_panic_hook = "0.1.7"
-wasm-logger = "0.2.0"
-veilid-tracing-wasm = "^0"
+veilid-tracing-wasm = "=0.1.0"
 
 ### BUILD OPTIONS
 
 [build-dependencies]
 capnpc = "0.21.0"
 glob = "0.3.2"
-filetime = "0.2.25"
 sha2 = "0.10.8"
 hex = "0.4.3"
 reqwest = { version = "0.11", features = ["blocking"], optional = true }
 bosion = { version = "1.1.2", default-features = false }
 
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O"]
-
-[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
-dwarf-debug-info = true
+[package.metadata.cargo-machete]
+# ignore build dependencies and crates that are only used in derives
+ignored = ["capnpc", "glob", "sha2", "reqwest", "serde_bytes", "js-sys"]
 
 [lints]
 workspace = true

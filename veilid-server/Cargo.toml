@@ -30,34 +30,35 @@ default-async-std = [
     "veilid-remote-api/default-async-std",
 ]
 
-enable-protocol-wss = ["veilid-core/enable-protocol-wss"]
+geolocation = ["veilid-core/geolocation"]
 footgun = ["veilid-core/footgun"]
 
 rt-tokio = [
     "veilid-core/rt-tokio",
     "tokio",
-    "tokio-stream",
     "tokio-util",
     "opentelemetry_sdk/rt-tokio",
+    "signal-hook-tokio",
 ]
 
 rt-async-std = [
     "veilid-core/rt-async-std",
     "async-std",
     "opentelemetry_sdk/rt-async-std",
+    "signal-hook-async-std",
 ]
 
 # Debugging and testing features
+enable-protocol-wss = ["veilid-core/enable-protocol-wss"]
 crypto-test = ["rt-tokio", "veilid-core/crypto-test"]
 crypto-test-none = ["rt-tokio", "veilid-core/crypto-test-none"]
 debug-json-api = []
 debug-locks = ["veilid-core/debug-locks"]
 flame = ["tracing-flame"]
-geolocation = ["veilid-core/geolocation"]
 # otlp-grpc = ["opentelemetry-otlp/grpc-sys", "opentelemetry-otlp/trace"]
 otlp-tonic = ["opentelemetry-otlp/grpc-tonic", "opentelemetry-otlp/trace"]
 perfetto = ["tracing-perfetto"]
-tokio-console = ["rt-tokio", "console-subscriber"]
+tokio-console = ["rt-tokio", "console-subscriber", "tokio/tracing"]
 tracking = ["veilid-core/tracking"]
 virtual-network = [
     "veilid-core/virtual-network",
@@ -71,17 +72,14 @@ tracing = { version = "^0.1.41", features = ["log", "attributes"] }
 tracing-subscriber = { version = "^0.3.19", features = ["env-filter", "time"] }
 tracing-appender = "^0.2.3"
 tracing-opentelemetry = "^0.24.0"
-# Buggy: tracing-error = "^0"
 opentelemetry = { version = "^0.23" }
 opentelemetry-otlp = { version = "^0.16.0", default-features = false, optional = true }
 opentelemetry_sdk = "0.23.0"
 opentelemetry-semantic-conventions = "^0.16.0"
 async-std = { version = "^1.13.0", features = ["unstable"], optional = true }
-tokio = { version = "^1.43.0", features = ["full", "tracing"], optional = true }
-tokio-stream = { version = "^0.1.17", features = ["net"], optional = true }
+tokio = { version = "^1.43.0", optional = true }
 tokio-util = { version = "^0.7.13", features = ["compat"], optional = true }
-console-subscriber = { version = "^0.3.0", optional = true }
-async-tungstenite = { version = "^0.27.0", features = ["async-tls"] }
+console-subscriber = { version = "^0.5.0", optional = true }
 color-eyre = { version = "^0.6.3", default-features = false }
 backtrace = "^0.3.71"
 clap = { version = "^4.5.31", features = ["derive", "string", "wrap_help"] }
@@ -117,16 +115,13 @@ ansi_term = "^0"
 
 [target.'cfg(unix)'.dependencies]
 daemonize = "^0.5.0"
-signal-hook = "^0.3.17"
-signal-hook-async-std = "^0.2.2"
-nix = "^0.29.0"
+signal-hook = "^0.4.1"
+signal-hook-tokio = { version = "^0.4.0", features = ["futures-v0_3"], optional = true }
+signal-hook-async-std = { version = "^0.4.0", optional = true }
 tracing-perfetto = { version = "0.1.5", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tracing-journald = "^0.3.1"
-
-[dev-dependencies]
-serial_test = "^3.2.0"
 
 [lints]
 workspace = true

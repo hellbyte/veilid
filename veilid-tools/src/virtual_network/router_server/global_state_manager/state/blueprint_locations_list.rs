@@ -19,7 +19,7 @@ pub struct NetworkLocation<T> {
 }
 
 impl BlueprintLocationsList {
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn pick_v4(
         &self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -30,7 +30,7 @@ impl BlueprintLocationsList {
             .iter()
             .max()
             .copied()
-            .expect("must have at least one element");
+            .expect_or_log("must have at least one element");
 
         // Get addresses for network
         match self {
@@ -41,7 +41,7 @@ impl BlueprintLocationsList {
                     let allocation = gsm_inner
                         .allocations()
                         .get(allocation_name)
-                        .expect("must exist");
+                        .expect_or_log("must exist");
                     if allocation.address_pool.can_allocate_v4(max_prefix)? {
                         Ok(Some(allocation.address_pool.clone()))
                     } else {
@@ -82,7 +82,7 @@ impl BlueprintLocationsList {
                     let super_network_state = gsm_inner
                         .network_states()
                         .get_state(*network_id)
-                        .expect("must exist");
+                        .expect_or_log("must exist");
 
                     Ok(super_network_state.can_allocate_subnet_v4(None, max_prefix))
                 })?
@@ -95,7 +95,7 @@ impl BlueprintLocationsList {
                 let mut super_network_state = gsm_inner
                     .network_states()
                     .get_state(super_network_id)
-                    .expect("must exist");
+                    .expect_or_log("must exist");
 
                 // Pick a prefix that fits in this network and allocate from it
                 let opt_subnet = prefix
@@ -131,7 +131,7 @@ impl BlueprintLocationsList {
         }
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn pick_v6(
         &self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -142,7 +142,7 @@ impl BlueprintLocationsList {
             .iter()
             .max()
             .copied()
-            .expect("must have at least one element");
+            .expect_or_log("must have at least one element");
 
         // Get addresses for network
         match self {
@@ -153,7 +153,7 @@ impl BlueprintLocationsList {
                     let allocation = gsm_inner
                         .allocations()
                         .get(allocation_name)
-                        .expect("must exist");
+                        .expect_or_log("must exist");
                     if allocation.address_pool.can_allocate_v6(max_prefix)? {
                         Ok(Some(allocation.address_pool.clone()))
                     } else {
@@ -194,7 +194,7 @@ impl BlueprintLocationsList {
                     let super_network_state = gsm_inner
                         .network_states()
                         .get_state(*network_id)
-                        .expect("must exist");
+                        .expect_or_log("must exist");
 
                     Ok(super_network_state.can_allocate_subnet_v6(None, max_prefix))
                 })?
@@ -207,7 +207,7 @@ impl BlueprintLocationsList {
                 let mut super_network_state = gsm_inner
                     .network_states()
                     .get_state(super_network_id)
-                    .expect("must exist");
+                    .expect_or_log("must exist");
 
                 // Pick a prefix that fits in this network and allocate from it
                 let opt_subnet = prefix

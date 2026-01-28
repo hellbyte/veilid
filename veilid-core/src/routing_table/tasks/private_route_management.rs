@@ -43,13 +43,14 @@ impl RoutingTable {
     ///   . routes that have never been tested
     ///   . the fastest 0..N automatic safety routes of safe default length
     ///   . the fastest 0..N automatic safety routes of unsafe default length
+    ///
     /// Routes to drop:
     /// * if a route 'needs_testing'
     ///   . the remaining automatic safety routes
     ///   . the rest of the allocated unpublished routes
     ///
     /// If a route doesn't 'need_testing', then we neither test nor drop it
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn get_allocated_routes_to_test(&self, cur_ts: Timestamp) -> Vec<RouteId> {
         let default_route_hop_count_safe =
             self.route_spec_store().get_default_route_hop_count_safe();
@@ -126,7 +127,10 @@ impl RoutingTable {
     }
 
     /// Test set of routes and remove the ones that don't test clean
-    #[instrument(level = "trace", skip(self, stop_token), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, stop_token), err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn test_route_set(
         &self,
         stop_token: StopToken,
@@ -180,7 +184,7 @@ impl RoutingTable {
         }
 
         // Process failed routes
-        let ctx = Arc::try_unwrap(ctx).unwrap().into_inner();
+        let ctx = Arc::try_unwrap(ctx).unwrap_or_log().into_inner();
         for r in ctx.dead_routes {
             veilid_log!(self debug "Dead route failed to test: {}", r);
             self.route_spec_store().release_route(r);
@@ -190,7 +194,10 @@ impl RoutingTable {
     }
 
     /// Keep private routes assigned and accessible
-    #[instrument(level = "trace", skip(self, stop_token), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, stop_token), err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn private_route_management_task_routine(
         &self,
         stop_token: StopToken,

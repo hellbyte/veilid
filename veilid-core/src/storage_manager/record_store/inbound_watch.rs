@@ -15,13 +15,19 @@ impl<D> RecordStore<D>
 where
     D: RecordDetail,
 {
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn lookup_inbound_watch_id(&self, raw_id: u64) -> VeilidAPIResult<Option<InboundWatchId>> {
         self.inner.lock().lookup_inbound_watch_id(raw_id)
     }
 
     /// Add or update an inbound record watch for changes
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn watch_record(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -103,12 +109,18 @@ where
     }
 
     /// See if any watched records have expired and clear them out
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn drop_expired_inbound_watches(&self) {
         self.inner.lock().drop_expired_inbound_watches();
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn take_value_changes(&self) -> Vec<ValueChangedInfo> {
         let mut changes = vec![];
 

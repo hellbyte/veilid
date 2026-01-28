@@ -31,7 +31,7 @@ format:
 
 # base earthly setup for jobs
 .base:
-  tags: [saas-linux-medium-amd64]
+  tags: [saas-linux-large-amd64]
   image: docker
   services:
     - docker:dind

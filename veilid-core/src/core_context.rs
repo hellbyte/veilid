@@ -24,24 +24,48 @@ pub(crate) struct VeilidCoreContext {
 impl_veilid_component_accessors!(VeilidCoreContext);
 
 impl VeilidCoreContext {
-    #[instrument(level = "trace", target = "core_context", err, skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(
+            level = "trace",
+            target = "core_context",
+            err,
+            skip_all,
+            fields(__VEILID_LOG_KEY)
+        )
+    )]
     async fn new_with_config(
         update_callback: UpdateCallback,
         config: VeilidConfig,
     ) -> VeilidAPIResult<VeilidCoreContext> {
+        #[cfg(feature = "instrument")]
+        tracing::Span::current().record(
+            "__VEILID_LOG_KEY",
+            VeilidLayerFilter::make_veilid_log_key(&config.program_name, &config.namespace),
+        );
+
         // Set up config from json
         let config = VeilidStartupOptions::try_new(config, update_callback)?;
 
         Self::new_common(config).await
     }
 
-    #[instrument(level = "trace", target = "core_context", err, skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(
+            level = "trace",
+            target = "core_context",
+            err,
+            skip_all,
+            fields(__VEILID_LOG_KEY)
+        )
+    )]
     async fn new_common(
         startup_options: VeilidStartupOptions,
     ) -> VeilidAPIResult<VeilidCoreContext> {
         cfg_if! {
             if #[cfg(target_os = "android")] {
-                if !crate::intf::android::is_android_ready() {
+                if !crate::veilid_api::android::is_android_ready() {
                     apibail_internal!("Android globals are not set up");
                 }
             }
@@ -57,7 +81,10 @@ impl VeilidCoreContext {
         };
 
         let log_key = VeilidLayerFilter::make_veilid_log_key(&program_name, &namespace).to_string();
-        ApiTracingLayer::add_callback(log_key, update_callback.clone()).await?;
+
+        #[cfg(feature = "instrument")]
+        tracing::Span::current().record("__VEILID_LOG_KEY", log_key.clone());
+        ApiTracingLayer::add_callback(log_key, update_callback.clone())?;
 
         // Create component registry
         let registry = VeilidComponentRegistry::new(startup_options);
@@ -103,6 +130,7 @@ impl VeilidCoreContext {
         // required for background processes that utilize multiple subsystems
         // Background processes also often require registry lookup of the
         // current subsystem, which is not available until after init succeeds
+        // This is where the attachment manager starts the background tick
         if let Err(e) = registry.post_init().await {
             registry.terminate().await;
             return Err(VeilidAPIError::internal(e));
@@ -113,7 +141,10 @@ impl VeilidCoreContext {
         Ok(Self { registry })
     }
 
-    #[instrument(level = "trace", target = "core_context", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "core_context", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn shutdown(self) {
         veilid_log!(self info "Veilid API shutting down");
 
@@ -134,7 +165,7 @@ impl VeilidCoreContext {
         veilid_log!(self info "Veilid API shutdown complete");
 
         let log_key = VeilidLayerFilter::make_veilid_log_key(program_name, namespace).to_string();
-        if let Err(e) = ApiTracingLayer::remove_callback(log_key).await {
+        if let Err(e) = ApiTracingLayer::remove_callback(log_key) {
             error!("Error removing callback from ApiTracingLayer: {}", e);
         }
 
@@ -158,28 +189,30 @@ pub(crate) trait RegisteredComponents {
 
 impl<T: VeilidComponentRegistryAccessor> RegisteredComponents for T {
     fn protected_store<'a>(&self) -> VeilidComponentGuard<'a, ProtectedStore> {
-        self.registry().lookup::<ProtectedStore>().unwrap()
+        self.registry().lookup::<ProtectedStore>().unwrap_or_log()
     }
     fn crypto<'a>(&self) -> VeilidComponentGuard<'a, Crypto> {
-        self.registry().lookup::<Crypto>().unwrap()
+        self.registry().lookup::<Crypto>().unwrap_or_log()
     }
     fn table_store<'a>(&self) -> VeilidComponentGuard<'a, TableStore> {
-        self.registry().lookup::<TableStore>().unwrap()
+        self.registry().lookup::<TableStore>().unwrap_or_log()
     }
     fn storage_manager<'a>(&self) -> VeilidComponentGuard<'a, StorageManager> {
-        self.registry().lookup::<StorageManager>().unwrap()
+        self.registry().lookup::<StorageManager>().unwrap_or_log()
     }
     fn routing_table<'a>(&self) -> VeilidComponentGuard<'a, RoutingTable> {
-        self.registry().lookup::<RoutingTable>().unwrap()
+        self.registry().lookup::<RoutingTable>().unwrap_or_log()
     }
     fn network_manager<'a>(&self) -> VeilidComponentGuard<'a, NetworkManager> {
-        self.registry().lookup::<NetworkManager>().unwrap()
+        self.registry().lookup::<NetworkManager>().unwrap_or_log()
     }
     fn rpc_processor<'a>(&self) -> VeilidComponentGuard<'a, RPCProcessor> {
-        self.registry().lookup::<RPCProcessor>().unwrap()
+        self.registry().lookup::<RPCProcessor>().unwrap_or_log()
     }
     fn attachment_manager<'a>(&self) -> VeilidComponentGuard<'a, AttachmentManager> {
-        self.registry().lookup::<AttachmentManager>().unwrap()
+        self.registry()
+            .lookup::<AttachmentManager>()
+            .unwrap_or_log()
     }
 }
 
@@ -202,7 +235,6 @@ lazy_static::lazy_static! {
 /// * `config_json` - called at startup to supply a JSON configuration object.
 ///
 /// Returns a [VeilidAPI] object that can be used to operate the node.
-#[instrument(level = "trace", target = "core_context", err, skip_all)]
 pub async fn api_startup_json(
     update_callback: UpdateCallback,
     config_json: String,
@@ -222,7 +254,16 @@ pub async fn api_startup_json(
 /// * `config` - called at startup to supply a configuration object.
 ///
 /// Returns a [VeilidAPI] object that can be used to operate the node.
-#[instrument(level = "trace", target = "core_context", err, skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(
+        level = "trace",
+        target = "core_context",
+        err,
+        skip_all,
+        fields(__VEILID_LOG_KEY)
+    )
+)]
 pub async fn api_startup(
     update_callback: UpdateCallback,
     config: VeilidConfig,
@@ -230,6 +271,13 @@ pub async fn api_startup(
     // Get the program_name and namespace we're starting up in
     let program_name = config.program_name.clone();
     let namespace = config.namespace.clone();
+
+    #[cfg(feature = "instrument")]
+    tracing::Span::current().record(
+        "__VEILID_LOG_KEY",
+        VeilidLayerFilter::make_veilid_log_key(&program_name, &namespace),
+    );
+
     let init_key = (program_name, namespace);
 
     // Only allow one startup/shutdown per program_name+namespace combination simultaneously
@@ -251,7 +299,15 @@ pub async fn api_startup(
     Ok(veilid_api)
 }
 
-#[instrument(level = "trace", target = "core_context", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(
+        level = "trace",
+        target = "core_context",
+        skip_all,
+        fields(__VEILID_LOG_KEY = context.log_key())
+    )
+)]
 pub(crate) async fn api_shutdown(context: VeilidCoreContext) {
     let init_key = {
         let registry = context.registry();

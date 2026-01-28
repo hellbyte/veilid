@@ -140,6 +140,7 @@ impl Drop for NetworkConnection {
 }
 
 impl NetworkConnection {
+    #[cfg(any(test, feature = "test-util"))]
     pub(super) fn dummy(
         registry: VeilidComponentRegistry,
         id: NetworkConnectionId,
@@ -276,7 +277,6 @@ impl NetworkConnection {
         }
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
     async fn send_internal(
         protocol_connection: &ProtocolNetworkConnection,
         stats: Arc<Mutex<NetworkConnectionStats>>,
@@ -291,7 +291,6 @@ impl NetworkConnection {
         Ok(NetworkResult::Value(()))
     }
 
-    #[instrument(level = "trace", target = "net", skip_all)]
     async fn recv_internal(
         protocol_connection: &ProtocolNetworkConnection,
         stats: Arc<Mutex<NetworkConnectionStats>>,
@@ -320,7 +319,7 @@ impl NetworkConnection {
 
     // Connection receiver loop
     #[allow(clippy::too_many_arguments)]
-    #[instrument(parent = None, level="trace", target="net", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level="trace", target="net", skip_all, fields(__VEILID_LOG_KEY = connection_manager.log_key())))]
     fn process_connection(
         connection_manager: ConnectionManager,
         local_stop_token: StopToken,
@@ -367,18 +366,25 @@ impl NetworkConnection {
                                 connection_manager.touch_connection_by_id(connection_id);
 
                                 // send the packet
-                                if let Err(e) = Self::send_internal(
+                                match Self::send_internal(
                                     &protocol_connection,
                                     stats.clone(),
                                     message,
                                 )
                                 .await
                                 {
-                                    // Sending the packet along can fail, if so, this connection is dead
-                                    veilid_log!(connection_manager debug e);
-                                    RecvLoopAction::Finish
-                                } else {
-                                    RecvLoopAction::Send
+                                    Err(e) => {
+                                        // Sending the packet along can fail, if so, this connection is dead
+                                        veilid_log!(connection_manager debug e);
+                                        RecvLoopAction::Finish
+                                    }
+                                    Ok(v) => {
+                                        network_result_value_or_log!(registry v => [ format!(": send via protocol_connection={:?}", protocol_connection) ] {
+                                            return RecvLoopAction::Finish;
+                                        });
+
+                                        RecvLoopAction::Send
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -421,7 +427,7 @@ impl NetworkConnection {
                                     }
 
                                     // Log other network results
-                                    let mut message = network_result_value_or_log!(registry v => [ format!(": protocol_connection={:?}", protocol_connection) ] {
+                                    let mut message = network_result_value_or_log!(registry v => [ format!(": recv via protocol_connection={:?}", protocol_connection) ] {
                                         return RecvLoopAction::Finish;
                                     });
 

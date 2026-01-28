@@ -18,17 +18,20 @@ pub trait LockPurpose:
 {
 }
 
-/// Types of record locks
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum RecordLockKind<R: LockPurpose, S: LockPurpose> {
-    Unlocked,
-    RecordLocked {
-        purpose: R,
-    },
-    SubkeyLocked {
-        purpose_map: BTreeMap<S, ValueSubkeyRangeSet>,
-        peek_count: usize,
-    },
+/// Snapshot of the purpose for which a record or its subkeys are locked
+#[derive(Debug, Clone)]
+pub struct RecordLockPurposeState<R: LockPurpose, S: LockPurpose> {
+    pub whole_record_lock_purpose: Option<R>,
+    pub subkey_lock_purpose: BTreeMap<ValueSubkey, S>,
+}
+
+impl<R: LockPurpose, S: LockPurpose> Default for RecordLockPurposeState<R, S> {
+    fn default() -> Self {
+        Self {
+            whole_record_lock_purpose: None,
+            subkey_lock_purpose: BTreeMap::new(),
+        }
+    }
 }
 
 /// Table for all record locks that uses weak hash maps to auto-collect when guards drop
@@ -212,7 +215,7 @@ impl<R: LockPurpose, S: LockPurpose> RecordLockTable<R, S> {
 
         // Get subkey lock
         let subkey_lock = record_lock.get_subkey_lock(subkey);
-        let subkey_lock_guard = asyncmutex_lock_arc!(subkey_lock);
+        let subkey_lock_guard = subkey_lock.lock_arc().await;
         record_lock.set_subkey_purpose(subkey, purpose);
 
         SubkeyLockGuard::new(
@@ -245,7 +248,7 @@ impl<R: LockPurpose, S: LockPurpose> RecordLockTable<R, S> {
 
         // Get subkey lock
         let subkey_lock = record_lock.get_subkey_lock(subkey);
-        let subkey_lock_guard = asyncmutex_try_lock_arc!(subkey_lock)?;
+        let subkey_lock_guard = subkey_lock.try_lock_arc()?;
         record_lock.set_subkey_purpose(subkey, purpose);
 
         Some(SubkeyLockGuard::new(
@@ -307,29 +310,21 @@ impl<R: LockPurpose, S: LockPurpose> RecordLockTable<R, S> {
         Some(PeekLockGuard::new(record_lock, whole_record_lock_guard))
     }
 
-    pub fn get_record_lock_kind(&self, record: &OpaqueRecordKey) -> RecordLockKind<R, S> {
+    pub fn get_record_lock_purpose_state(
+        &self,
+        record: &OpaqueRecordKey,
+    ) -> RecordLockPurposeState<R, S> {
         // Get record lock
         let record_lock = {
             let mut inner = self.inner.lock();
             inner.record_lock_table.remove_expired();
             let Some(record_lock) = inner.record_lock_table.get(record) else {
-                return RecordLockKind::Unlocked;
+                return RecordLockPurposeState::default();
             };
             record_lock
         };
 
-        // Attempt shared lock
-        let Some(_whole_record_lock_guard) = record_lock.get_whole_record_lock().try_read_arc()
-        else {
-            // If we can't read lock it, then it is whole-record locked, so return the whole range as locked
-            return RecordLockKind::RecordLocked {
-                purpose: record_lock.purpose().unwrap(),
-            };
-        };
-
-        RecordLockKind::SubkeyLocked {
-            purpose_map: record_lock.get_subkey_purpose_map(),
-            peek_count: record_lock.get_peek_count(),
-        }
+        // Get a snapshot of the lock purpose state
+        record_lock.purpose_state()
     }
 }

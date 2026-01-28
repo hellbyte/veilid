@@ -49,7 +49,7 @@ impl WebsocketNetworkConnection {
 
     #[cfg_attr(
         feature = "verbose-tracing",
-        instrument(level = "trace", err, skip(self))
+        instrument(level = "trace", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
     )]
     pub async fn close(&self) -> io::Result<NetworkResult<()>> {
         let timeout_ms = self.config().network.connection_initial_timeout_ms;
@@ -64,7 +64,7 @@ impl WebsocketNetworkConnection {
         Ok(NetworkResult::value(()))
     }
 
-    #[instrument(level = "trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len())))]
     pub async fn send(&self, message: Vec<u8>) -> io::Result<NetworkResult<()>> {
         if message.len() > MAX_MESSAGE_SIZE {
             bail_io_error_other!("sending too large WS message");
@@ -84,7 +84,7 @@ impl WebsocketNetworkConnection {
         Ok(out)
     }
 
-    #[instrument(level = "trace", target="protocol", err, skip(self), fields(network_result, ret.len))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="protocol", err, skip(self), fields(network_result, ret.len)))]
     pub async fn recv(&self) -> io::Result<NetworkResult<Vec<u8>>> {
         let out = match SendWrapper::new(self.inner.ws_stream.clone().next()).await {
             Some(WsMessage::Binary(v)) => {
@@ -115,7 +115,10 @@ impl WebsocketNetworkConnection {
 pub(in crate::network_manager) struct WebsocketProtocolHandler {}
 
 impl WebsocketProtocolHandler {
-    #[instrument(level = "trace", target = "protocol", ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn connect(
         registry: VeilidComponentRegistry,
         dial_info: &DialInfo,
@@ -128,7 +131,7 @@ impl WebsocketProtocolHandler {
             DialInfo::WSS(_) => (true, "wss"),
             _ => panic!("invalid dialinfo for WS/WSS protocol"),
         };
-        let request = dial_info.request().unwrap();
+        let request = dial_info.request().unwrap_or_log();
         let split_url = SplitUrl::from_str(&request).map_err(to_io_error_other)?;
         if split_url.scheme != scheme {
             bail_io_error_other!("invalid websocket url scheme");

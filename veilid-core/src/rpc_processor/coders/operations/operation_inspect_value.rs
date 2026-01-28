@@ -139,7 +139,7 @@ impl RPCOperationInspectValueA {
         let question_context = validate_context
             .question_context
             .as_ref()
-            .expect("InspectValueA requires question context");
+            .expect_or_log("InspectValueA requires question context");
         let QuestionContext::InspectValue(inspect_value_context) = question_context else {
             panic!("Wrong context type for InspectValueA");
         };

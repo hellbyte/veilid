@@ -78,7 +78,7 @@ impl<T: 'static> Future for MustJoinHandle<T> {
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(self.join_handle.as_mut().unwrap()).poll(cx) {
+        match Pin::new(self.join_handle.as_mut().unwrap_or_log()).poll(cx) {
             Poll::Ready(t) => {
                 if self.completed {
                     panic!("should not poll completed join handle");

@@ -32,6 +32,7 @@ impl ValueSeqNum {
 
     #[must_use]
     pub const fn is_max(&self) -> bool {
+        // Unwrap is the only way rust can do this in a const fn right now
         self.0.is_some() && self.0.unwrap() == u32::MAX - 1
     }
 

@@ -245,18 +245,32 @@ pub async fn test_interval() {
     info!("testing interval");
 
     let tick: Arc<Mutex<u32>> = Arc::new(Mutex::new(0u32));
-    let stopper = interval("interval", 1000, move || {
+    info!("start non-immediate at {}", display_ts(get_raw_timestamp()));
+    let stopper = interval("interval", 1000, false, move || {
         let tick = tick.clone();
         async move {
             let mut tick = tick.lock();
-            trace!("tick {}", tick);
+            info!("tick {} @ {}", tick, display_ts(get_raw_timestamp()));
             *tick += 1;
         }
     });
-
-    sleep(5500).await;
-
+    sleep(3500).await;
     stopper.await;
+    info!("end non-immediate at {}", display_ts(get_raw_timestamp()));
+
+    let tick: Arc<Mutex<u32>> = Arc::new(Mutex::new(0u32));
+    info!("start immediate at {}", display_ts(get_raw_timestamp()));
+    let stopper = interval("interval", 1000, true, move || {
+        let tick = tick.clone();
+        async move {
+            let mut tick = tick.lock();
+            info!("tick {} @ {}", tick, display_ts(get_raw_timestamp()));
+            *tick += 1;
+        }
+    });
+    sleep(3500).await;
+    stopper.await;
+    info!("end immediate at {}", display_ts(get_raw_timestamp()));
 }
 
 #[allow(clippy::await_holding_lock)]

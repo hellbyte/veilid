@@ -84,7 +84,7 @@ impl<T: Unpin + Clone> Future for EventualValueCloneFuture<T> {
                 for w in wakers {
                     w.wake();
                 }
-                task::Poll::<Self::Output>::Ready(some_value.unwrap())
+                task::Poll::<Self::Output>::Ready(some_value.unwrap_or_log())
             }
         }
     }

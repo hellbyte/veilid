@@ -503,7 +503,7 @@ impl JsonRequestProcessor {
             },
 
             CryptoSystemRequestOp::RandomBytes { len } => CryptoSystemResponseOp::RandomBytes {
-                value: csv.random_bytes(len),
+                value: csv.random_bytes(len as usize),
             },
             CryptoSystemRequestOp::SharedSecretLength => {
                 CryptoSystemResponseOp::SharedSecretLength {
@@ -879,7 +879,7 @@ impl JsonRequestProcessor {
                         }
                     }
                 };
-                let csv = crypto.get(crypto_kind).unwrap();
+                let csv = crypto.get(crypto_kind).unwrap_or_log();
 
                 ResponseOp::CryptoSystem(self.process_crypto_system_request(&csv, csr).await)
             }

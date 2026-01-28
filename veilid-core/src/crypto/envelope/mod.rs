@@ -47,7 +47,10 @@ pub enum Envelope {
 }
 
 impl Envelope {
-    #[instrument(level = "trace", target = "envelope", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn try_new_env0(
         crypto: &Crypto,
         crypto_kind: CryptoKind,
@@ -68,7 +71,10 @@ impl Envelope {
         })
     }
 
-    #[instrument(level = "trace", target = "envelope", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub async fn try_from_signed_data(
         crypto: &Crypto,
         data: &[u8],
@@ -95,7 +101,10 @@ impl Envelope {
         }
     }
 
-    #[instrument(level = "trace", target = "envelope", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub async fn decrypt_body(
         &self,
         crypto: &Crypto,
@@ -111,7 +120,10 @@ impl Envelope {
         }
     }
 
-    #[instrument(level = "trace", target = "envelope", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, err, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub async fn to_encrypted_data(
         &self,
         crypto: &Crypto,
@@ -316,7 +328,7 @@ impl EnvelopeENV0 {
         // Get DH secret
         let vcrypto = crypto
             .get_async(self.crypto_kind)
-            .expect("need to ensure only valid crypto kinds here");
+            .expect_or_log("need to ensure only valid crypto kinds here");
         vcrypto.check_secret_key(secret_key)?;
 
         let sender_public_key =
@@ -359,7 +371,7 @@ impl EnvelopeENV0 {
     ) -> VeilidAPIResult<Vec<u8>> {
         let vcrypto = crypto
             .get_async(self.crypto_kind)
-            .expect("need to ensure only valid crypto kinds here");
+            .expect_or_log("need to ensure only valid crypto kinds here");
         vcrypto.check_secret_key(secret_key)?;
 
         // Ensure body isn't too long

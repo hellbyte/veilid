@@ -813,7 +813,7 @@ impl VeilidAPI {
         for peer in state.network.peers {
             peertable += &format!(
                 "   {} | {} | {} | {} down | {} up\n",
-                peer.node_ids.first().unwrap(),
+                peer.node_ids.first().unwrap_or_log(),
                 peer.peer_address,
                 format_opt_ts(peer.peer_stats.latency.map(|l| l.average)),
                 format_opt_bps(Some(peer.peer_stats.transfer.down.average)),
@@ -1021,22 +1021,18 @@ impl VeilidAPI {
         let routing_table = registry.routing_table();
         match &dest {
             Destination::Direct {
-                node: target,
+                node,
                 safety_selection: _,
             } => Ok(format!(
-                "Destination: {:#?}\nTarget Entry:\n{}\n",
+                "Destination: {:#?}\nNode:\n{}\n",
                 &dest,
-                routing_table.debug_info_entry(target.unfiltered())
+                routing_table.debug_info_entry(node.unfiltered())
             )),
-            Destination::Relay {
-                relay,
-                node: target,
-                safety_selection: _,
-            } => Ok(format!(
-                "Destination: {:#?}\nTarget Entry:\n{}\nRelay Entry:\n{}\n",
+            Destination::Relay { relay_di, node } => Ok(format!(
+                "Destination: {:#?}\nNode:\n{}\nDialInfo:\n{}\n",
                 &dest,
-                routing_table.debug_info_entry(target.clone()),
-                routing_table.debug_info_entry(relay.unfiltered())
+                routing_table.debug_info_entry(node.clone()),
+                relay_di,
             )),
             Destination::PrivateRoute {
                 private_route: _,
@@ -1596,7 +1592,7 @@ impl VeilidAPI {
         Ok(format!(
             "Created: {} {}\n{:?}",
             record.key(),
-            record.owner_keypair().unwrap(),
+            record.owner_keypair().unwrap_or_log(),
             record
         ))
     }
@@ -2375,6 +2371,68 @@ TableDB Operations:
         Ok(result)
     }
 
+    /// Cause veilid-core to panic via various means
+    #[cfg(debug_assertions)]
+    #[expect(clippy::unused_async)]
+    pub async fn debug_die(&self, args: String) -> VeilidAPIResult<String> {
+        let args = args.trim_start();
+        let (arg, rest) = args.split_once(' ').unwrap_or((args, ""));
+        match arg {
+            "panic" => {
+                if rest.is_empty() {
+                    panic!();
+                } else {
+                    panic!("{}", rest);
+                }
+            }
+            "unwrap" => {
+                #[expect(clippy::unnecessary_literal_unwrap)]
+                Option::<()>::None.unwrap();
+                unreachable!("unwrap must panic");
+            }
+            "unwrap_or_log" => {
+                Option::<()>::None.unwrap_or_log();
+                unreachable!("unwrap_or_log must panic");
+            }
+            "expect" => {
+                #[expect(clippy::unnecessary_literal_unwrap)]
+                Option::<()>::None.expect(rest);
+                unreachable!("expect must panic");
+            }
+            "expect_or_log" => {
+                Option::<()>::None.expect_or_log(rest);
+                unreachable!("expect_or_log must panic");
+            }
+            "div0" => {
+                let x = 0u32;
+                let y = x / 0u32;
+                unreachable!("divide by zero must panic: {}", y);
+            }
+            "overflow" => {
+                let x = u32::MAX;
+                let y = x + 1;
+                unreachable!("integer overflow must panic: {}", y);
+            }
+            "oob" => {
+                let x = &[3];
+                #[expect(clippy::out_of_bounds_indexing)]
+                let y = x[1];
+                unreachable!("array out of bounds must panic: {}", y);
+            }
+            "nullptr" => {
+                let x: *const i32 = std::ptr::null();
+                let y = unsafe { *x };
+                unreachable!("array out of bounds must panic: {}", y);
+            }
+            "unreachable" => {
+                unreachable!("direct call of unreachable macro");
+            }
+            _ => {
+                Ok("One of 'panic [message]', 'unwrap', 'unwrap_or_log', 'expect [message]', 'expect_or_log [message]', 'div0', 'overflow', 'oob', 'nullptr', or 'unreachable' is required".to_string())
+            }
+        }
+    }
+
     /// Execute an 'internal debug command'.
     pub async fn debug(&self, args: String) -> VeilidAPIResult<String> {
         let res = {
@@ -2442,6 +2500,11 @@ TableDB Operations:
                 } else if arg == "uptime" {
                     pin_dyn_future!(self.debug_uptime(rest))
                 } else {
+                    #[cfg(debug_assertions)]
+                    if arg == "die" {
+                        return self.debug_die(rest).await;
+                    }
+
                     return Err(VeilidAPIError::generic("Unknown debug command"));
                 };
                 fut.await
@@ -2498,20 +2561,14 @@ TableDB Operations:
                         ss.unwrap_or(SafetySelection::Unsafe(Sequencing::default())),
                     ))
                 } else if let Some((first, second)) = text.split_once('@') {
+                    if ss.is_some() {
+                        return None;
+                    }
                     // Relay
-                    let relay_nr = resolve_filtered_node_ref(
-                        registry.clone(),
-                        ss.clone().unwrap_or_default(),
-                    )(second)
-                    .await?;
+                    let relay_di = DialInfo::from_str(second).ok()?;
                     let target_nr = get_node_ref(registry.clone())(first)?;
 
-                    let mut d = Destination::relay(relay_nr, target_nr);
-                    if let Some(ss) = ss {
-                        d = d.with_safety(ss)
-                    }
-
-                    Some(d)
+                    Some(Destination::relay(relay_di, target_nr))
                 } else {
                     // Direct
                     let target_nr = resolve_filtered_node_ref(
@@ -2520,12 +2577,7 @@ TableDB Operations:
                     )(text)
                     .await?;
 
-                    let mut d = Destination::direct(target_nr);
-                    if let Some(ss) = ss {
-                        d = d.with_safety(ss)
-                    }
-
-                    Some(d)
+                    Some(Destination::direct(target_nr, ss))
                 }
             })
         }

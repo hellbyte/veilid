@@ -38,7 +38,10 @@ impl<D> RecordStoreInner<D>
 where
     D: RecordDetail,
 {
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn lookup_inbound_transaction_id(
         &mut self,
         raw_id: u64,
@@ -46,7 +49,10 @@ where
         self.inbound_transactions.lookup_id(raw_id)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn prepare_begin_inbound_transaction(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -132,7 +138,10 @@ where
         ))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn finish_begin_inbound_transaction(
         &mut self,
         begin_context: PrepareBeginInboundTransactionContext,
@@ -174,7 +183,10 @@ where
         }))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn prepare_end_inbound_transaction(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -255,7 +267,10 @@ where
         ))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn finish_end_inbound_transaction(
         &mut self,
         end_context: PrepareEndInboundTransactionContext,
@@ -318,7 +333,10 @@ where
         ))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn prepare_commit_inbound_transaction<C: FnOnce() -> D>(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -389,7 +407,10 @@ where
         ))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn finish_commit_inbound_transaction(
         &mut self,
         commit_context: PrepareCommitInboundTransactionContext<D>,
@@ -409,14 +430,14 @@ where
             return Ok(InboundTransactCommandResult::InvalidTransaction);
         }
 
-        return Ok(InboundTransactCommandResult::Success(
+        Ok(InboundTransactCommandResult::Success(
             TransactCommandSuccess {
                 expiration: Default::default(),
                 opt_seqs: Default::default(),
                 opt_subkey: Default::default(),
                 opt_value: Default::default(),
             },
-        ));
+        ))
     }
 
     pub fn rollback_inbound_transaction(
@@ -604,7 +625,10 @@ where
     }
 
     /// See if any inbound transactions have expired and clear them out
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn drop_expired_inbound_transactions(&mut self) {
         let now = Timestamp::now_non_decreasing();
         let registry = self.registry();

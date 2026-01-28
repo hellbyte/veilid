@@ -83,7 +83,7 @@ macro_rules! impl_crypto_typed {
                 fn from_str(s: &str) -> Result<Self, Self::Err> {
                     let b = s.as_bytes();
                     if b.len() > 5 && b[4..5] == b":"[..] {
-                        let kind: CryptoKind = b[0..4].try_into().expect("should not fail to convert");
+                        let kind: CryptoKind = b[0..4].try_into().expect_or_log("should not fail to convert");
                         let value = [<Bare $name>]::try_decode_bytes(&b[5..])?;
                         Ok(Self { kind, value })
                     } else {

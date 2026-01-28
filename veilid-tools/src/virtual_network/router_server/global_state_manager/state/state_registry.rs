@@ -92,7 +92,7 @@ impl<S: State> StateRegistry<S> {
             if let Some(name) = old_state.name() {
                 self.state_id_by_name
                     .remove(&name)
-                    .expect("named states should be registered");
+                    .expect_or_log("named states should be registered");
             }
         }
 
@@ -150,7 +150,7 @@ impl<S: State> StateRegistry<S> {
             let dead_name_id = self
                 .state_id_by_name
                 .remove(&name)
-                .expect("name should be registered");
+                .expect_or_log("name should be registered");
             assert_eq!(dead_name_id, id.0, "name id and state id should match");
         }
 

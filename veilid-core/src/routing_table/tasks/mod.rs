@@ -8,8 +8,6 @@ pub mod private_route_management;
 pub mod relay_management;
 pub mod update_statistics;
 
-use crate::attachment_manager::TickEvent;
-
 use super::*;
 
 impl_veilid_log_facility!("rtab");
@@ -20,7 +18,7 @@ impl RoutingTable {
         impl_setup_task_async!(self, Self, flush_task, flush_task_routine);
 
         // Set rolling transfers tick task
-        impl_setup_task_async!(
+        impl_setup_task!(
             self,
             Self,
             rolling_transfers_task,
@@ -28,7 +26,7 @@ impl RoutingTable {
         );
 
         // Set update state stats tick task
-        impl_setup_task_async!(
+        impl_setup_task!(
             self,
             Self,
             update_state_stats_task,
@@ -36,7 +34,7 @@ impl RoutingTable {
         );
 
         // Set rolling answers tick task
-        impl_setup_task_async!(
+        impl_setup_task!(
             self,
             Self,
             rolling_answers_task,
@@ -44,7 +42,7 @@ impl RoutingTable {
         );
 
         // Set kick buckets tick task
-        impl_setup_task_async!(self, Self, kick_buckets_task, kick_buckets_task_routine);
+        impl_setup_task!(self, Self, kick_buckets_task, kick_buckets_task_routine);
 
         // Set bootstrap tick task
         impl_setup_task_async!(self, Self, bootstrap_task, bootstrap_task_routine);
@@ -122,7 +120,10 @@ impl RoutingTable {
 
     /// Ticks about once per second
     /// to run tick tasks which may run at slower tick rates as configured
-    #[instrument(level = "trace", name = "RoutingTable::tick", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", name = "RoutingTable::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn tick(&self) -> EyreResult<()> {
         // Don't tick if paused
         let opt_tick_guard = {

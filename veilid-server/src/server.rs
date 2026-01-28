@@ -1,7 +1,7 @@
 use crate::client_api;
+use crate::logs::*;
 use crate::settings::*;
 use crate::tools::*;
-use crate::veilid_logs::*;
 use flume::{unbounded, Receiver, Sender};
 use futures_util::select;
 use futures_util::FutureExt;
@@ -36,7 +36,7 @@ pub async fn run_veilid_server_subnode(
     subnode: u16,
     settings: Settings,
     server_mode: ServerMode,
-    veilid_logs: VeilidLogs,
+    veilid_logs: Logs,
 ) -> EyreResult<()> {
     let (
         settings_auto_attach,
@@ -228,7 +228,7 @@ pub async fn run_veilid_server_subnode(
 pub async fn run_veilid_server(
     settings: Settings,
     server_mode: ServerMode,
-    veilid_logs: VeilidLogs,
+    veilid_logs: Logs,
 ) -> EyreResult<()> {
     let (subnode_index, subnode_count) = {
         let settingsr = settings.read();

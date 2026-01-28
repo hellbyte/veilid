@@ -69,20 +69,28 @@ mod tests {
     fn test_hash_country_code() {
         let mut set = HashSet::new();
 
-        set.insert(CountryCode::from_str("aa").unwrap());
+        set.insert(CountryCode::from_str("aa").unwrap_or_log());
 
-        assert!(set.get(&CountryCode::from_str("AA").unwrap()).is_some());
+        assert!(set
+            .get(&CountryCode::from_str("AA").unwrap_or_log())
+            .is_some());
     }
 
     #[test]
     fn test_compare_country_code() {
         assert_eq!(
-            CountryCode::from_str("aa").unwrap(),
-            CountryCode::from_str("AA").unwrap(),
+            CountryCode::from_str("aa").unwrap_or_log(),
+            CountryCode::from_str("AA").unwrap_or_log(),
         );
 
-        assert!(CountryCode::from_str("aa").unwrap() < CountryCode::from_str("Ab").unwrap());
+        assert!(
+            CountryCode::from_str("aa").unwrap_or_log()
+                < CountryCode::from_str("Ab").unwrap_or_log()
+        );
 
-        assert!(CountryCode::from_str("Bc").unwrap() > CountryCode::from_str("bb").unwrap());
+        assert!(
+            CountryCode::from_str("Bc").unwrap_or_log()
+                > CountryCode::from_str("bb").unwrap_or_log()
+        );
     }
 }

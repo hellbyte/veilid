@@ -1,0 +1,42 @@
+pub mod cleanup_tables;
+pub mod flush_tables;
+
+use super::*;
+
+impl TableStore {
+    pub(super) fn setup_tasks(&self) {
+        // Set flush tables tick task
+        veilid_log!(self debug "starting flush tables task");
+        impl_setup_task_async!(self, Self, flush_tables_task, flush_tables_task_routine);
+
+        // Set cleanup tables tick task
+        veilid_log!(self debug "starting cleanup tables task");
+        impl_setup_task_async!(self, Self, cleanup_tables_task, cleanup_tables_task_routine);
+    }
+
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", target = "tstore", name = "TableStore::tick", skip_all, err))]
+    pub async fn tick(&self, _lag: Option<TimestampDuration>) -> EyreResult<()> {
+        // Run the flush tables task
+        self.flush_tables_task.tick().await?;
+
+        // Run the cleanup tables task
+        self.cleanup_tables_task.tick().await?;
+
+        Ok(())
+    }
+
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
+    pub(super) async fn cancel_tasks(&self) {
+        veilid_log!(self debug "stopping flush tables task");
+        if let Err(e) = self.flush_tables_task.stop().await {
+            veilid_log!(self warn "flush_tables_task not stopped: {}", e);
+        }
+        veilid_log!(self debug "stopping cleanup tables task");
+        if let Err(e) = self.cleanup_tables_task.stop().await {
+            veilid_log!(self warn "cleanup_tables_task not stopped: {}", e);
+        }
+    }
+}

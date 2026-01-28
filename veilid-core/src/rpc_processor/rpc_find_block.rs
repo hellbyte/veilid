@@ -3,7 +3,7 @@ use super::*;
 impl_veilid_log_facility!("rpc");
 
 impl RPCProcessor {
-    #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err(level=Level::DEBUG))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err(level=Level::DEBUG)))]
     pub(super) async fn process_find_block_q(&self, msg: RPCMessage) -> RPCNetworkResult<()> {
         // Ignore if disabled
         #[cfg(feature = "unstable-blockstore")]

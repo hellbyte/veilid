@@ -18,8 +18,6 @@ pub const RCP0_MIN_RECEIPT_SIZE: usize = 130;
 /// Receipt versions in order of preference, best receipt version is the first one, worst is the last one
 pub const VALID_RECEIPT_VERSIONS: [ReceiptVersion; 1] = [RECEIPT_VERSION_RCP0];
 
-static_assertions::const_assert_eq!(VALID_RECEIPT_VERSIONS.len(), VALID_ENVELOPE_VERSIONS.len());
-
 /// Return the best receipt version we support
 pub fn best_receipt_version() -> ReceiptVersion {
     VALID_RECEIPT_VERSIONS[0]
@@ -51,7 +49,10 @@ pub enum Receipt {
 }
 
 impl Receipt {
-    #[instrument(level = "trace", target = "envelope", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn try_new_rcp0<D: AsRef<[u8]>>(
         crypto: &Crypto,
         crypto_kind: CryptoKind,
@@ -64,7 +65,10 @@ impl Receipt {
         })
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, err, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn try_from_signed_data(crypto: &Crypto, data: &[u8]) -> VeilidAPIResult<Receipt> {
         // Ensure we are at least the length of the envelope
         if data.len() < 4 {
@@ -86,7 +90,10 @@ impl Receipt {
         }
     }
 
-    #[instrument(level = "trace", target = "envelope", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "envelope", skip_all, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn to_signed_data(
         &self,
         crypto: &Crypto,
@@ -167,7 +174,10 @@ impl ReceiptRCP0 {
         })
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, err, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn try_from_signed_data(crypto: &Crypto, data: &[u8]) -> VeilidAPIResult<Self> {
         // Ensure we are at least the length of the envelope
         if data.len() < RCP0_MIN_RECEIPT_SIZE {
@@ -238,7 +248,10 @@ impl ReceiptRCP0 {
         })
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, err, fields(__VEILID_LOG_KEY = crypto.log_key()))
+    )]
     pub fn to_signed_data(
         &self,
         crypto: &Crypto,
@@ -246,7 +259,7 @@ impl ReceiptRCP0 {
     ) -> VeilidAPIResult<Vec<u8>> {
         let vcrypto = crypto
             .get(self.crypto_kind)
-            .expect("need to ensure only valid crypto kinds here");
+            .expect_or_log("need to ensure only valid crypto kinds here");
         vcrypto.check_secret_key(secret_key)?;
 
         // Ensure extra data isn't too long

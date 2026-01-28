@@ -75,7 +75,8 @@ fn main() -> Result<(), String> {
 
         if args.wait_for_debug {
             use bugsalot::debugger;
-            debugger::wait_until_attached(None).expect("state() not implemented on this platform");
+            debugger::wait_until_attached(None)
+                .expect_or_log("state() not implemented on this platform");
         }
 
         // Attempt to load configuration
@@ -102,8 +103,11 @@ fn main() -> Result<(), String> {
         // If we are running in interactive mode disable some things
         let mut enable_cursive = true;
         if args.interactive || args.log || args.command_file.is_some() || args.evaluate.is_some() {
-            settings.logging.terminal.enabled = false;
+            // Not using the cursive UI
             enable_cursive = false;
+        } else {
+            // If we're using the cursive UI, don't print logs to the terminal
+            settings.logging.terminal.enabled = false;
         }
 
         // Create UI object
@@ -190,7 +194,7 @@ fn main() -> Result<(), String> {
         // Set up loggers
         {
             let mut specbuilder = LogSpecBuilder::new();
-            specbuilder.default(settings::convert_loglevel(settings.logging.level));
+            specbuilder.default(settings.logging.level.into());
             specbuilder.module("cursive", LevelFilter::Off);
             specbuilder.module("cursive_core", LevelFilter::Off);
             specbuilder.module("cursive_buffered_backend", LevelFilter::Off);
@@ -211,16 +215,16 @@ fn main() -> Result<(), String> {
                             FileSpec::default()
                                 .directory(settings.logging.file.directory.clone())
                                 .suppress_timestamp(),
-                            uisender.as_logwriter().unwrap(),
+                            uisender.as_logwriter().unwrap_or_log(),
                         )
                         .o_append(settings.logging.file.append)
                         .start()
-                        .expect("failed to initialize logger!");
+                        .expect_or_log("failed to initialize logger!");
                 } else {
                     logger
-                        .log_to_writer(uisender.as_logwriter().unwrap())
+                        .log_to_writer(uisender.as_logwriter().unwrap_or_log())
                         .start()
-                        .expect("failed to initialize logger!");
+                        .expect_or_log("failed to initialize logger!");
                 }
             } else if settings.logging.file.enabled {
                 std::fs::create_dir_all(settings.logging.file.directory.clone())
@@ -233,7 +237,7 @@ fn main() -> Result<(), String> {
                     )
                     .o_append(settings.logging.file.append)
                     .start()
-                    .expect("failed to initialize logger!");
+                    .expect_or_log("failed to initialize logger!");
             }
         }
 

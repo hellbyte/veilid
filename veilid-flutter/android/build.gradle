@@ -64,7 +64,7 @@ android {
         }
     }
 
-    ndkVersion flutter.ndkVersion
+    ndkVersion = flutter.ndkVersion
 
     // Required to copy libc++_shared.so
     externalNativeBuild {
@@ -87,7 +87,13 @@ cargo {
     targets = ["arm", "arm64", "x86", "x86_64"]
     targetDirectory = "../../target"
     pythonCommand = "python3"
+    prebuiltToolchains = true
     profile = gradle.startParameter.taskNames.any{it.toLowerCase().contains("debug")} ? "debug" : "release"
+    exec { spec, toolchain ->
+        // Support 16KB page sizes
+        // https://developer.android.com/guide/practices/page-sizes#other-build-systems
+        spec.environment("RUST_ANDROID_GRADLE_CC_LINK_ARG", "-Wl,-z,max-page-size=16384,-soname,lib${libname}.so")
+    }
 }
 
 afterEvaluate {
@@ -98,6 +104,6 @@ afterEvaluate {
             productFlavor += "${it.name.capitalize()}"
         }
         def buildType = "${variant.buildType.name.capitalize()}"
-        tasks["generate${productFlavor}${buildType}Assets"].dependsOn(tasks["cargoBuild"])
+        tasks["pre${productFlavor}${buildType}Build"].dependsOn(tasks["cargoBuild"])
     }
 }

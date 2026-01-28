@@ -491,7 +491,7 @@ impl OutboundTransactionRecordState {
         params: NodeTransactionParams,
     ) -> VeilidAPIResult<&mut NodeTransaction> {
         let node_xid = NodeTransactionId::new(
-            params.node_ref.node_ids().get(params.kind).unwrap(),
+            params.node_ref.node_ids().get(params.kind).unwrap_or_log(),
             params.xid,
         );
         if self.get_node_transaction(&node_xid).is_some() {

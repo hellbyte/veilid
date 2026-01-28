@@ -1,47 +1,49 @@
+pub mod common;
+pub mod mocks;
+
+pub use common::*;
+pub use mocks::*;
+
 #[cfg(all(target_os = "android", feature = "veilid_core_android_tests"))]
 mod android;
-pub mod common;
-pub mod fixtures;
 #[cfg(all(target_os = "ios", feature = "veilid_core_ios_tests"))]
 mod ios;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native;
+#[cfg(all(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
+pub use native::wait_for_debugger;
 
-#[allow(unused_imports)]
 use super::*;
 
-pub use common::*;
-
 /// Main tests entry point for ios, android, and wasm targets
-#[allow(dead_code)]
+#[cfg(any(test, feature = "test-util"))]
 pub async fn run_all_tests() {
-    info!("TEST: test_types");
-    crypto::tests::test_types::test_all().await;
-    info!("TEST: test_crypto");
-    crypto::tests::test_crypto::test_all().await;
-    info!("TEST: test_envelope_receipt");
-    crypto::tests::test_envelope_receipt::test_all().await;
+    info!("TEST: veilid_core");
+    test_attachment_manager::test_all().await;
 
-    info!("TEST: test_veilid_core");
-    test_veilid_core::test_all().await;
+    info!("TEST: crypto");
+    crypto::tests_crypto::test_all().await;
 
     info!("TEST: test_table_store");
-    table_store::tests::test_table_store::test_all().await;
+    table_store::tests_table_store::test_all().await;
 
     info!("TEST: test_protected_store");
-    test_protected_store::test_all().await;
+    protected_store::tests_protected_store::test_all().await;
 
     info!("TEST: veilid_api");
-    veilid_api::tests::test_all().await;
+    veilid_api::tests_veilid_api::test_all().await;
 
     info!("TEST: routing_table");
-    routing_table::tests::test_all().await;
+    routing_table::tests_routing_table::test_all().await;
 
     info!("TEST: network_manager");
-    network_manager::tests::test_all().await;
+    network_manager::tests_network_manager::test_all().await;
 
     info!("TEST: storage_manager");
-    storage_manager::tests::test_all().await;
+    storage_manager::tests_storage_manager::test_all().await;
+
+    info!("TEST: rpc_processor");
+    rpc_processor::tests_rpc_processor::test_all().await;
 
     info!("Finished unit tests");
 }

@@ -90,8 +90,8 @@ impl PeerMessages {
 
         // Check to see if this part is done
         if assembly.parts.ranges_len() == 1
-            && assembly.parts.first().unwrap() == 0
-            && assembly.parts.last().unwrap() == len - 1
+            && assembly.parts.first().unwrap_or_log() == 0
+            && assembly.parts.last().unwrap_or_log() == len - 1
         {
             return true;
         }
@@ -130,7 +130,7 @@ impl PeerMessages {
     }
 
     fn remove_assembly(&mut self, index: usize) -> MessageAssembly {
-        let assembly = self.assemblies.remove(index).unwrap();
+        let assembly = self.assemblies.remove(index).unwrap_or_log();
         self.total_buffer -= assembly.data.len();
         assembly
     }
@@ -180,7 +180,7 @@ impl PeerMessages {
             self.new_assembly(cur_ts, seq, off, len, chunk);
             return None;
         }
-        let ass = ass.unwrap();
+        let ass = ass.unwrap_or_log();
 
         // Now that we have an assembly, merge in the fragment
         let done = self.merge_in_data(cur_ts, ass, off, len, chunk);
@@ -289,9 +289,9 @@ impl AssemblyBuffer {
             return NetworkResult::invalid_message("invalid frame version");
         }
         // Version 1 header
-        let seq = SequenceType::from_be_bytes(frame[2..4].try_into().unwrap());
-        let off = LengthType::from_be_bytes(frame[4..6].try_into().unwrap());
-        let len = LengthType::from_be_bytes(frame[6..HEADER_LEN].try_into().unwrap());
+        let seq = SequenceType::from_be_bytes(frame[2..4].try_into().unwrap_or_log());
+        let off = LengthType::from_be_bytes(frame[4..6].try_into().unwrap_or_log());
+        let len = LengthType::from_be_bytes(frame[6..HEADER_LEN].try_into().unwrap_or_log());
         let chunk = &frame[HEADER_LEN..];
 
         // See if we have a whole message and not a fragment

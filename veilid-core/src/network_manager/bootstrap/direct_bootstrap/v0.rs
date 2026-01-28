@@ -4,7 +4,10 @@ impl_veilid_log_facility!("net");
 
 impl NetworkManager {
     /// Direct bootstrap request handler (separate fallback mechanism from cheaper TXT bootstrap mechanism)
-    #[instrument(level = "trace", target = "net", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_boot_v0_request(&self, flow: Flow) -> EyreResult<NetworkResult<()>> {
         // Get a bunch of nodes with a range of crypto kinds, protocols and capabilities
         let bootstrap_nodes = self.find_bootstrap_nodes_filtered(2);
@@ -51,7 +54,7 @@ impl NetworkManager {
 
         let filter = Box::new(
             move |rti: &RoutingTableInner, entry: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                let entry = entry.unwrap();
+                let entry = entry.unwrap_or_log();
                 entry.with(rti, |_rti, e| {
                     // skip nodes on our local network here
                     if e.has_node_info(RoutingDomain::LocalNetwork.into()) {
@@ -112,7 +115,7 @@ impl NetworkManager {
             protocol_types_len * 2 * max_per_type,
             filters,
             |_rti, entry: Option<Arc<BucketEntry>>| {
-                NodeRef::new(self.registry(), entry.unwrap().clone())
+                NodeRef::new(self.registry(), entry.unwrap_or_log().clone())
             },
         )
     }

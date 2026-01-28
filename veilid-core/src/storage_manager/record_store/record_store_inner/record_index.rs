@@ -130,18 +130,18 @@ where
             uncommitted_subkey_changes: BTreeMap::new(),
             pending_uncommitted_record_changes: None,
             pending_uncommitted_subkey_changes: None,
-            subkey_cache_space: LimitedSize::new(
+            subkey_cache_space: LimitedSize::try_new(
                 unlocked_inner.registry.clone(),
                 "subkey_cache_total_size",
                 limit_subkey_cache_total_size,
                 0,
-            ),
-            record_cache_space: LimitedSize::new(
+            )?,
+            record_cache_space: LimitedSize::try_new(
                 unlocked_inner.registry.clone(),
                 "total_storage_space",
                 limit_max_storage_space,
                 0,
-            ),
+            )?,
             unlocked_inner,
         };
 
@@ -202,7 +202,7 @@ where
         }
 
         // Update total space
-        let mut space = self.record_cache_space.modify()?;
+        let mut space = self.record_cache_space.modify().unwrap_or_log();
         space.add(record_size)?;
         space.commit()?;
 
@@ -219,7 +219,7 @@ where
         };
 
         let Some(record) = self.record_cache.remove(&rtk) else {
-            apibail_invalid_argument!("record missing", "key", key);
+            apibail_key_not_found!(key.clone());
         };
 
         self.purge_record_and_subkeys(rtk, record, false)
@@ -228,7 +228,10 @@ where
     /// Access a record
     ///
     /// If the record exists, passes it to a function and marks the record as recently used
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn with_record<R, F>(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -263,7 +266,7 @@ where
         self.make_room_for_record(new_record_size, Some(old_record_size))?;
 
         // Store record and adjust total storage
-        let mut space = self.record_cache_space.modify()?;
+        let mut space = self.record_cache_space.modify().unwrap_or_log();
         space.sub(old_record_size)?;
         space.add(new_record_size)?;
         space.commit()?;
@@ -292,7 +295,10 @@ where
     /// Access a record
     ///
     /// If the record exists, passes it to a function but does not marks the record as recently used
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn peek_record<R, F>(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -317,10 +323,30 @@ where
         out
     }
 
+    /// Access the least recently used record
+    ///
+    /// If the record exists, passes it to a function but does not marks the record as recently used
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
+    pub(super) fn peek_lru<R, F>(&self, func: F) -> Option<R>
+    where
+        F: FnOnce(&OpaqueRecordKey, &Record<D>) -> R,
+    {
+        // Get the least recently used record
+        let (k, v) = self.record_cache.peek_lru()?;
+
+        Some(func(&k.record_key, v))
+    }
+
     /// Modify a record's detail
     ///
     /// If the record exists, passes a mutable reference of its detail to a function and marks the record as recently used
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn with_record_detail_mut<R, F>(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
@@ -381,19 +407,24 @@ where
         key: OpaqueRecordKey,
         subkey: ValueSubkey,
         peek: bool,
-    ) -> LoadActionResult {
+    ) -> VeilidAPIResult<LoadActionResult> {
         let rtk = RecordTableKey {
             record_key: key.clone(),
         };
 
         let Some(record) = self.record_cache.get(&rtk) else {
-            return LoadActionResult::NoRecord;
+            return Ok(LoadActionResult::NoRecord);
         };
 
+        // Check if the subkey is out of range
+        if subkey > record.max_subkey() {
+            apibail_invalid_argument!("subkey out of range", "subkey", subkey);
+        }
+
         if !record.stored_subkeys().contains(subkey) {
-            return LoadActionResult::NoSubkey {
+            return Ok(LoadActionResult::NoSubkey {
                 descriptor: record.descriptor(),
-            };
+            });
         }
 
         let stk = SubkeyTableKey {
@@ -414,16 +445,16 @@ where
                     UncommittedSubkeyChange::Create { new_data } => Some(new_data.clone()),
                     UncommittedSubkeyChange::Update {
                         new_data,
-                        old_data: _,
+                        opt_old_data: _,
                     } => Some(new_data.clone()),
                     UncommittedSubkeyChange::Delete {
-                        old_data: _,
+                        opt_old_data: _,
                         is_lru: _,
                     } => None,
                 })
         });
 
-        LoadActionResult::Subkey {
+        Ok(LoadActionResult::Subkey {
             descriptor: record.descriptor(),
             load_action: LoadAction::new(
                 self.unlocked_inner.subkey_table.clone(),
@@ -431,7 +462,7 @@ where
                 opt_cached_record_data,
                 peek,
             ),
-        }
+        })
     }
 
     /// Finalize a load action
@@ -446,14 +477,8 @@ where
         let (stk, opt_cached_record_data) = load_action.into_cached_record_data();
 
         if let Some(cached_record_data) = opt_cached_record_data {
-            match self.subkey_cache.entry(stk) {
-                hashlink::lru_cache::Entry::Occupied(_) => {
-                    // Do nothing, because cache is either equal or newer value since it is written first
-                }
-                hashlink::lru_cache::Entry::Vacant(v) => {
-                    v.insert(cached_record_data);
-                }
-            }
+            // This automatically checks if the data is in the cache before inserting it
+            self.cache_subkey(stk, cached_record_data);
         }
     }
 
@@ -477,14 +502,14 @@ where
 
         // Get the current record from the cache
         let Some(old_record) = self.record_cache.get(&rtk).cloned() else {
-            apibail_invalid_argument!("record missing", "key", key);
+            apibail_key_not_found!(key.clone());
         };
 
         // Make a copy of the record to edit
         let mut new_record = old_record.clone();
 
         // Change the record to reflect the new data
-        new_record.record_stored_subkey(
+        let is_new_subkey = new_record.record_stored_subkey(
             subkey,
             &new_data,
             self.unlocked_inner.limits.max_record_data_size,
@@ -503,27 +528,60 @@ where
         let mut space = self.record_cache_space.modify()?;
         space = self.sub_from_record_cache_space(space, old_record_size)?;
         space = self.add_to_record_cache_space(space, new_record_size)?;
-        space.commit()?;
+        space.verify_commit()?;
 
         // Put the new record back
-        let old_record = self
-            .record_cache
-            .insert(rtk.clone(), new_record.clone())
-            .unwrap();
+        match self.record_cache.insert(rtk.clone(), new_record.clone()) {
+            Some(previous) => {
+                // Must return the old record because of record_cache.get() succeeding above
+                if previous != old_record {
+                    apibail_internal!(
+                        "Inconsistent record cache for key {}: {:?} != {:?}",
+                        rtk,
+                        previous,
+                        old_record
+                    );
+                }
+            }
+            None => {
+                // Must return the old record because of record_cache.get() succeeding above
+                apibail_internal!(
+                    "Missing record cache for key {}: None != {:?}",
+                    rtk,
+                    old_record
+                );
+            }
+        }
 
         // Cache the new subkey data
         let stk = SubkeyTableKey {
             record_key: key.clone(),
             subkey,
         };
-        let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone())?;
-        if let Some(old_data) = opt_old_data {
-            self.add_uncommitted_subkey_update(stk, new_data, old_data);
-        } else {
-            self.add_uncommitted_subkey_create(stk, new_data);
+        let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone());
+
+        // Commit the space change now
+        if let Err(e) = space.commit() {
+            // Should not fail because we verified the commit earlier
+            veilid_log!(self error "Failed to commit record space: {}", e);
+            self.uncache_subkey(&stk);
+            return Err(e.into());
         }
 
-        // Queue
+        // No failures beyond this point
+        if let Some(old_data) = opt_old_data {
+            // If it was in the cache, it must have been on disk too, so just update
+            self.add_uncommitted_subkey_update(stk, new_data, Some(old_data));
+        } else {
+            // If it wasn't in the cache, then it may exist on disk if it was stored
+            if is_new_subkey {
+                self.add_uncommitted_subkey_create(stk, new_data);
+            } else {
+                self.add_uncommitted_subkey_update(stk, new_data, None);
+            }
+        }
+
+        // Queue the record db update
         self.add_uncommitted_record_update(
             rtk,
             new_record,
@@ -551,7 +609,7 @@ where
 
         // Get the current record from the cache
         let Some(old_record) = self.record_cache.get(&rtk).cloned() else {
-            apibail_invalid_argument!("record missing", "key", key);
+            apibail_key_not_found!(key.clone());
         };
 
         // Make a copy of the record to edit
@@ -561,14 +619,16 @@ where
         for (subkey, value) in subkey_values.iter().cloned() {
             // Change the record to reflect the new data
             let new_data = self.make_record_data(value)?;
-            new_record.record_stored_subkey(
+            let is_new_subkey = new_record.record_stored_subkey(
                 subkey,
                 &new_data,
                 self.unlocked_inner.limits.max_record_data_size,
             )?;
-
-            // Keep the new data for later
-            new_data_list.push((subkey, new_data));
+            let stk = SubkeyTableKey {
+                record_key: key.clone(),
+                subkey,
+            };
+            new_data_list.push((stk, new_data, is_new_subkey));
         }
 
         // Update the record's touch timestamp for LRU sorting
@@ -584,27 +644,65 @@ where
         let mut space = self.record_cache_space.modify()?;
         space = self.sub_from_record_cache_space(space, old_record_size)?;
         space = self.add_to_record_cache_space(space, new_record_size)?;
-        space.commit()?;
+        space.verify_commit()?;
 
         // Put the new record back
-        let old_record = self
-            .record_cache
-            .insert(rtk.clone(), new_record.clone())
-            .unwrap();
+        match self.record_cache.insert(rtk.clone(), new_record.clone()) {
+            Some(previous) => {
+                // Must return the old record because of record_cache.get() succeeding above
+                if previous != old_record {
+                    apibail_internal!(
+                        "Inconsistent record cache for key {}: {:?} != {:?}",
+                        rtk,
+                        previous,
+                        old_record
+                    );
+                }
+            }
+            None => {
+                // Must return the old record because of record_cache.get() succeeding above
+                apibail_internal!(
+                    "Missing record cache for key {}: None != {:?}",
+                    rtk,
+                    old_record
+                );
+            }
+        }
+
+        let mut modified_subkeys = vec![];
+        let mut opt_old_data_list = vec![];
 
         // Cache all the new subkey data
-        for (subkey, new_data) in new_data_list {
-            let stk = SubkeyTableKey {
-                record_key: key.clone(),
-                subkey,
-            };
-            let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone())?;
+        for (stk, new_data, _is_new_subkey) in &new_data_list {
+            let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone());
+            modified_subkeys.push(stk.clone());
+            opt_old_data_list.push(opt_old_data);
+        }
 
-            // Queue the subkey db updates
+        // Commit the space change now
+        if let Err(e) = space.commit() {
+            // Should not fail because we verified the commit earlier
+            veilid_log!(self error "Failed to commit record space: {}", e);
+            for (stk, _new_data, _is_new_subkey) in &new_data_list {
+                self.uncache_subkey(stk);
+            }
+            return Err(e.into());
+        }
+
+        // No failures beyond this point
+        for ((stk, new_data, is_new_subkey), opt_old_data) in
+            new_data_list.into_iter().zip(opt_old_data_list.into_iter())
+        {
             if let Some(old_data) = opt_old_data {
-                self.add_uncommitted_subkey_update(stk, new_data, old_data);
+                // If it was in the cache, it must have been on disk too, so just update
+                self.add_uncommitted_subkey_update(stk, new_data, Some(old_data));
             } else {
-                self.add_uncommitted_subkey_create(stk, new_data);
+                // If it wasn't in the cache, then it may exist on disk if it was stored
+                if is_new_subkey {
+                    self.add_uncommitted_subkey_update(stk, new_data, None);
+                } else {
+                    self.add_uncommitted_subkey_create(stk, new_data);
+                }
             }
         }
 
@@ -634,7 +732,8 @@ where
             old_record_size: u64,
             new_record: Record<D>,
             new_record_size: u64,
-            new_data_list: Vec<(ValueSubkey, RecordData)>,
+            new_data_list: Vec<(SubkeyTableKey, RecordData, bool)>,
+            opt_old_data_list: Vec<Option<RecordData>>,
         }
         let mut record_updates = Vec::with_capacity(keys_and_subkeys.len());
 
@@ -646,7 +745,7 @@ where
 
             // Get the current record from the cache
             let Some(old_record) = self.record_cache.get(&rtk).cloned() else {
-                apibail_invalid_argument!("record missing", "key", key);
+                apibail_key_not_found!(key.clone());
             };
 
             // Make a copy of the record to edit
@@ -656,14 +755,18 @@ where
             for (subkey, value) in subkey_values.iter().cloned() {
                 // Change the record to reflect the new data
                 let new_data = self.make_record_data(value)?;
-                new_record.record_stored_subkey(
+                let is_new_subkey = new_record.record_stored_subkey(
                     subkey,
                     &new_data,
                     self.unlocked_inner.limits.max_record_data_size,
                 )?;
 
                 // Keep the new data for later
-                new_data_list.push((subkey, new_data));
+                let stk = SubkeyTableKey {
+                    record_key: key.clone(),
+                    subkey,
+                };
+                new_data_list.push((stk, new_data, is_new_subkey));
             }
 
             // Update the record's touch timestamp for LRU sorting
@@ -681,6 +784,7 @@ where
                 new_record,
                 new_record_size,
                 new_data_list,
+                opt_old_data_list: vec![],
             });
         }
 
@@ -691,10 +795,62 @@ where
             space = self.sub_from_record_cache_space(space, record_update.old_record_size)?;
             space = self.add_to_record_cache_space(space, record_update.new_record_size)?;
         }
-        space.commit()?;
+        space.verify_commit()?;
 
-        // -- No failures past this point --
+        // Put the record back
+        let mut modified_subkeys = vec![];
+        for RecordUpdate {
+            rtk,
+            old_record,
+            old_record_size: _,
+            new_record,
+            new_record_size: _,
+            new_data_list,
+            opt_old_data_list,
+        } in &mut record_updates
+        {
+            // Put the new record back
+            match self.record_cache.insert(rtk.clone(), new_record.clone()) {
+                Some(previous) => {
+                    // Must return the old record because of record_cache.get() succeeding above
+                    if &previous != old_record {
+                        apibail_internal!(
+                            "Inconsistent record cache for key {}: {:?} != {:?}",
+                            rtk,
+                            previous,
+                            old_record
+                        );
+                    }
+                }
+                None => {
+                    // Must return the old record because of record_cache.get() succeeding above
+                    apibail_internal!(
+                        "Missing record cache for key {}: None != {:?}",
+                        rtk,
+                        old_record
+                    );
+                }
+            }
 
+            // Cache all the new subkey data
+            for (stk, new_data, _is_new_subkey) in new_data_list.iter() {
+                let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone());
+                modified_subkeys.push(stk.clone());
+                opt_old_data_list.push(opt_old_data);
+            }
+        }
+
+        // Commit the space change now
+        if let Err(e) = space.commit() {
+            // Should not fail because we verified the commit earlier
+            veilid_log!(self error "Failed to commit record space: {}", e);
+            for stk in modified_subkeys {
+                self.uncache_subkey(&stk);
+            }
+            return Err(e.into());
+        }
+
+        // No failures beyond this point
         for RecordUpdate {
             rtk,
             old_record,
@@ -702,24 +858,22 @@ where
             new_record,
             new_record_size,
             new_data_list,
+            opt_old_data_list,
         } in record_updates
         {
-            // Put the new record back
-            self.record_cache.insert(rtk.clone(), new_record.clone());
-
-            // Cache all the new subkey data
-            for (subkey, new_data) in new_data_list {
-                let stk = SubkeyTableKey {
-                    record_key: rtk.record_key.clone(),
-                    subkey,
-                };
-                let opt_old_data = self.cache_subkey(stk.clone(), new_data.clone())?;
-
-                // Queue the subkey db updates
+            for ((stk, new_data, is_new_subkey), opt_old_data) in
+                new_data_list.into_iter().zip(opt_old_data_list.into_iter())
+            {
                 if let Some(old_data) = opt_old_data {
-                    self.add_uncommitted_subkey_update(stk, new_data, old_data);
+                    // If it was in the cache, it must have been on disk too, so just update
+                    self.add_uncommitted_subkey_update(stk, new_data, Some(old_data));
                 } else {
-                    self.add_uncommitted_subkey_create(stk, new_data);
+                    // If it wasn't in the cache, then it may exist on disk if it was stored
+                    if is_new_subkey {
+                        self.add_uncommitted_subkey_update(stk, new_data, None);
+                    } else {
+                        self.add_uncommitted_subkey_create(stk, new_data);
+                    }
                 }
             }
 
@@ -773,17 +927,23 @@ where
         self.pending_uncommitted_record_changes = Some(uncommitted_record_changes.clone());
         self.pending_uncommitted_subkey_changes = Some(uncommitted_subkey_changes.clone());
 
-        Some(CommitAction::new(
+        let commit_action = CommitAction::new(
             rt_xact,
             st_xact,
             uncommitted_record_changes,
             uncommitted_subkey_changes,
-        ))
+        );
+
+        veilid_log!(self debug target: "stor::record_index", "prepare_commit_action: {:#?}", commit_action);
+
+        Some(commit_action)
     }
 
     /// Roll back any part of the commit action that did not complete
     /// in the event of a db commit failure
     pub fn finish_commit_action(&mut self, commit_action: CommitAction<D>) -> VeilidAPIResult<()> {
+        veilid_log!(self debug target: "stor::record_index", "finish_commit_action: {:#?}", commit_action);
+
         // XXX: if we ever support 'rollback points', this will become a list of CommitAction<D>
         // XXX: and we'll have to assign IDs and pass around CommitActionId to avoid having too much cloning
         if self.pending_uncommitted_record_changes.is_none()
@@ -810,8 +970,10 @@ where
             self.rollback_subkey_changes(unprepared_uncommitted_subkey_changes);
 
             // Then roll back the prepared, uncommited actions that must be part of this commit action as well
-            let uncommitted_record_changes = Arc::into_inner(uncommitted_record_changes).unwrap();
-            let uncommitted_subkey_changes = Arc::into_inner(uncommitted_subkey_changes).unwrap();
+            let uncommitted_record_changes =
+                Arc::into_inner(uncommitted_record_changes).unwrap_or_log();
+            let uncommitted_subkey_changes =
+                Arc::into_inner(uncommitted_subkey_changes).unwrap_or_log();
             self.rollback_record_changes(uncommitted_record_changes);
             self.rollback_subkey_changes(uncommitted_subkey_changes);
         }
@@ -821,32 +983,7 @@ where
 
     /// Returns the total amount of used space
     pub fn total_storage_space(&self) -> u64 {
-        self.record_cache_space.with_value(|v| v).unwrap()
-    }
-
-    /// Delete the least recently used record
-    /// Returns which record was deleted and amount of space reclaimed
-    pub fn delete_lru(&mut self) -> VeilidAPIResult<ReclaimedSpace> {
-        let total_storage_space = self.record_cache_space.with_value(|x| x)?;
-
-        let Some(record) = self.record_cache.remove_lru() else {
-            return Ok(ReclaimedSpace {
-                reclaimed: 0,
-                total: total_storage_space,
-                dead_records: vec![],
-            });
-        };
-
-        let opaque_record_key = record.0.record_key.clone();
-        self.purge_record_and_subkeys(record.0, record.1, true)?;
-
-        let new_total_storage_space = self.record_cache_space.with_value(|x| x)?;
-
-        Ok(ReclaimedSpace {
-            reclaimed: total_storage_space - new_total_storage_space,
-            total: total_storage_space,
-            dead_records: vec![opaque_record_key],
-        })
+        self.record_cache_space.with_value(|v| v).unwrap_or_log()
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////
@@ -884,12 +1021,16 @@ where
             Vec::with_capacity(record_table_keys_count);
 
         let mut last_check_ts = Timestamp::now();
+        let mut repaired_count = AtomicUsize::new(0);
         for (n, k) in record_table_keys.into_iter().enumerate() {
             let Ok(rtk) = RecordTableKey::try_from(k.as_slice()) else {
                 rt_xact.delete(0, &k).await?;
                 continue;
             };
-            let Ok(record) = self.load_record_from_db(&rtk, &rt_xact).await else {
+            let Ok(record) = self
+                .load_record_from_db(&rtk, &rt_xact, &mut repaired_count)
+                .await
+            else {
                 rt_xact.delete(0, &k).await?;
                 continue;
             };
@@ -900,7 +1041,7 @@ where
             let check_ts = Timestamp::now();
             if check_ts.duration_since(last_check_ts) > TimestampDuration::new_secs(1) {
                 last_check_ts = check_ts;
-                veilid_log!(self info "  Records loaded: ({} / {}) {}", n, record_table_keys_count, check_ts.duration_since(start_ts));
+                veilid_log!(self info "  Records loaded: ({} / {}) {} repaired {}", n, record_table_keys_count, repaired_count.load(Ordering::Acquire), check_ts.duration_since(start_ts));
             }
         }
 
@@ -949,7 +1090,7 @@ where
                     // Revert from the storage total
                     space = self.sub_from_record_cache_space(space, record_size)?;
                 }
-                space.commit().unwrap();
+                space.commit().unwrap_or_log();
 
                 hit_limit
             };
@@ -990,6 +1131,8 @@ where
     }
 
     fn rollback_record_changes(&mut self, uncommitted_record_changes: UncommittedRecordChanges<D>) {
+        veilid_log!(self debug target: "stor::record_index", "rollback_record_changes: {:#?}", uncommitted_record_changes);
+
         // Rollback creates first so we don't have to worry about LRU
         for (rtk, urc) in uncommitted_record_changes.iter().rev() {
             match urc {
@@ -997,7 +1140,7 @@ where
                     new_record,
                     new_record_size,
                 } => {
-                    let mut space = self.record_cache_space.modify().unwrap();
+                    let mut space = self.record_cache_space.modify().unwrap_or_log();
                     space = match self.sub_from_record_cache_space(space, *new_record_size) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1046,7 +1189,7 @@ where
                     old_record,
                     old_record_size,
                 } => {
-                    let mut space = self.record_cache_space.modify().unwrap();
+                    let mut space = self.record_cache_space.modify().unwrap_or_log();
                     space = match self.sub_from_record_cache_space(space, new_record_size) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1078,7 +1221,7 @@ where
                     old_record_size,
                     is_lru,
                 } => {
-                    let mut space = self.record_cache_space.modify().unwrap();
+                    let mut space = self.record_cache_space.modify().unwrap_or_log();
                     space = match self.add_to_record_cache_space(space, old_record_size) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1121,22 +1264,17 @@ where
     }
 
     fn rollback_subkey_changes(&mut self, uncommitted_subkey_changes: UncommittedSubkeyChanges) {
-        // Process creates first so we don't have to worry about LRU
+        veilid_log!(self debug target: "stor::record_index", "rollback_subkey_changes: {:#?}", uncommitted_subkey_changes);
+        // Process all uncaches first so we don't have to worry about LRU
         for (stk, usc) in uncommitted_subkey_changes.iter().rev() {
             match usc {
-                UncommittedSubkeyChange::Create { new_data: data } => {
-                    let opt_prev_data = match self.uncache_subkey(stk) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            veilid_log!(self error "UncommittedSubkeyChange::Create rollback: {} failed to uncache: {}", stk, e);
-                            continue;
-                        }
-                    };
+                UncommittedSubkeyChange::Create { new_data } => {
+                    let opt_prev_data = self.uncache_subkey(stk);
 
                     // Validate
                     if let Some(prev_data) = opt_prev_data {
-                        if &prev_data != data {
-                            veilid_log!(self error "UncommittedSubkeyChange::Create rollback: {} had unexpected previous data", stk);
+                        if &prev_data != new_data {
+                            veilid_log!(self error "UncommittedSubkeyChange::Create rollback: {} had mismatched previous data", stk);
                         }
                     } else {
                         // If rollback of create had no cached value, it may be due to LRU
@@ -1144,63 +1282,76 @@ where
                     }
                 }
                 UncommittedSubkeyChange::Update {
-                    new_data: _,
-                    old_data: _,
+                    new_data,
+                    opt_old_data,
                 } => {
-                    // Skip for now
+                    // Update of an uncached subkey could have no old data, so just uncache it
+                    if opt_old_data.is_none() {
+                        let opt_prev_data = self.uncache_subkey(stk);
+
+                        // Validate
+                        if let Some(prev_data) = opt_prev_data {
+                            if &prev_data != new_data {
+                                veilid_log!(self error "UncommittedSubkeyChange::Update (without data) rollback: {} had mismatched previous data", stk);
+                            }
+                        } else {
+                            // If rollback of no-data update had no cached value, it may be due to LRU
+                            // For now we don't reload the subkey cache because it is only in-memory and will be reloaded upon the next subkey get
+                        }
+                    }
                 }
                 UncommittedSubkeyChange::Delete {
-                    old_data: _,
+                    opt_old_data: _,
                     is_lru: _,
                 } => {
-                    // Skip for now
+                    // Skip until second pass
                 }
             }
         }
         for (stk, usc) in uncommitted_subkey_changes.into_iter().rev() {
             match usc {
-                UncommittedSubkeyChange::Update { new_data, old_data } => {
-                    let opt_prev_data = match self.cache_subkey(stk.clone(), old_data) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            veilid_log!(self error "UncommittedSubkeyChange::Update rollback: {} failed to cache: {}", stk, e);
-                            continue;
-                        }
-                    };
+                UncommittedSubkeyChange::Update {
+                    new_data,
+                    opt_old_data,
+                } => {
+                    // Update of an uncached subkey could have old data so re-cache it
+                    if let Some(old_data) = opt_old_data {
+                        let opt_prev_data = self.cache_subkey(stk.clone(), old_data);
 
-                    // Validate
-                    if let Some(prev_data) = opt_prev_data {
-                        if prev_data != new_data {
-                            veilid_log!(self error "UncommittedSubkeyChange::Update rollback: {} had unexpected previous value upon removal", &stk);
+                        // Validate
+                        if let Some(prev_data) = opt_prev_data {
+                            if prev_data != new_data {
+                                veilid_log!(self error "UncommittedSubkeyChange::Update (with data) rollback: {} had mismatched previous value upon removal", &stk);
+                            }
+                        } else {
+                            // If rollback of with-data update had no cached value, it may be due to LRU
+                            // For now we don't reload the subkey cache because it is only in-memory and will be reloaded upon the next subkey get
                         }
-                    } else {
-                        // If rollback of update had no cached value, it may be due to LRU
-                        // For now we don't reload the subkey cache because it is only in-memory and will be reloaded upon the next subkey get
                     }
                 }
-                UncommittedSubkeyChange::Delete { old_data, is_lru } => {
-                    // Put the data back in the cache
-                    let opt_prev_data = match self.cache_subkey(stk.clone(), old_data) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            veilid_log!(self error "UncommittedSubkeyChange::Delete rollback: {} failed to cache: {}", stk, e);
-                            continue;
-                        }
-                    };
+                UncommittedSubkeyChange::Delete {
+                    opt_old_data,
+                    is_lru,
+                } => {
+                    // Delete of an uncached subkey could have no old data
+                    if let Some(old_data) = opt_old_data {
+                        // Put the data back in the cache
+                        let opt_prev_data = self.cache_subkey(stk.clone(), old_data);
 
-                    // Validate
-                    if opt_prev_data.is_some() {
-                        veilid_log!(self error "UncommittedSubkeyChange::Delete rollback: {} had unexpected previous value", &stk);
-                    }
-                    if is_lru {
-                        match self.subkey_cache.entry(stk) {
-                            hashlink::lru_cache::Entry::Occupied(mut occupied_entry) => {
-                                // Move to LRU position
-                                occupied_entry.to_front();
-                            }
-                            hashlink::lru_cache::Entry::Vacant(vacant_entry) => {
-                                // Validate
-                                veilid_log!(self error "UncommittedRecordChange::Delete rollback: {} was not present directly after insertion", vacant_entry.into_key());
+                        // Validate
+                        if opt_prev_data.is_some() {
+                            veilid_log!(self error "UncommittedSubkeyChange::Delete rollback: {} had unexpected previous value", &stk);
+                        }
+                        if is_lru {
+                            match self.subkey_cache.entry(stk) {
+                                hashlink::lru_cache::Entry::Occupied(mut occupied_entry) => {
+                                    // Move to LRU position
+                                    occupied_entry.to_front();
+                                }
+                                hashlink::lru_cache::Entry::Vacant(vacant_entry) => {
+                                    // Validate
+                                    veilid_log!(self error "UncommittedRecordChange::Delete rollback: {} was not present directly after insertion", vacant_entry.into_key());
+                                }
                             }
                         }
                     }
@@ -1218,6 +1369,7 @@ where
         &self,
         rtk: &RecordTableKey,
         rt_xact: &TableDBTransaction,
+        repaired_count: &mut AtomicUsize,
     ) -> VeilidAPIResult<Record<D>> {
         let Some(mut record) = self
             .unlocked_inner
@@ -1232,6 +1384,7 @@ where
 
         if record.needs_repair() {
             self.repair_record(rtk, &mut record, rt_xact).await?;
+            repaired_count.fetch_add(1, Ordering::AcqRel);
         }
 
         Ok(record)
@@ -1313,59 +1466,99 @@ where
     /// Adds subkey data to the cache, performing all of the accounting around the operation
     /// Evicts enough other subkeys from the cache to make room and meet limits
     /// Return the data that was previously in the cache
-    fn cache_subkey(
-        &mut self,
-        stk: SubkeyTableKey,
-        data: RecordData,
-    ) -> VeilidAPIResult<Option<RecordData>> {
-        let subkey_memsize = stk.get_size() + data.get_size();
-        let mut space = self.subkey_cache_space.modify()?;
-        space = self.add_to_subkey_cache_space(space, subkey_memsize)?;
+    fn cache_subkey(&mut self, stk: SubkeyTableKey, data: RecordData) -> Option<RecordData> {
+        veilid_log!(self debug target: "stor::record_index", "cache_subkey: {} <-- {} bytes", stk, data.data_size());
 
-        let mut opt_lru_out = None;
-        let opt_prev_data =
-            self.subkey_cache
-                .insert_with_callback(stk.clone(), data, |lruk, lruv| {
-                    opt_lru_out = Some((lruk, lruv));
-                });
-
-        if let Some(lru_out) = opt_lru_out {
-            let lru_memsize = lru_out.0.get_size() + lru_out.1.get_size();
-            space = self.sub_from_subkey_cache_space(space, lru_memsize)?;
+        // If the data being set is exactly the same, shortcut this operation
+        if let Some(existing_data) = self.subkey_cache.get(&stk) {
+            if existing_data == &data {
+                return Some(data);
+            }
         }
 
-        if let Some(prev_data) = &opt_prev_data {
-            let prev_memsize = stk.get_size() + prev_data.get_size();
-            space = self.sub_from_subkey_cache_space(space, prev_memsize)?;
-        }
+        // If we modify the cache we should clear it on errors because
+        // we want to ensure that it is consistent at all costs
+        let res = (|| {
+            // Calculate the space requirements for the new record data
+            let subkey_memsize = stk.get_size() + data.get_size();
+            let mut space = self.subkey_cache_space.modify().unwrap_or_log();
+            space = self.add_to_subkey_cache_space(space, subkey_memsize)?;
 
-        while !space.check_limit() {
-            let Some((dead_stk, dead_data)) = self.subkey_cache.remove_lru() else {
-                veilid_log!(self error "can not make enough room in subkey cache, purging cache");
+            let mut opt_lru_out = None;
+            let opt_prev_data =
+                self.subkey_cache
+                    .insert_with_callback(stk.clone(), data, |lruk, lruv| {
+                        opt_lru_out = Some((lruk, lruv));
+                    });
+
+            if let Some(lru_out) = opt_lru_out {
+                let lru_memsize = lru_out.0.get_size() + lru_out.1.get_size();
+                space = self.sub_from_subkey_cache_space(space, lru_memsize)?;
+            }
+
+            if let Some(prev_data) = &opt_prev_data {
+                let prev_memsize = stk.get_size() + prev_data.get_size();
+                space = self.sub_from_subkey_cache_space(space, prev_memsize)?;
+            }
+
+            while !space.check_limit() {
+                let Some((dead_stk, dead_data)) = self.subkey_cache.remove_lru() else {
+                    apibail_internal!(
+                        "purging subkey cache due to inability to make room: space={:?}",
+                        space
+                    );
+                };
+                let lru_memsize = dead_stk.get_size() + dead_data.get_size();
+                space = self.sub_from_subkey_cache_space(space, lru_memsize)?;
+            }
+
+            // Must succeed due to prior check_limit
+            space.commit().unwrap_or_log();
+
+            Ok(opt_prev_data)
+        })();
+
+        match res {
+            Err(e) => {
+                veilid_log!(self error "purging subkey cache due to cache error: {}", e);
+                let mut space = self.subkey_cache_space.modify().unwrap_or_log();
                 space.set(0);
-                space.commit()?;
                 self.subkey_cache.clear();
-                return Ok(opt_prev_data);
-            };
-            let lru_memsize = dead_stk.get_size() + dead_data.get_size();
-            space = self.sub_from_subkey_cache_space(space, lru_memsize)?;
-        }
 
-        space.commit()?;
-        Ok(opt_prev_data)
+                None
+            }
+            Ok(v) => v,
+        }
     }
 
     /// Removes subkey data from the cache, performing all of the accounting around the operation
     /// Return the data that was previously in the cache
-    fn uncache_subkey(&mut self, stk: &SubkeyTableKey) -> VeilidAPIResult<Option<RecordData>> {
-        let opt_data = self.subkey_cache.remove(stk);
-        if let Some(data) = &opt_data {
-            let mut space = self.subkey_cache_space.modify()?;
-            let subkey_memsize = stk.get_size() + data.get_size();
-            space = self.sub_from_subkey_cache_space(space, subkey_memsize)?;
-            space.commit()?;
+    fn uncache_subkey(&mut self, stk: &SubkeyTableKey) -> Option<RecordData> {
+        veilid_log!(self debug target: "stor::record_index", "uncache_subkey: {}", stk);
+
+        // If we modify the cache we should clear it on errors because
+        // we want to ensure that it is consistent at all costs
+        let res: VeilidAPIResult<Option<RecordData>> = (|| {
+            let opt_data = self.subkey_cache.remove(stk);
+            if let Some(data) = &opt_data {
+                let mut space = self.subkey_cache_space.modify().unwrap_or_log();
+                let subkey_memsize = stk.get_size() + data.get_size();
+                space = self.sub_from_subkey_cache_space(space, subkey_memsize)?;
+                space.commit()?;
+            }
+            Ok(opt_data)
+        })();
+
+        match res {
+            Err(e) => {
+                veilid_log!(self error "purging subkey cache due to uncache error: {}", e);
+                let mut space = self.subkey_cache_space.modify().unwrap_or_log();
+                space.set(0);
+                self.subkey_cache.clear();
+                None
+            }
+            Ok(v) => v,
         }
-        Ok(opt_data)
     }
 
     fn add_to_record_cache_space(
@@ -1389,7 +1582,7 @@ where
         if let Err(e) = space.sub(value) {
             self.record_cache.clear();
             space.set(0);
-            space.commit().unwrap();
+            space.commit().unwrap_or_log();
             veilid_log!(self error "RecordIndex({}): Record space underflow: {}",self.unlocked_inner.name, e);
             return Err(e.into());
         }
@@ -1417,7 +1610,7 @@ where
         if let Err(e) = space.sub(value) {
             self.subkey_cache.clear();
             space.set(0);
-            space.commit().unwrap();
+            space.commit().unwrap_or_log();
             veilid_log!(self error "RecordIndex({}): Subkey space underflow: {}",self.unlocked_inner.name, e);
             return Err(e.into());
         }
@@ -1445,9 +1638,9 @@ where
             {
                 current_record_cache_size = new_record_cache_size;
             } else {
-                let mut space = self.record_cache_space.modify()?;
+                let mut space = self.record_cache_space.modify().unwrap_or_log();
                 space.set(0);
-                space.commit().unwrap();
+                space.commit().unwrap_or_log();
 
                 self.record_cache.clear();
 
@@ -1485,9 +1678,9 @@ where
             {
                 current_record_cache_size = new_record_cache_size;
             } else {
-                let mut space = self.record_cache_space.modify()?;
+                let mut space = self.record_cache_space.modify().unwrap_or_log();
                 space.set(0);
-                space.commit().unwrap();
+                space.commit().unwrap_or_log();
 
                 self.record_cache.clear();
 
@@ -1503,7 +1696,7 @@ where
 
         // Purge the required number of records
         for _n in 0..dead_count {
-            let (dead_k, dead_v) = self.record_cache.remove_lru().unwrap();
+            let (dead_k, dead_v) = self.record_cache.remove_lru().unwrap_or_log();
             self.purge_record_and_subkeys(dead_k, dead_v, true)?;
         }
 
@@ -1516,6 +1709,8 @@ where
         record: Record<D>,
         is_lru: bool,
     ) -> VeilidAPIResult<()> {
+        veilid_log!(self debug target: "stor::record_index", "purge_record_and_subkeys: {}, stored_subkey={}, is_lru={}", rtk, record.stored_subkeys(), is_lru);
+
         let record_size_estimator = self.record_size_estimator();
 
         if self.record_cache.contains_key(&rtk) {
@@ -1528,7 +1723,7 @@ where
 
         // Remove record everywhere else now that it's gone from the cache
         let record_size = record_size_estimator.estimate(&rtk, &record)?;
-        let mut space = self.record_cache_space.modify()?;
+        let mut space = self.record_cache_space.modify().unwrap_or_log();
         space = self.sub_from_record_cache_space(space, record_size)?;
         space.commit()?;
 
@@ -1539,16 +1734,8 @@ where
                 subkey: sk,
             };
 
-            match self.uncache_subkey(&stk) {
-                Ok(opt_data) => {
-                    if let Some(data) = opt_data {
-                        self.add_uncommitted_subkey_delete(stk, data, is_lru);
-                    }
-                }
-                Err(e) => {
-                    veilid_log!(self error "Failed to uncache subkey ({}): {}", stk, e);
-                }
-            };
+            let opt_data = self.uncache_subkey(&stk);
+            self.add_uncommitted_subkey_delete(stk, opt_data, is_lru);
         }
 
         self.add_uncommitted_record_delete(rtk, record, record_size, is_lru);
@@ -1563,6 +1750,8 @@ where
         old_record_size: u64,
         is_lru: bool,
     ) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_record_delete: {}, {} bytes, is_lru={}", rtk, old_record_size, is_lru);
+
         let rtk_log = rtk.clone();
 
         match self.uncommitted_record_changes.entry(rtk) {
@@ -1617,6 +1806,8 @@ where
         old_record: Record<D>,
         old_record_size: u64,
     ) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_record_update: {}, {} -> {} bytes", rtk, old_record_size, new_record_size);
+
         let rtk_log = rtk.clone();
 
         match self.uncommitted_record_changes.entry(rtk) {
@@ -1674,6 +1865,8 @@ where
         new_record: Record<D>,
         new_record_size: u64,
     ) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_record_create: {}, {} bytes", rtk, new_record_size);
+
         let rtk_log = rtk.clone();
 
         match self.uncommitted_record_changes.entry(rtk) {
@@ -1723,14 +1916,19 @@ where
     fn add_uncommitted_subkey_delete(
         &mut self,
         stk: SubkeyTableKey,
-        old_data: RecordData,
+        opt_old_data: Option<RecordData>,
         is_lru: bool,
     ) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_subkey_delete: {}, {}", stk, opt_old_data.as_ref().map(|x| format!("{} bytes", x.data_size())).unwrap_or_else(|| "no data".to_owned()));
+
         let stk_log = stk.clone();
 
         match self.uncommitted_subkey_changes.entry(stk) {
             std::collections::btree_map::Entry::Vacant(v) => {
-                v.insert(UncommittedSubkeyChange::Delete { old_data, is_lru });
+                v.insert(UncommittedSubkeyChange::Delete {
+                    opt_old_data,
+                    is_lru,
+                });
             }
             std::collections::btree_map::Entry::Occupied(mut o) => {
                 let usc = o.get_mut();
@@ -1741,16 +1939,16 @@ where
                     }
                     UncommittedSubkeyChange::Update {
                         new_data: _,
-                        old_data: prior_old_data,
+                        opt_old_data: prior_opt_old_data,
                     } => {
                         // If we updated a subkey and then deleted it, rolling it back should be to the original value
                         *usc = UncommittedSubkeyChange::Delete {
-                            old_data: prior_old_data.clone(),
+                            opt_old_data: prior_opt_old_data.clone(),
                             is_lru,
                         };
                     }
                     UncommittedSubkeyChange::Delete {
-                        old_data: _,
+                        opt_old_data: _,
                         is_lru: _,
                     } => {
                         // Should never happen. Can't delete a subkey twice.
@@ -1765,13 +1963,18 @@ where
         &mut self,
         stk: SubkeyTableKey,
         new_data: RecordData,
-        old_data: RecordData,
+        opt_old_data: Option<RecordData>,
     ) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_subkey_update: {}, {} --> {} bytes", stk, opt_old_data.as_ref().map(|x| format!("{} bytes", x.data_size())).unwrap_or_else(|| "no data".to_owned()), new_data.data_size());
+
         let stk_log = stk.clone();
 
         match self.uncommitted_subkey_changes.entry(stk) {
             std::collections::btree_map::Entry::Vacant(v) => {
-                v.insert(UncommittedSubkeyChange::Update { new_data, old_data });
+                v.insert(UncommittedSubkeyChange::Update {
+                    new_data,
+                    opt_old_data,
+                });
             }
             std::collections::btree_map::Entry::Occupied(mut o) => {
                 let usc = o.get_mut();
@@ -1782,16 +1985,16 @@ where
                     }
                     UncommittedSubkeyChange::Update {
                         new_data: _,
-                        old_data: prior_old_data,
+                        opt_old_data: prior_opt_old_data,
                     } => {
                         // If we updated a subkey and then updated it, rolling it back should be to the original value
                         *usc = UncommittedSubkeyChange::Update {
                             new_data,
-                            old_data: prior_old_data.clone(),
+                            opt_old_data: prior_opt_old_data.clone(),
                         };
                     }
                     UncommittedSubkeyChange::Delete {
-                        old_data: _,
+                        opt_old_data: _,
                         is_lru: _,
                     } => {
                         // Should never happen. Can't update a deleted subkey.
@@ -1803,6 +2006,7 @@ where
     }
 
     fn add_uncommitted_subkey_create(&mut self, stk: SubkeyTableKey, new_data: RecordData) {
+        veilid_log!(self debug target: "stor::record_index", "add_uncommitted_subkey_create: {}, {} bytes", stk, new_data.data_size());
         let stk_log = stk.clone();
 
         match self.uncommitted_subkey_changes.entry(stk) {
@@ -1818,19 +2022,19 @@ where
                     }
                     UncommittedSubkeyChange::Update {
                         new_data: _,
-                        old_data: _,
+                        opt_old_data: _,
                     } => {
                         // Should never happen. Can't create an already created subkey.
                         veilid_log!(self error "record was created after updated in uncommitted log: {}", stk_log);
                     }
                     UncommittedSubkeyChange::Delete {
-                        old_data: prior_old_data,
+                        opt_old_data: prior_opt_old_data,
                         is_lru: _,
                     } => {
                         // A delete followed by a create is really an update
                         *usc = UncommittedSubkeyChange::Update {
                             new_data,
-                            old_data: prior_old_data.clone(),
+                            opt_old_data: prior_opt_old_data.clone(),
                         };
                     }
                 }

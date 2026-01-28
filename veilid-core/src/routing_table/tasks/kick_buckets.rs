@@ -9,8 +9,8 @@ const KEEP_N_CLOSEST_UNRELIABLE_PEERS_COUNT: usize = 8;
 impl RoutingTable {
     // Kick the queued buckets in the routing table to free dead nodes if necessary
     // Attempts to keep the size of the routing table down to the bucket depth
-    #[instrument(level = "trace", skip(self), err)]
-    pub async fn kick_buckets_task_routine(
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    pub fn kick_buckets_task_routine(
         &self,
         _stop_token: StopToken,
         _last_ts: Timestamp,

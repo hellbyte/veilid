@@ -28,6 +28,7 @@ impl fmt::Display for Flow {
 }
 
 impl Flow {
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(dead_code))]
     pub fn new(remote: PeerAddress, local: SocketAddress) -> Self {
         assert!(
             !matches!(
@@ -41,6 +42,11 @@ impl Flow {
             local: Some(local),
         }
     }
+    #[cfg(any(
+        test,
+        feature = "test-util",
+        all(target_arch = "wasm32", target_os = "unknown")
+    ))]
     pub fn new_no_local(remote: PeerAddress) -> Self {
         Self {
             remote,

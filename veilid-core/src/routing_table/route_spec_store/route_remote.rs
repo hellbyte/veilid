@@ -22,7 +22,10 @@ impl RouteSpecStore {
     /// Import a remote private route set blob for compilation
     /// It is safe to import the same route more than once and it will return the same route id
     /// Returns a route set id
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn import_remote_route_blob(&self, blob: Vec<u8>) -> VeilidAPIResult<RouteId> {
         let cur_ts = Timestamp::now();
 
@@ -56,7 +59,10 @@ impl RouteSpecStore {
     /// Add a single remote private route for compilation
     /// It is safe to add the same route more than once and it will return the same route id
     /// Returns a route set id
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn import_single_remote_route(
         &self,
         private_route: PrivateRoute,
@@ -91,7 +97,10 @@ impl RouteSpecStore {
     }
 
     /// Release a remote private route that is no longer in use
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn release_remote_route_id(&self, id: RouteId) -> bool {
         let inner = &mut *self.inner.lock();
         inner.cache.remove_remote_private_route(id)
@@ -239,7 +248,7 @@ impl RouteSpecStore {
             if best_kind.is_none()
                 || compare_crypto_kind(
                     &private_route.public_key.kind(),
-                    best_kind.as_ref().unwrap(),
+                    best_kind.as_ref().unwrap_or_log(),
                 ) == cmp::Ordering::Less
             {
                 best_kind = Some(private_route.public_key.kind());
@@ -249,7 +258,7 @@ impl RouteSpecStore {
         let Some(best_kind) = best_kind else {
             apibail_internal!("no compatible crypto kinds in route");
         };
-        let vcrypto = crypto.get(best_kind).unwrap();
+        let vcrypto = crypto.get(best_kind).unwrap_or_log();
 
         Ok(RouteId::new(
             vcrypto.kind(),

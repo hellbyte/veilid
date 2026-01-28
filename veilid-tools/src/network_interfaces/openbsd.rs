@@ -272,13 +272,13 @@ impl Iterator for IfAddrsIterator {
 ///////////////////////////////////////////////////
 
 pub struct PlatformSupportOpenBSD {
-    default_route_interfaces: BTreeSet<u32>,
+    gateways: BTreeMap<u32, BTreeSet<IpAddr>>,
 }
 
 impl PlatformSupportOpenBSD {
     pub fn new() -> Self {
         PlatformSupportOpenBSD {
-            default_route_interfaces: BTreeSet::new(),
+            gateways: BTreeMap::new(),
         }
     }
 
@@ -358,18 +358,7 @@ impl PlatformSupportOpenBSD {
                     None => continue,
                 };
 
-                // we want to identify if gw addr is from a loopback if
-                let saddr_src = match SockAddr::new(sa_tab[RTAX_GATEWAY as usize]) {
-                    Some(a) => a,
-                    None => continue,
-                };
-
-                let src_ipaddr = match saddr_src.as_ipaddr() {
-                    Some(a) => a,
-                    None => continue,
-                };
-
-                let _saddr_gateway = match SockAddr::new(sa_tab[RTAX_GATEWAY as usize]) {
+                let saddr_gateway = match SockAddr::new(sa_tab[RTAX_GATEWAY as usize]) {
                     Some(a) => a,
                     None => continue,
                 };
@@ -379,20 +368,26 @@ impl PlatformSupportOpenBSD {
                     Some(a) => a,
                     None => continue,
                 };
+                let gateway_ipaddr = match saddr_gateway.as_ipaddr() {
+                    Some(a) => a,
+                    None => continue,
+                };
 
-                if dst_ipaddr.is_unspecified() && !src_ipaddr.is_loopback() {
-                    self.default_route_interfaces.insert(intf_index);
+                if dst_ipaddr.is_unspecified() {
+                    self.gateways
+                        .entry(intf_index)
+                        .or_default()
+                        .insert(gateway_ipaddr);
                 }
             }
         }
     }
 
-    fn get_interface_flags(&self, index: u32, flags: c_int) -> InterfaceFlags {
+    fn get_interface_flags(&self, flags: c_int) -> InterfaceFlags {
         InterfaceFlags {
             is_loopback: (flags & IFF_LOOPBACK) != 0,
             is_running: (flags & IFF_RUNNING) != 0,
             is_point_to_point: (flags & IFF_POINTOPOINT) != 0,
-            has_default_route: self.default_route_interfaces.contains(&index),
         }
     }
 
@@ -402,7 +397,7 @@ impl PlatformSupportOpenBSD {
             return Err(io::Error::last_os_error());
         }
 
-        let mut req = in6_ifreq::from_name(ifname).unwrap();
+        let mut req = in6_ifreq::from_name(ifname).unwrap_or_log();
         req.set_addr(addr);
 
         let res = unsafe { ioctl(sock, SIOCGIFAFLAG_IN6, &mut req) };
@@ -412,7 +407,7 @@ impl PlatformSupportOpenBSD {
         }
         let flags = req.get_flags6();
 
-        let mut req = in6_ifreq::from_name(ifname).unwrap();
+        let mut req = in6_ifreq::from_name(ifname).unwrap_or_log();
         req.set_addr(addr);
 
         let res = unsafe { ioctl(sock, SIOCGIFALIFETIME_IN6, &mut req) };
@@ -465,10 +460,17 @@ impl PlatformSupportOpenBSD {
             // Map the name to a NetworkInterface
             if !interfaces.contains_key(&ifname) {
                 // If we have no NetworkInterface yet, make one
-                let flags = self.get_interface_flags(ifindex, ifaddr.ifa_flags as c_int);
-                interfaces.insert(ifname.clone(), NetworkInterface::new(ifname.clone(), flags));
+                let flags = self.get_interface_flags(ifaddr.ifa_flags as c_int);
+                let mut net_intf = NetworkInterface::new(ifname.clone(), flags);
+                // Add gateways if we have them
+                if let Some(gateways) = self.gateways.get(&ifindex) {
+                    for gateway in gateways {
+                        net_intf.add_gateway(*gateway);
+                    }
+                }
+                interfaces.insert(ifname.clone(), net_intf);
             }
-            let intf = interfaces.get_mut(&ifname).unwrap();
+            let intf = interfaces.get_mut(&ifname).unwrap_or_log();
 
             let mut address_flags = AddressFlags::default();
 
@@ -503,7 +505,7 @@ impl PlatformSupportOpenBSD {
                     // Get address flags for ipv6
                     address_flags = match Self::get_address_flags(
                         &ifname,
-                        SockAddr::new(ifaddr.ifa_addr).unwrap().sa_in6(),
+                        SockAddr::new(ifaddr.ifa_addr).unwrap_or_log().sa_in6(),
                     ) {
                         Ok(v) => v,
                         Err(e) => {
@@ -521,8 +523,7 @@ impl PlatformSupportOpenBSD {
             };
 
             // Add to the list
-            intf.addrs
-                .push(InterfaceAddress::new(intf_addr, address_flags));
+            intf.add_address(InterfaceAddress::new(intf_addr, address_flags));
         }
 
         Ok(())

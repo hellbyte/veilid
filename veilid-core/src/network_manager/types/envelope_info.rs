@@ -75,8 +75,8 @@ impl fmt::Debug for EnvelopeInfo {
         } else {
             let len = self.envelope_timestamp_log.len();
             if len > 0 {
-                let back = self.envelope_timestamp_log.back().unwrap();
-                let front = self.envelope_timestamp_log.front().unwrap();
+                let back = self.envelope_timestamp_log.back().unwrap_or_log();
+                let front = self.envelope_timestamp_log.front().unwrap_or_log();
                 write!(
                     f,
                     "offset: {:?} log(len={}): {:?}->{:?} ... {:?}->{:?}",
@@ -93,8 +93,8 @@ impl fmt::Display for EnvelopeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let len = self.envelope_timestamp_log.len();
         if len > 0 {
-            let back = self.envelope_timestamp_log.back().unwrap();
-            let front = self.envelope_timestamp_log.front().unwrap();
+            let back = self.envelope_timestamp_log.back().unwrap_or_log();
+            let front = self.envelope_timestamp_log.front().unwrap_or_log();
             write!(
                 f,
                 "offset: {:?} log(len={}): {}->{} ... {}->{}",
@@ -138,7 +138,7 @@ impl EnvelopeInfo {
                 .map(|tt| *tt.1 < oldest_local_timestamp)
                 .unwrap_or(false)
         {
-            let (rts, lts) = self.envelope_timestamp_log.pop_front().unwrap();
+            let (rts, lts) = self.envelope_timestamp_log.pop_front().unwrap_or_log();
             self.total_offset -= (rts.as_u64() as i128) - (lts.as_u64() as i128);
         }
 

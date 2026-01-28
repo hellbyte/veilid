@@ -27,18 +27,18 @@ All command execute from the root of the `veilid` repository:
 
 ```bash
 # Install dependencies and run tests
-dagger call test-all --source .
+dagger -c 'test-all $(host | directory --gitignore .)'
 
 # Build for specific architectures
-dagger call build-linux-amd-64 --source .
-dagger call build-linux-arm-64 --source .
+dagger -c 'build-linux-amd-64 $(host | directory --gitignore .)'
+dagger -c 'build-linux-arm-64 $(host | directory --gitignore .)'
 
 # Package for distribution
-dagger call package-linux --source . export --path ./target/packages
+dagger -c 'package-linux $(host | directory --gitignore .) | export ./target/dist'
 
 # Run individual operations
-dagger call clippy --source .
-dagger call test-native --source .
+dagger -v 'clippy $(host | directory --gitignore .)'
+dagger -v 'test-native $(host | directory --gitignore .)'
 ```
 
 ## Function Reference
@@ -124,7 +124,7 @@ dagger call test-native --source .
 SAVE ARTIFACT ./target/x86_64-unknown-linux-gnu AS LOCAL ./target/artifacts/x86_64-unknown-linux-gnu
 
 # Dagger  
-dagger call build-linux-amd-64 --source . export --path ./target/artifacts/x86_64-unknown-linux-gnu
+dagger -c 'build-linux-amd-64 $(host | directory --gitignore .) | export ./target/artifacts/x86_64-unknown-linux-gnu'
 ```
 
 #### 2. **Function Consolidation**
@@ -169,23 +169,23 @@ dagger call build-linux-amd-64 --source . export --path ./target/artifacts/x86_6
 ### Development Workflow
 ```bash
 # Quick development check
-dagger call clippy --source .
+dagger -c 'clippy $(host | directory --gitignore .)'
 
 # Run all tests
-dagger call test-all --source .
+dagger -c 'test-all $(host | directory --gitignore .)'
 
 # Build for production
-dagger call build-linux-amd-64 --source . export --path ./build/amd64
+dagger -c 'build-linux-amd-64 $(host | directory --gitignore .) | export ./target/artifacts/x86_64-unknown-linux-gnu'
 ```
 
 ### CI/CD Pipeline
 ```bash
 # Full pipeline: test, build, and package
-dagger call test-all --source .
-dagger call package-linux --source . export --path ./dist
+dagger -c 'test-all $(host | directory --gitignore .)'
+dagger -c 'package-linux $(host | directory --gitignore .) | export ./target/dist'
 
 # Nightly builds
-dagger call package-linux --source . --is-nightly true export --path ./dist/nightly
+dagger -c 'package-linux $(host | directory --gitignore .) --is-nightly true | export ./target/dist-nightly'
 ```
 
 ### Cache Management
@@ -201,7 +201,7 @@ dagger call test-all --source . --base container --ci-registry-image registry.ex
 Podman requires configuring the podman machine used to build Veilid.
 
 ```bash
-podman machine init -m 4096 --now podman-machine-default
+podman machine init -m 10240 --now podman-machine-default
 podman machine ssh podman-machine-default sudo modprobe iptable_nat
 podman machine ssh podman-machine-default sudo setenforce Permissive
 ```

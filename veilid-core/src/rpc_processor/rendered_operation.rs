@@ -8,10 +8,10 @@ pub struct RenderedOperation {
     pub outer_op_id: OperationId,
     /// The rendered signed operation bytes
     pub message: Vec<u8>,
-    /// Destination node we're sending to
-    pub destination_node_ref: NodeRef,
-    /// Node to send envelope to (may not be destination node in case of relay)
+    /// Node to send to
     pub node_ref: FilteredNodeRef,
+    /// Optional relay dialinfo to send directly to
+    pub opt_relay_di: Option<DialInfo>,
     /// The safety route used to send the message
     pub safety_route: Option<PublicKey>,
     /// The private route used to send the message
@@ -25,8 +25,8 @@ impl fmt::Debug for RenderedOperation {
         f.debug_struct("RenderedOperation")
             .field("outer_op_id", &self.outer_op_id)
             .field("message(len)", &self.message.len())
-            .field("destination_node_ref", &self.destination_node_ref)
             .field("node_ref", &self.node_ref)
+            .field("opt_relay_di", &self.opt_relay_di)
             .field("safety_route", &self.safety_route)
             .field("remote_private_route", &self.remote_private_route)
             .field("reply_private_route", &self.reply_private_route)

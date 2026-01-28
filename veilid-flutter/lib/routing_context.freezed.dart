@@ -232,7 +232,7 @@ return smpl(_that.oCnt,_that.members);case _:
 @JsonSerializable()
 
 class DHTSchemaDFLT implements DHTSchema {
-  const DHTSchemaDFLT({required this.oCnt, final  String? $type}): $type = $type ?? 'DFLT';
+  const DHTSchemaDFLT({required this.oCnt, final  String? $type}): assert(oCnt >= 0, 'value must not be negative'),$type = $type ?? 'DFLT';
   factory DHTSchemaDFLT.fromJson(Map<String, dynamic> json) => _$DHTSchemaDFLTFromJson(json);
 
 @override final  int oCnt;
@@ -305,7 +305,7 @@ as int,
 @JsonSerializable()
 
 class DHTSchemaSMPL implements DHTSchema {
-  const DHTSchemaSMPL({required this.oCnt, required final  List<DHTSchemaMember> members, final  String? $type}): _members = members,$type = $type ?? 'SMPL';
+  const DHTSchemaSMPL({required this.oCnt, required final  List<DHTSchemaMember> members, final  String? $type}): assert(oCnt >= 0, 'value must not be negative'),_members = members,$type = $type ?? 'SMPL';
   factory DHTSchemaSMPL.fromJson(Map<String, dynamic> json) => _$DHTSchemaSMPLFromJson(json);
 
 @override final  int oCnt;
@@ -575,7 +575,7 @@ return $default(_that.mKey,_that.mCnt);case _:
 @JsonSerializable()
 
 class _DHTSchemaMember implements DHTSchemaMember {
-  const _DHTSchemaMember({required this.mKey, required this.mCnt}): assert(mCnt > 0 && mCnt <= DHTSchema.maxMemberCount, 'value out of range');
+  const _DHTSchemaMember({required this.mKey, required this.mCnt}): assert(mCnt >= 0, 'value must not be negative');
   factory _DHTSchemaMember.fromJson(Map<String, dynamic> json) => _$DHTSchemaMemberFromJson(json);
 
 @override final  BareMemberId mKey;

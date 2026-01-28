@@ -1,7 +1,7 @@
 use super::*;
 
 impl Network {
-    #[instrument(parent = None, level = "trace", target = "net", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", target = "net", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn upnp_task_routine(
         &self,
         _stop_token: StopToken,

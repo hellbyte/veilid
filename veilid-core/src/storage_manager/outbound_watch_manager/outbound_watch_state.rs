@@ -156,7 +156,7 @@ impl OutboundWatchState {
         self.min_expiration = self
             .nodes
             .iter()
-            .map(|x| per_node_state.get(x).unwrap().expiration)
+            .map(|x| per_node_state.get(x).unwrap_or_log().expiration)
             .reduce(|a, b| a.min(b))
             .unwrap_or(self.params.expiration);
 
@@ -167,7 +167,7 @@ impl OutboundWatchState {
                 per_node_state
                     .get(x)
                     .cloned()
-                    .unwrap()
+                    .unwrap_or_log()
                     .opt_value_changed_route
             })
             .collect();
@@ -184,10 +184,10 @@ impl OutboundWatchState {
             .map(|x| {
                 per_node_state
                     .get(x)
-                    .unwrap()
+                    .unwrap_or_log()
                     .watch_node_ref
                     .clone()
-                    .unwrap()
+                    .unwrap_or_log()
             })
             .collect()
     }

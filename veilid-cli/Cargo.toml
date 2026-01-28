@@ -32,9 +32,8 @@ async-std = { version = "1.13.0", features = [
     "unstable",
     "attributes",
 ], optional = true }
-tokio = { version = "1.43.0", features = ["full", "tracing"], optional = true }
+tokio = { version = "1.43.0", features = [ "sync", "macros", "io-std", "io-util", "fs" ], optional = true }
 tokio-util = { version = "0.7.13", features = ["compat"], optional = true }
-async-tungstenite = { version = "^0.23" }
 cursive = { git = "https://gitlab.com/veilid/cursive.git", default-features = false, features = [
     "crossterm",
     "toml",
@@ -72,12 +71,8 @@ indent = { version = "0.1.1" }
 chrono = "0.4.40"
 owning_ref = "0.4.1"
 unicode-width = "0.1.14"
-lru = "0.10.1"
 rustyline-async = "0.4.5"
 console = "0.15.11"
-
-[dev-dependencies]
-serial_test = "^2"
 
 [lints]
 workspace = true

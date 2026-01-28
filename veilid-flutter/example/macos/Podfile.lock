@@ -2,16 +2,12 @@ PODS:
   - FlutterMacOS (1.0.0)
   - macos_window_utils (1.0.0):
     - FlutterMacOS
-  - path_provider_foundation (0.0.1):
-    - Flutter
-    - FlutterMacOS
   - veilid (0.0.1):
     - FlutterMacOS
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - macos_window_utils (from `Flutter/ephemeral/.symlinks/plugins/macos_window_utils/macos`)
-  - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - veilid (from `Flutter/ephemeral/.symlinks/plugins/veilid/macos`)
 
 EXTERNAL SOURCES:
@@ -19,15 +15,12 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
   macos_window_utils:
     :path: Flutter/ephemeral/.symlinks/plugins/macos_window_utils/macos
-  path_provider_foundation:
-    :path: Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin
   veilid:
     :path: Flutter/ephemeral/.symlinks/plugins/veilid/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   macos_window_utils: 23f54331a0fd51eea9e0ed347253bf48fd379d1d
-  path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   veilid: 059faf20a285aa96604e24cf6ec7e343aa0ba43e
 
 PODFILE CHECKSUM: baef3dbaa815cbf69d6e618f45542405746a7853

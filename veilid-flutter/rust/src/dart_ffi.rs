@@ -28,8 +28,8 @@ cfg_if! {
                     use android_log_sys::*;
                     use std::ffi::{CString, c_int, c_char};
                     unsafe {
-                        let tag = CString::new("veilid").unwrap();
-                        let text = CString::new(">>> VEILID-FLUTTER LOADED <<<").unwrap();
+                        let tag = CString::new("veilid").unwrap_or_log();
+                        let text = CString::new(">>> VEILID-FLUTTER LOADED <<<").unwrap_or_log();
                         __android_log_write(LogPriority::INFO as c_int, tag.as_ptr() as *const c_char, text.as_ptr() as *const c_char);
                     }
                 } else {
@@ -44,8 +44,8 @@ cfg_if! {
                     use android_log_sys::*;
                     use std::ffi::{CString, c_int, c_char};
                     unsafe {
-                        let tag = CString::new("veilid").unwrap();
-                        let text = CString::new(">>> VEILID-FLUTTER UNLOADED <<<").unwrap();
+                        let tag = CString::new("veilid").unwrap_or_log();
+                        let text = CString::new(">>> VEILID-FLUTTER UNLOADED <<<").unwrap_or_log();
                         __android_log_write(LogPriority::INFO as c_int, tag.as_ptr() as *const c_char, text.as_ptr() as *const c_char);
                     }
                 } else {
@@ -159,7 +159,7 @@ pub extern "C" fn initialize_veilid_flutter(
             let crash_file = if crash_path.is_empty() {
                 None
             } else {
-                Some(std::fs::File::create(&crash_path).unwrap())
+                Some(std::fs::File::create(&crash_path).unwrap_or_log())
             };
 
             let (file, line) = if let Some(loc) = panic_info.location() {
@@ -186,8 +186,8 @@ pub extern "C" fn initialize_veilid_flutter(
             );
 
             if let Some(mut crash_file) = crash_file {
-                write!(crash_file, "{}", out).unwrap();
-                crash_file.flush().unwrap();
+                write!(crash_file, "{}", out).unwrap_or_log();
+                crash_file.flush().unwrap_or_log();
             } else {
                 eprintln!("{}", out);
             }
@@ -216,8 +216,8 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
     }
 
     let platform_config = platform_config.into_opt_string();
-    let platform_config: VeilidFFIConfig =
-        deserialize_opt_json(platform_config).expect("failed to deserialize plaform config json");
+    let platform_config: VeilidFFIConfig = deserialize_opt_json(platform_config)
+        .expect_or_log("failed to deserialize plaform config json");
 
     // Set up subscriber and layers
     let subscriber = tracing_subscriber::Registry::default();
@@ -231,31 +231,41 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
     if platform_config.logging.terminal.enabled {
         cfg_if! {
             if #[cfg(target_os = "android")] {
-                let filter =
-                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
-                let layer = paranoid_android::layer("veilid-flutter")
-                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
+                let filter = VeilidLayerFilter::new_with_config(
+                    VeilidLayerFilterConfig::new().with_common_log_level(platform_config.logging.terminal.level),
+                );
+                #[allow(deprecated)]
+                filter.apply_ignore_change_list(&platform_config.logging.terminal.ignore_log_targets);
+                let layer = paranoid_android::layer("com.veilid.veilid-flutter")
+                    .map_fmt_fields(FmtStripVeilidFields::mapper())
+                    .with_target(true)
                     .with_ansi(false)
                     .with_filter(filter.clone());
                 filters.insert("terminal", filter);
                 layers.push(layer.boxed());
             } else if #[cfg(target_os = "ios")] {
-                let filter =
-                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
+                let filter = VeilidLayerFilter::new_with_config(
+                    VeilidLayerFilterConfig::new().with_common_log_level(platform_config.logging.terminal.level),
+                );
+                #[allow(deprecated)]
+                filter.apply_ignore_change_list(&platform_config.logging.terminal.ignore_log_targets);
                 let layer = tracing_subscriber::fmt::Layer::new()
                     .compact()
-                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
+                    .map_fmt_fields(FmtStripVeilidFields::mapper())
                     .with_ansi(false)
                     .with_writer(std::io::stdout)
                     .with_filter(filter.clone());
                 filters.insert("terminal", filter);
                 layers.push(layer.boxed());
             } else {
-                let filter =
-                    VeilidLayerFilter::new(platform_config.logging.terminal.level, &platform_config.logging.terminal.ignore_log_targets, None);
+                let filter = VeilidLayerFilter::new_with_config(
+                    VeilidLayerFilterConfig::new().with_common_log_level(platform_config.logging.terminal.level),
+                );
+                #[allow(deprecated)]
+                filter.apply_ignore_change_list(&platform_config.logging.terminal.ignore_log_targets);
                 let layer = tracing_subscriber::fmt::Layer::new()
                     .compact()
-                    .map_fmt_fields(|f| FmtStripFields::new(f, fields_to_strip.clone()))
+                    .map_fmt_fields(FmtStripVeilidFields::mapper())
                     .with_writer(std::io::stdout)
                     .with_filter(filter.clone());
                 filters.insert("terminal", filter);
@@ -301,13 +311,16 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
                 ))
                 .install_batch(batch)
                 .map_err(|e| format!("failed to install OpenTelemetry tracer: {}", e))
-                .unwrap();
+                .unwrap_or_log();
 
-        let filter = VeilidLayerFilter::new(
-            platform_config.logging.otlp.level,
-            &platform_config.logging.otlp.ignore_log_targets,
-            None,
-        );
+        let filter =
+            VeilidLayerFilter::new_with_config(VeilidLayerFilterConfig::new().with_directives([
+                VeilidLogDirective::global_level(Some(platform_config.logging.otlp.level)),
+            ]));
+
+        #[allow(deprecated)]
+        filter.apply_ignore_change_list(&platform_config.logging.otlp.ignore_log_targets);
+
         let layer = tracing_opentelemetry::layer()
             .with_tracer(tracer)
             .with_filter(filter.clone());
@@ -317,37 +330,26 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
 
     // Flamegraph logger
     if platform_config.logging.flame.enabled {
-        let filter = VeilidLayerFilter::new_no_default(
-            VeilidConfigLogLevel::Trace,
-            &FLAME_LOG_FACILITIES_IGNORE_LIST
-                .iter()
-                .map(|&x| x.to_string())
-                .collect::<Vec<_>>(),
-            None,
-        );
         let (flame_layer, guard) =
-            FlameLayer::with_file(&platform_config.logging.flame.path).unwrap();
+            FlameLayer::with_file(&platform_config.logging.flame.path).unwrap_or_log();
         *FLAME_GUARD.lock() = Some(guard);
-
-        // Do not include this in change_log_level changes, so we keep trace level
-        // filters.insert("flame", filter.clone());
 
         layers.push(
             flame_layer
                 .with_threads_collapsed(true)
                 .with_empty_samples(false)
-                .with_filter(filter)
                 .boxed(),
         );
     }
 
     // API logger
     if platform_config.logging.api.enabled {
-        let filter = VeilidLayerFilter::new(
-            platform_config.logging.api.level,
-            &platform_config.logging.api.ignore_log_targets,
-            None,
+        let filter = VeilidLayerFilter::new_with_config(
+            VeilidLayerFilterConfig::new().with_common_log_level(platform_config.logging.api.level),
         );
+        #[allow(deprecated)]
+        filter.apply_ignore_change_list(&platform_config.logging.api.ignore_log_targets);
+
         let layer = ApiTracingLayer::init().with_filter(filter.clone());
         filters.insert("api", filter);
         layers.push(layer.boxed());
@@ -358,31 +360,37 @@ pub extern "C" fn initialize_veilid_core(platform_config: FfiStr) {
     subscriber
         .try_init()
         .map_err(|e| format!("failed to initialize logging: {}", e))
-        .expect("failed to initalize ffi platform");
+        .expect_or_log("failed to initalize ffi platform");
 }
 
 #[no_mangle]
-pub extern "C" fn change_log_level(layer: FfiStr, log_level: FfiStr) {
-    // get layer to change level on
+pub extern "C" fn change_log_level(layer: FfiStr, directives: FfiStr) -> i32 {
+    // get layer to apply directives on
     let layer = layer.into_opt_string().unwrap_or("all".to_owned());
     let layer = if layer == "all" { "".to_owned() } else { layer };
 
-    // get log level to change layer to
-    let log_level = log_level.into_opt_string();
-    let log_level: VeilidConfigLogLevel = deserialize_opt_json(log_level).unwrap();
+    // get directive to apply to layer
+    let directives = directives.into_opt_string().unwrap_or_default();
 
     // change log level on appropriate layer
     let filters = (*FILTERS).lock();
     if layer.is_empty() {
         // Change all layers
         for f in filters.values() {
-            f.set_max_level(log_level);
+            if f.try_apply_directives_string(directives.clone()).is_err() {
+                return 2;
+            }
         }
     } else {
         // Change a specific layer
-        let f = filters.get(layer.as_str()).unwrap();
-        f.set_max_level(log_level);
+        let Some(f) = filters.get(layer.as_str()) else {
+            return 1;
+        };
+        if f.try_apply_directives_string(directives).is_err() {
+            return 2;
+        }
     }
+    0
 }
 
 #[no_mangle]
@@ -399,18 +407,16 @@ pub extern "C" fn change_log_ignore(layer: FfiStr, log_ignore: FfiStr) {
     if layer.is_empty() {
         // Change all layers
         for f in filters.values() {
-            f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
-                &f.ignore_list(),
-                log_ignore.clone(),
-            )));
+            #[allow(deprecated)]
+            f.apply_ignore_change_string(log_ignore.clone());
         }
     } else {
         // Change a specific layer
-        let f = filters.get(layer.as_str()).unwrap();
-        f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
-            &f.ignore_list(),
-            log_ignore.clone(),
-        )));
+        let Some(f) = filters.get(layer.as_str()) else {
+            return;
+        };
+        #[allow(deprecated)]
+        f.apply_ignore_change_string(log_ignore);
     }
 }
 
@@ -481,7 +487,7 @@ pub extern "C" fn is_shutdown(port: i64) {
             if let Err(VeilidAPIError::NotInitialized) = veilid_api {
                 return VeilidAPIResult::Ok(true);
             }
-            let veilid_api = veilid_api.unwrap();
+            let veilid_api = veilid_api.unwrap_or_log();
             let is_shutdown = veilid_api.is_shutdown();
             VeilidAPIResult::Ok(is_shutdown)
         }
@@ -584,7 +590,7 @@ pub extern "C" fn routing_context_with_default_safety(id: u32) -> u32 {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_with_safety(id: u32, safety_selection: FfiStr) -> u32 {
     let safety_selection: SafetySelection =
-        deserialize_opt_json(safety_selection.into_opt_string()).unwrap();
+        deserialize_opt_json(safety_selection.into_opt_string()).unwrap_or_log();
 
     let mut rc = ROUTING_CONTEXTS.lock();
     let Some(routing_context) = rc.get(&id) else {
@@ -600,7 +606,7 @@ pub extern "C" fn routing_context_with_safety(id: u32, safety_selection: FfiStr)
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_with_sequencing(id: u32, sequencing: FfiStr) -> u32 {
-    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap();
+    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap_or_log();
 
     let mut rc = ROUTING_CONTEXTS.lock();
     let Some(routing_context) = rc.get(&id) else {
@@ -631,10 +637,10 @@ pub extern "C" fn routing_context_safety(port: i64, id: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_app_call(port: i64, id: u32, target: FfiStr, request: FfiStr) {
-    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap();
+    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap_or_log();
     let request: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(request.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(request.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_app_call")?;
@@ -650,10 +656,10 @@ pub extern "C" fn routing_context_app_call(port: i64, id: u32, target: FfiStr, r
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_app_message(port: i64, id: u32, target: FfiStr, message: FfiStr) {
-    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap();
+    let target: Target = deserialize_opt_json(target.into_opt_string()).unwrap_or_log();
     let message: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(message.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(message.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_app_message")?;
@@ -675,10 +681,10 @@ pub extern "C" fn routing_context_create_dht_record(
     owner: FfiStr,
 ) {
     let crypto_kind = CryptoKind::from(kind);
-    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap();
+    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap_or_log();
     let owner: Option<KeyPair> = owner
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -696,10 +702,10 @@ pub extern "C" fn routing_context_create_dht_record(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_open_dht_record(port: i64, id: u32, key: FfiStr, writer: FfiStr) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let writer: Option<KeyPair> = writer
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_open_dht_record")?;
@@ -714,7 +720,7 @@ pub extern "C" fn routing_context_open_dht_record(port: i64, id: u32, key: FfiSt
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_close_dht_record(port: i64, id: u32, key: FfiStr) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_close_dht_record")?;
@@ -729,7 +735,7 @@ pub extern "C" fn routing_context_close_dht_record(port: i64, id: u32, key: FfiS
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn routing_context_delete_dht_record(port: i64, id: u32, key: FfiStr) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let routing_context = get_routing_context(id, "routing_context_delete_dht_record")?;
@@ -750,7 +756,7 @@ pub extern "C" fn routing_context_get_dht_value(
     subkey: u32,
     force_refresh: bool,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let routing_context = get_routing_context(id, "routing_context_get_dht_value")?;
@@ -774,13 +780,13 @@ pub extern "C" fn routing_context_set_dht_value(
     data: FfiStr,
     options: FfiStr,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let options: Option<SetDHTValueOptions> = options
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -805,10 +811,10 @@ pub extern "C" fn routing_context_watch_dht_values(
     expiration: u64,
     count: u32,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let subkeys: Option<ValueSubkeyRangeSet> = subkeys
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
     let expiration = Timestamp::from(expiration);
 
     DartIsolateWrapper::new(port).spawn_result(
@@ -832,10 +838,10 @@ pub extern "C" fn routing_context_cancel_dht_watch(
     key: FfiStr,
     subkeys: FfiStr,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let subkeys: Option<ValueSubkeyRangeSet> = subkeys
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -857,13 +863,13 @@ pub extern "C" fn routing_context_inspect_dht_record(
     subkeys: FfiStr,
     scope: FfiStr,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
 
     let subkeys: Option<ValueSubkeyRangeSet> = subkeys
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
-    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap();
+    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -881,7 +887,7 @@ pub extern "C" fn routing_context_inspect_dht_record(
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn generate_member_id(port: i64, writer_key: FfiStr) {
-    let writer_key: PublicKey = deserialize_opt_json(writer_key.into_opt_string()).unwrap();
+    let writer_key: PublicKey = deserialize_opt_json(writer_key.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -903,11 +909,11 @@ pub extern "C" fn get_dht_record_key(
     owner: FfiStr,
     encryption_key: FfiStr,
 ) {
-    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap();
-    let owner: PublicKey = deserialize_opt_json(owner.into_opt_string()).unwrap();
+    let schema: DHTSchema = deserialize_opt_json(schema.into_opt_string()).unwrap_or_log();
+    let owner: PublicKey = deserialize_opt_json(owner.into_opt_string()).unwrap_or_log();
     let encryption_key: Option<SharedSecret> = encryption_key
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -938,8 +944,8 @@ pub extern "C" fn new_private_route(port: i64) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn new_custom_private_route(port: i64, stability: FfiStr, sequencing: FfiStr) {
-    let stability: Stability = deserialize_opt_json(stability.into_opt_string()).unwrap();
-    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap();
+    let stability: Stability = deserialize_opt_json(stability.into_opt_string()).unwrap_or_log();
+    let sequencing: Sequencing = deserialize_opt_json(sequencing.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -959,8 +965,8 @@ pub extern "C" fn new_custom_private_route(port: i64, stability: FfiStr, sequenc
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn import_remote_private_route(port: i64, blob: FfiStr) {
     let blob: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(blob.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(blob.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
             let veilid_api = get_veilid_api().await?;
@@ -975,7 +981,7 @@ pub extern "C" fn import_remote_private_route(port: i64, blob: FfiStr) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn release_private_route(port: i64, route_id: FfiStr) {
-    let route_id: RouteId = deserialize_opt_json(route_id.into_opt_string()).unwrap();
+    let route_id: RouteId = deserialize_opt_json(route_id.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -992,8 +998,8 @@ pub extern "C" fn release_private_route(port: i64, route_id: FfiStr) {
 pub extern "C" fn app_call_reply(port: i64, call_id: FfiStr, message: FfiStr) {
     let call_id = call_id.into_opt_string().unwrap_or_default();
     let message = data_encoding::BASE64URL_NOPAD
-        .decode(message.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(message.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1027,10 +1033,11 @@ fn add_dht_transaction(dht_tx: DHTTransaction) -> u32 {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn transact_dht_records(port: i64, record_keys: FfiStr, options: FfiStr) {
-    let record_keys: Vec<RecordKey> = deserialize_opt_json(record_keys.into_opt_string()).unwrap();
+    let record_keys: Vec<RecordKey> =
+        deserialize_opt_json(record_keys.into_opt_string()).unwrap_or_log();
     let options: Option<TransactDHTRecordsOptions> = options
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1094,7 +1101,7 @@ pub extern "C" fn dht_transaction_rollback(port: i64, id: u32) {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn dht_transaction_get(port: i64, id: u32, key: FfiStr, subkey: u32) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1117,13 +1124,13 @@ pub extern "C" fn dht_transaction_set(
     data: FfiStr,
     options: FfiStr,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let options: Option<DHTTransactionSetValueOptions> = options
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
+        .map(|s| deserialize_json(&s).unwrap_or_log());
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1145,11 +1152,11 @@ pub extern "C" fn dht_transaction_inspect(
     subkeys: FfiStr,
     scope: FfiStr,
 ) {
-    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: RecordKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let subkeys: Option<ValueSubkeyRangeSet> = subkeys
         .into_opt_string()
-        .map(|s| deserialize_json(&s).unwrap());
-    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap();
+        .map(|s| deserialize_json(&s).unwrap_or_log());
+    let scope: DHTReportScope = deserialize_opt_json(scope.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1329,11 +1336,11 @@ pub extern "C" fn table_db_transaction_store(
     value: FfiStr,
 ) {
     let key: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(key.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(key.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let value: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(value.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(value.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_store")?;
@@ -1349,8 +1356,8 @@ pub extern "C" fn table_db_transaction_store(
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn table_db_transaction_delete(port: i64, id: u32, col: u32, key: FfiStr) {
     let key: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(key.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(key.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let tdbt = get_table_db_transaction(id, "table_db_transaction_delete")?;
@@ -1366,11 +1373,11 @@ pub extern "C" fn table_db_transaction_delete(port: i64, id: u32, col: u32, key:
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn table_db_store(port: i64, id: u32, col: u32, key: FfiStr, value: FfiStr) {
     let key: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(key.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(key.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let value: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(value.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(value.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let table_db = get_table_db(id, "table_db_store")?;
@@ -1386,8 +1393,8 @@ pub extern "C" fn table_db_store(port: i64, id: u32, col: u32, key: FfiStr, valu
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn table_db_load(port: i64, id: u32, col: u32, key: FfiStr) {
     let key: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(key.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(key.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let table_db = get_table_db(id, "table_db_load")?;
@@ -1404,8 +1411,8 @@ pub extern "C" fn table_db_load(port: i64, id: u32, col: u32, key: FfiStr) {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn table_db_delete(port: i64, id: u32, col: u32, key: FfiStr) {
     let key: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(key.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(key.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     DartIsolateWrapper::new(port).spawn_result(
         async move {
             let table_db = get_table_db(id, "table_db_delete")?;
@@ -1433,14 +1440,14 @@ pub extern "C" fn valid_crypto_kinds() -> *mut c_char {
 #[no_mangle]
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn verify_signatures(port: i64, node_ids: FfiStr, data: FfiStr, signatures: FfiStr) {
-    let node_ids: Vec<PublicKey> = deserialize_opt_json(node_ids.into_opt_string()).unwrap();
+    let node_ids: Vec<PublicKey> = deserialize_opt_json(node_ids.into_opt_string()).unwrap_or_log();
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     let typed_signatures: Vec<Signature> =
-        deserialize_opt_json(signatures.into_opt_string()).unwrap();
+        deserialize_opt_json(signatures.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1457,10 +1464,10 @@ pub extern "C" fn verify_signatures(port: i64, node_ids: FfiStr, data: FfiStr, s
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn generate_signatures(port: i64, data: FfiStr, key_pairs: FfiStr) {
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
-    let key_pairs: Vec<KeyPair> = deserialize_opt_json(key_pairs.into_opt_string()).unwrap();
+    let key_pairs: Vec<KeyPair> = deserialize_opt_json(key_pairs.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1491,8 +1498,8 @@ pub extern "C" fn generate_key_pair(port: i64, kind: u32) {
 pub extern "C" fn crypto_cached_dh(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1513,8 +1520,8 @@ pub extern "C" fn crypto_cached_dh(port: i64, kind: u32, key: FfiStr, secret: Ff
 pub extern "C" fn crypto_compute_dh(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1541,11 +1548,11 @@ pub extern "C" fn crypto_generate_shared_secret(
 ) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
     let domain: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(domain.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(domain.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -1577,7 +1584,7 @@ pub extern "C" fn crypto_random_bytes(port: i64, kind: u32, len: u32) {
             let csv = crypto.get(kind).ok_or_else(|| {
                 VeilidAPIError::invalid_argument("crypto_random_bytes", "kind", kind.to_string())
             })?;
-            let out = csv.random_bytes(len);
+            let out = csv.random_bytes(len as usize);
             let out = data_encoding::BASE64URL_NOPAD.encode(&out);
             VeilidAPIResult::Ok(out)
         }
@@ -1765,7 +1772,7 @@ pub extern "C" fn crypto_aead_overhead(port: i64, kind: u32) {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_shared_secret(port: i64, kind: u32, secret: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let secret: SharedSecret = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let secret: SharedSecret = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1789,7 +1796,7 @@ pub extern "C" fn crypto_check_shared_secret(port: i64, kind: u32, secret: FfiSt
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_nonce(port: i64, kind: u32, nonce: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1809,7 +1816,7 @@ pub extern "C" fn crypto_check_nonce(port: i64, kind: u32, nonce: FfiStr) {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_hash_digest(port: i64, kind: u32, digest: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let digest: HashDigest = deserialize_opt_json(digest.into_opt_string()).unwrap();
+    let digest: HashDigest = deserialize_opt_json(digest.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1833,7 +1840,7 @@ pub extern "C" fn crypto_check_hash_digest(port: i64, kind: u32, digest: FfiStr)
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_public_key(port: i64, kind: u32, key: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1857,7 +1864,7 @@ pub extern "C" fn crypto_check_public_key(port: i64, kind: u32, key: FfiStr) {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_secret_key(port: i64, kind: u32, key: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let key: SecretKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: SecretKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1881,7 +1888,7 @@ pub extern "C" fn crypto_check_secret_key(port: i64, kind: u32, key: FfiStr) {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn crypto_check_signature(port: i64, kind: u32, signature: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
-    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap();
+    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1902,11 +1909,11 @@ pub extern "C" fn crypto_check_signature(port: i64, kind: u32, signature: FfiStr
 pub extern "C" fn crypto_hash_password(port: i64, kind: u32, password: FfiStr, salt: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(password.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(password.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let salt: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(salt.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(salt.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1932,9 +1939,9 @@ pub extern "C" fn crypto_verify_password(
 ) {
     let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(password.into_opt_string().unwrap().as_bytes())
-        .unwrap();
-    let password_hash = password_hash.into_opt_string().unwrap();
+        .decode(password.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
+    let password_hash = password_hash.into_opt_string().unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -1960,11 +1967,11 @@ pub extern "C" fn crypto_derive_shared_secret(
 ) {
     let kind: CryptoKind = CryptoKind::from(kind);
     let password: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(password.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(password.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
     let salt: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(salt.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(salt.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -2055,8 +2062,8 @@ pub extern "C" fn crypto_generate_hash(port: i64, kind: u32, data: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -2077,8 +2084,8 @@ pub extern "C" fn crypto_generate_hash(port: i64, kind: u32, data: FfiStr) {
 pub extern "C" fn crypto_validate_key_pair(port: i64, kind: u32, key: FfiStr, secret: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2104,10 +2111,10 @@ pub extern "C" fn crypto_validate_hash(port: i64, kind: u32, data: FfiStr, hash:
     let kind: CryptoKind = CryptoKind::from(kind);
 
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
-    let hash: HashDigest = deserialize_opt_json(hash.into_opt_string()).unwrap();
+    let hash: HashDigest = deserialize_opt_json(hash.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2128,11 +2135,11 @@ pub extern "C" fn crypto_validate_hash(port: i64, kind: u32, data: FfiStr, hash:
 pub extern "C" fn crypto_sign(port: i64, kind: u32, key: FfiStr, secret: FfiStr, data: FfiStr) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
-    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
+    let secret: SecretKey = deserialize_opt_json(secret.into_opt_string()).unwrap_or_log();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result_json(
         async move {
@@ -2159,11 +2166,11 @@ pub extern "C" fn crypto_verify(
 ) {
     let kind: CryptoKind = CryptoKind::from(kind);
 
-    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap();
+    let key: PublicKey = deserialize_opt_json(key.into_opt_string()).unwrap_or_log();
     let data: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(data.into_opt_string().unwrap().as_bytes())
-        .unwrap();
-    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap();
+        .decode(data.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
+    let signature: Signature = deserialize_opt_json(signature.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2192,17 +2199,19 @@ pub extern "C" fn crypto_decrypt_aead(
     let kind: CryptoKind = CryptoKind::from(kind);
 
     let body: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(body.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(body.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
-    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap_or_log();
 
     let shared_secret: SharedSecret =
-        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap_or_log();
 
-    let associated_data: Option<Vec<u8>> = associated_data
-        .into_opt_string()
-        .map(|s| data_encoding::BASE64URL_NOPAD.decode(s.as_bytes()).unwrap());
+    let associated_data: Option<Vec<u8>> = associated_data.into_opt_string().map(|s| {
+        data_encoding::BASE64URL_NOPAD
+            .decode(s.as_bytes())
+            .unwrap_or_log()
+    });
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2240,17 +2249,19 @@ pub extern "C" fn crypto_encrypt_aead(
     let kind: CryptoKind = CryptoKind::from(kind);
 
     let body: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(body.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(body.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
-    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap_or_log();
 
     let shared_secret: SharedSecret =
-        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap_or_log();
 
-    let associated_data: Option<Vec<u8>> = associated_data
-        .into_opt_string()
-        .map(|s| data_encoding::BASE64URL_NOPAD.decode(s.as_bytes()).unwrap());
+    let associated_data: Option<Vec<u8>> = associated_data.into_opt_string().map(|s| {
+        data_encoding::BASE64URL_NOPAD
+            .decode(s.as_bytes())
+            .unwrap_or_log()
+    });
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2287,13 +2298,13 @@ pub extern "C" fn crypto_crypt_no_auth(
     let kind: CryptoKind = CryptoKind::from(kind);
 
     let mut body: Vec<u8> = data_encoding::BASE64URL_NOPAD
-        .decode(body.into_opt_string().unwrap().as_bytes())
-        .unwrap();
+        .decode(body.into_opt_string().unwrap_or_log().as_bytes())
+        .unwrap_or_log();
 
-    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap();
+    let nonce: Nonce = deserialize_opt_json(nonce.into_opt_string()).unwrap_or_log();
 
     let shared_secret: SharedSecret =
-        deserialize_opt_json(shared_secret.into_opt_string()).unwrap();
+        deserialize_opt_json(shared_secret.into_opt_string()).unwrap_or_log();
 
     DartIsolateWrapper::new(port).spawn_result(
         async move {
@@ -2364,6 +2375,6 @@ pub extern "C" fn default_veilid_config() -> *mut c_char {
 #[instrument(level = "trace", target = "ffi", skip_all)]
 pub extern "C" fn veilid_features() -> *mut c_char {
     serde_json::to_string(&veilid_core::veilid_features())
-        .expect("Failed to serialize features")
+        .expect_or_log("Failed to serialize features")
         .into_ffi_value()
 }

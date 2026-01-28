@@ -17,7 +17,7 @@ pub fn setup() -> () {
             if #[cfg(feature = "tracing")] {
                 let config = veilid_tracing_wasm::WASMLayerConfig::new()
                     .with_report_logs_in_timings(false);
-                    .with_max_level(Level::TRACE);
+                    .with_max_level(Level::INFO);
                     .with_console_config(veilid_tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor);
                 veilid_tracing_wasm::set_as_global_default_with_config(config);
             } else {

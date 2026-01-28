@@ -6,6 +6,8 @@ use crate::ui::*;
 
 use console::{style, Term};
 use flexi_logger::writers::LogWriter;
+use flexi_logger::DeferredNow;
+use indent::indent_by;
 use stop_token::future::FutureExt as StopTokenFutureExt;
 use stop_token::*;
 
@@ -56,7 +58,7 @@ impl LogViewerUI {
             (
                 inner.connection_state_receiver.clone(),
                 inner.term.clone(),
-                inner.done.as_ref().unwrap().token(),
+                inner.done.as_ref().unwrap_or_log().token(),
             )
         };
 
@@ -80,7 +82,7 @@ impl LogViewerUI {
             }
         }
 
-        let cmdproc = self.inner.lock().cmdproc.clone().unwrap();
+        let cmdproc = self.inner.lock().cmdproc.clone().unwrap_or_log();
 
         if !term.features().is_attended() {
             done.await;
@@ -103,7 +105,7 @@ impl LogViewerUI {
                     }
                     'e' | 'E' => {
                         if let Err(e) = cmdproc.run_command(
-                            "change_log_level api error",
+                            "change_log_level api #enabled=error",
                             UICallback::LogViewer(Box::new(|| {})),
                         ) {
                             eprintln!("Error: {:?}", e);
@@ -112,7 +114,7 @@ impl LogViewerUI {
                     }
                     'w' | 'W' => {
                         if let Err(e) = cmdproc.run_command(
-                            "change_log_level api warn",
+                            "change_log_level api #enabled=warn",
                             UICallback::LogViewer(Box::new(|| {})),
                         ) {
                             eprintln!("Error: {:?}", e);
@@ -121,7 +123,7 @@ impl LogViewerUI {
                     }
                     'i' | 'I' => {
                         if let Err(e) = cmdproc.run_command(
-                            "change_log_level api info",
+                            "change_log_level api #enabled=info",
                             UICallback::LogViewer(Box::new(|| {})),
                         ) {
                             eprintln!("Error: {:?}", e);
@@ -130,7 +132,7 @@ impl LogViewerUI {
                     }
                     'd' | 'D' => {
                         if let Err(e) = cmdproc.run_command(
-                            "change_log_level api debug",
+                            "change_log_level api #enabled=debug",
                             UICallback::LogViewer(Box::new(|| {})),
                         ) {
                             eprintln!("Error: {:?}", e);
@@ -139,7 +141,7 @@ impl LogViewerUI {
                     }
                     't' | 'T' => {
                         if let Err(e) = cmdproc.run_command(
-                            "change_log_level api trace",
+                            "change_log_level api #enabled=trace",
                             UICallback::LogViewer(Box::new(|| {})),
                         ) {
                             eprintln!("Error: {:?}", e);
@@ -150,11 +152,11 @@ impl LogViewerUI {
                         println!(
                             r"Help:
     h - This help
-    e - Change log level to 'error'
-    w - Change log level to 'warn'
-    i - Change log level to 'info'
-    d - Change log level to 'debug'
-    t - Change log level to 'trace'
+    e - Change log level for enable facilities to 'error'
+    w - Change log level for enable facilities to 'warn'
+    i - Change log level for enable facilities to 'info'
+    d - Change log level for enable facilities to 'debug'
+    t - Change log level for enable facilities to 'trace'
     q - Quit
 "
                         );
@@ -201,7 +203,7 @@ impl UISender for LogViewerUISender {
         })
     }
     fn as_logwriter(&self) -> Option<Box<dyn LogWriter>> {
-        None
+        Some(Box::new(self.clone()) as Box<dyn LogWriter>)
     }
 
     fn display_string_dialog(&self, title: &str, text: &str, close_cb: UICallback) {
@@ -271,5 +273,47 @@ impl UISender for LogViewerUISender {
         } else {
             println!("{}", log_line);
         }
+    }
+}
+
+impl LogWriter for LogViewerUISender {
+    fn write(&self, _now: &mut DeferredNow, record: &Record) -> std::io::Result<()> {
+        let mut lines = String::new();
+        let mut indent = 0;
+
+        let ts_prefix = format!(
+            "[veilid-cli] {} ",
+            CursiveUI::cli_ts(CursiveUI::get_start_time()),
+        );
+        indent += ts_prefix.len();
+        lines += &ts_prefix;
+
+        let filestr = format!(
+            "{}:{} ",
+            record.file().unwrap_or("(unnamed)"),
+            record.line().unwrap_or(0),
+        );
+        indent += filestr.len();
+        lines += &filestr;
+
+        let levstr = format!("{}: ", record.level());
+        indent += levstr.len();
+        lines += &levstr;
+
+        let args = format!("{}", &record.args());
+        lines += &indent_by(indent, args);
+
+        println!("{}", lines);
+
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        // we are not buffering
+        Ok(())
+    }
+
+    fn max_log_level(&self) -> log::LevelFilter {
+        log::LevelFilter::max()
     }
 }

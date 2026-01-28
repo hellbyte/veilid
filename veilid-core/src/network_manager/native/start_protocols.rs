@@ -84,7 +84,7 @@ impl Network {
 
     // Returns a port, a set of ip addresses to bind to, and a
     // bool specifying if multiple ports should be tried
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn convert_listen_address_to_bind_set(
         &self,
         listen_address: String,
@@ -137,7 +137,7 @@ impl Network {
 
     /////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn bind_udp_protocol_handlers(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "UDP: binding protocol handlers");
         let config = self.config();
@@ -187,7 +187,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn register_udp_dial_info(
         &self,
         editor_public_internet: &mut RoutingDomainEditorPublicInternet<'_>,
@@ -264,7 +264,7 @@ impl Network {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn start_ws_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "WS: binding protocol handlers");
         let config = self.config();
@@ -310,7 +310,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn register_ws_dial_info(
         &self,
         editor_public_internet: &mut RoutingDomainEditorPublicInternet<'_>,
@@ -407,7 +407,7 @@ impl Network {
     }
 
     #[cfg(feature = "enable-protocol-wss")]
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn start_wss_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "WSS: binding protocol handlers");
 
@@ -457,7 +457,7 @@ impl Network {
     }
 
     #[cfg(feature = "enable-protocol-wss")]
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn register_wss_dial_info(
         &self,
         editor_public_internet: &mut RoutingDomainEditorPublicInternet<'_>,
@@ -510,7 +510,7 @@ impl Network {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn start_tcp_listeners(&self) -> EyreResult<StartupDisposition> {
         veilid_log!(self trace "TCP: binding protocol handlers");
 
@@ -561,7 +561,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn register_tcp_dial_info(
         &self,
         editor_public_internet: &mut RoutingDomainEditorPublicInternet<'_>,

@@ -355,14 +355,16 @@ impl serde::Serialize for LogLevel {
     }
 }
 
-pub fn convert_loglevel(log_level: LogLevel) -> veilid_core::VeilidConfigLogLevel {
-    match log_level {
-        LogLevel::Off => veilid_core::VeilidConfigLogLevel::Off,
-        LogLevel::Error => veilid_core::VeilidConfigLogLevel::Error,
-        LogLevel::Warn => veilid_core::VeilidConfigLogLevel::Warn,
-        LogLevel::Info => veilid_core::VeilidConfigLogLevel::Info,
-        LogLevel::Debug => veilid_core::VeilidConfigLogLevel::Debug,
-        LogLevel::Trace => veilid_core::VeilidConfigLogLevel::Trace,
+impl From<LogLevel> for veilid_core::VeilidConfigLogLevel {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => veilid_core::VeilidConfigLogLevel::Off,
+            LogLevel::Error => veilid_core::VeilidConfigLogLevel::Error,
+            LogLevel::Warn => veilid_core::VeilidConfigLogLevel::Warn,
+            LogLevel::Info => veilid_core::VeilidConfigLogLevel::Info,
+            LogLevel::Debug => veilid_core::VeilidConfigLogLevel::Debug,
+            LogLevel::Trace => veilid_core::VeilidConfigLogLevel::Trace,
+        }
     }
 }
 
@@ -374,7 +376,7 @@ pub struct ParsedUrl {
 
 impl ParsedUrl {
     pub fn offset_port(&mut self, offset: u16) -> EyreResult<()> {
-        let new_port = self.url.port().unwrap() + offset;
+        let new_port = self.url.port().unwrap_or_log() + offset;
         // Bump port on url
         self.url
             .set_port(Some(new_port))
@@ -1674,20 +1676,17 @@ pub fn subnode_namespace(subnode_index: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
-    #[serial]
     fn test_default_config() {
-        let cfg = load_default_config().unwrap();
-        let inner = cfg.try_deserialize::<SettingsInner>().unwrap();
+        let cfg = load_default_config().unwrap_or_log();
+        let inner = cfg.try_deserialize::<SettingsInner>().unwrap_or_log();
         println!("default settings: {:?}", inner);
     }
 
     #[test]
-    #[serial]
     fn test_default_config_settings() {
-        let settings = Settings::new(None).unwrap();
+        let settings = Settings::new(None).unwrap_or_log();
 
         let s = settings.read();
         assert!(!s.daemon.enabled);
@@ -1703,7 +1702,7 @@ mod tests {
         assert_eq!(s.client_api.listen_address.name, "localhost:5959");
         assert_eq!(
             s.client_api.listen_address.addrs,
-            listen_address_to_socket_addrs("localhost:5959").unwrap()
+            listen_address_to_socket_addrs("localhost:5959").unwrap_or_log()
         );
         assert!(s.auto_attach);
         assert!(!s.logging.system.enabled);
@@ -1720,7 +1719,7 @@ mod tests {
         assert_eq!(s.logging.otlp.level, LogLevel::Trace);
         assert_eq!(
             s.logging.otlp.grpc_endpoint,
-            NamedSocketAddrs::from_str("localhost:4317").unwrap()
+            NamedSocketAddrs::from_str("localhost:4317").unwrap_or_log()
         );
         #[cfg(feature = "flame")]
         {
@@ -1800,9 +1799,12 @@ mod tests {
         assert_eq!(
             s.core.network.routing_table.bootstrap_keys,
             vec![
-                PublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k").unwrap(),
-                PublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo").unwrap(),
-                PublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA").unwrap(),
+                PublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k")
+                    .unwrap_or_log(),
+                PublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo")
+                    .unwrap_or_log(),
+                PublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA")
+                    .unwrap_or_log(),
             ]
         );
         //

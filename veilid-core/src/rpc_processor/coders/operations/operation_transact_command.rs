@@ -327,7 +327,7 @@ impl RPCOperationTransactCommandA {
         let question_context = validate_context
             .question_context
             .as_ref()
-            .expect("TransactCommandA requires question context");
+            .expect_or_log("TransactCommandA requires question context");
         let QuestionContext::TransactCommand(transact_command_context) = question_context else {
             panic!("Wrong context type for TransactCommandA");
         };

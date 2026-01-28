@@ -114,19 +114,19 @@ impl MessageHeader {
                 .sender_noderef
                 .public_keys(d.routing_domain)
                 .get(d.envelope.get_crypto_kind())
-                .unwrap(),
+                .unwrap_or_log(),
             RPCMessageHeaderDetail::SafetyRouted(s) => s
                 .direct
                 .sender_noderef
                 .public_keys(s.direct.routing_domain)
                 .get(s.direct.envelope.get_crypto_kind())
-                .unwrap(),
+                .unwrap_or_log(),
             RPCMessageHeaderDetail::PrivateRouted(p) => p
                 .direct
                 .sender_noderef
                 .public_keys(p.direct.routing_domain)
                 .get(p.direct.envelope.get_crypto_kind())
-                .unwrap(),
+                .unwrap_or_log(),
         }
     }
     pub fn get_private_route_public_key(&self) -> Option<PublicKey> {

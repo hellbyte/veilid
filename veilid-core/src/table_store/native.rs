@@ -46,7 +46,7 @@ impl TableStoreDriver {
         let cfg = DatabaseConfig::new()
             .with_columns(column_count)
             .with_num_conns(concurrency)
-            .with_vacuum_mode(VacuumMode::Incremental);
+            .with_vacuum_mode(VacuumMode::None);
         let db = Database::open(&dbpath, cfg).map_err(VeilidAPIError::from)?;
 
         // Ensure permissions are correct

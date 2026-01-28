@@ -17,8 +17,10 @@ FROM ubuntu:18.04
 ENV ZIG_VERSION=0.13.0
 ENV CMAKE_VERSION_MINOR=4.0
 ENV CMAKE_VERSION_PATCH=4.0.2
-ENV WASM_BINDGEN_CLI_VERSION=0.2.106
-ENV RUST_VERSION=1.86.0
+ENV BINSTALL_DISABLE_TELEMETRY=true
+ENV BINSTALL_NO_CONFIRM=true
+ENV BINARYEN_VERSION=125
+ENV RUST_VERSION=1.92.0
 ENV RUST_UNIT_TESTS_NIGHTLY_VERSION=nightly-2026-01-01
 ENV RUST_PACKAGE_TESTS_NIGHTLY_VERSION=nightly
 ENV NDK_VERSION=28.2.13676358
@@ -37,8 +39,10 @@ WORKDIR /veilid
 
 IF [ $(arch) = "x86_64" ]
     ENV DEFAULT_CARGO_TARGET = "x86_64-unknown-linux-gnu"
+    ENV DEFAULT_CARGO_MUSL_TARGET = "x86_64-unknown-linux-musl"
 ELSE IF [ $(arch) = "aarch64" ]
     ENV DEFAULT_CARGO_TARGET = "aarch64-unknown-linux-gnu"
+    ENV DEFAULT_CARGO_MUSL_TARGET = "aarch64-unknown-linux-musl"
 ELSE
     RUN echo "Unsupported host platform"
     RUN false
@@ -56,7 +60,7 @@ deps-base:
         Debug::Acquire::https "true";\
         ' > /etc/apt/apt.conf.d/99custom
     RUN apt-get -y update
-    RUN apt-get install -y ca-certificates iproute2 curl build-essential libssl-dev openssl file git pkg-config libdbus-1-dev libdbus-glib-1-dev libgirepository1.0-dev libcairo2-dev checkinstall unzip libncursesw5-dev libncurses5-dev
+    RUN apt-get install -y ca-certificates iproute2 curl build-essential libssl-dev openssl file git pkg-config libdbus-1-dev libdbus-glib-1-dev libgirepository1.0-dev libcairo2-dev checkinstall unzip libncursesw5-dev libncurses5-dev jq
     IF [ $(arch) = "x86_64" ]
         RUN apt-get install -y gcc-aarch64-linux-gnu
     ELSE IF [ $(arch) = "aarch64" ]
@@ -99,21 +103,43 @@ deps-rust:
             sleep 10; \
         done
     RUN retry=0; until [ "$retry" -ge $RETRY_COUNT ]; do \
-        rustup toolchain install $RUST_UNIT_TESTS_NIGHTLY_VERSION \
-            && break; \
+            rustup toolchain install $RUST_UNIT_TESTS_NIGHTLY_VERSION -c miri,rust-src && break; \
             retry=$((retry+1)); \
             echo "retry #$retry..."; \
             sleep 10; \
         done
-    RUN cargo install wasm-pack wasm-opt --locked
-    RUN cargo install -f wasm-bindgen-cli --locked --version $WASM_BINDGEN_CLI_VERSION
+    # Install cargo-binstall
+    RUN curl --retry $RETRY_COUNT --retry-connrefused -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    
+    # Install cargo tools (try binstall of musl targets first, then fallback to regular install)
+    # (Doing it this way so we don't have to install the musl rust targets, which binstall will default to building with)
+
+    # Wasm build tool
+    RUN cargo binstall wasm-pack --disable-strategies=compile --targets $DEFAULT_CARGO_MUSL_TARGET || \
+        cargo install wasm-pack --locked
     # Caching tool
-    RUN cargo install cargo-chef --locked
-    # Install Linux cross-platform tooling
-    RUN curl --retry $RETRY_COUNT --retry-connrefused -O https://ziglang.org/download/$ZIG_VERSION/zig-linux-$(arch)-$ZIG_VERSION.tar.xz
+    RUN cargo binstall cargo-chef --disable-strategies=compile --targets $DEFAULT_CARGO_MUSL_TARGET || \
+        cargo install cargo-chef --locked
+    # MSRV checking tool
+    RUN cargo binstall cargo-msrv --disable-strategies=compile --targets $DEFAULT_CARGO_MUSL_TARGET || \
+        cargo install cargo-msrv --locked
+    # Nextest tool
+    RUN cargo binstall cargo-nextest --disable-strategies=compile --targets $DEFAULT_CARGO_MUSL_TARGET || \
+        cargo install cargo-nextest --locked
+    # Docs-rs tool
+    RUN cargo binstall cargo-docs-rs --disable-strategies=compile --targets $DEFAULT_CARGO_MUSL_TARGET || \
+        cargo install cargo-docs-rs --locked
+    # Install Linux cross-platform tooling (no binstall available for zigbuild yet)
+    RUN curl --retry $RETRY_COUNT --retry-connrefused -L -O https://ziglang.org/download/$ZIG_VERSION/zig-linux-$(arch)-$ZIG_VERSION.tar.xz
     RUN tar -C /usr/local -xJf zig-linux-$(arch)-$ZIG_VERSION.tar.xz
     RUN mv /usr/local/zig-linux-$(arch)-$ZIG_VERSION /usr/local/zig
-    RUN cargo install cargo-zigbuild
+    RUN cargo install cargo-zigbuild --locked
+    # Install wasm-opt
+    RUN curl --retry $RETRY_COUNT --retry-connrefused -L -O https://github.com/WebAssembly/binaryen/releases/download/version_$BINARYEN_VERSION/binaryen-version_$BINARYEN_VERSION-$(arch)-linux.tar.gz
+    RUN mkdir /tmp/binaryen
+    RUN tar -C /tmp/binaryen -xvf binaryen-version_$BINARYEN_VERSION-$(arch)-linux.tar.gz --strip-components=1
+    RUN cp /tmp/binaryen/bin/wasm-opt $CARGO_HOME/bin
+
     SAVE ARTIFACT $RUSTUP_HOME rustup
     SAVE ARTIFACT $CARGO_HOME cargo
     SAVE ARTIFACT /usr/local/cargo/bin/cargo-zigbuild
@@ -131,7 +157,7 @@ deps-android:
     COPY +deps-rust/zig /usr/local/zig
     RUN apt-get install -y openjdk-9-jdk-headless
     RUN mkdir /Android; mkdir /Android/Sdk
-    RUN curl --retry $RETRY_COUNT --retry-connrefused -o /Android/cmdline-tools.zip $ANDROID_COMMAND_LINE_TOOLS
+    RUN curl --retry $RETRY_COUNT --retry-connrefused -L -o /Android/cmdline-tools.zip $ANDROID_COMMAND_LINE_TOOLS
     RUN cd /Android; unzip /Android/cmdline-tools.zip
     RUN yes | /Android/cmdline-tools/bin/sdkmanager --sdk_root=/Android/Sdk build-tools\;$ANDROID_BUILD_TOOLS_VERSION ndk\;$NDK_VERSION cmake\;$CMAKE_VERSION_PATCH platform-tools platforms\;android-$ANDROID_VERSION cmdline-tools\;latest
     RUN rm -rf /Android/cmdline-tools
@@ -194,6 +220,10 @@ code-linux:
     RUN cargo update -w --locked
     # Restore original Cargo.lock
     COPY --keep-ts --dir Cargo.lock /veilid
+    # Install the wasm-bindgen CLI tool that we need, which depends on the Cargo.lock version of wasm-bindgen being used
+    RUN WASM_BINDGEN_VERSION=$(cargo tree --locked -p veilid-wasm -i wasm-bindgen | head -n 1 | cut -c 15-); \
+        cargo binstall wasm-bindgen-cli --locked --targets $DEFAULT_CARGO_MUSL_TARGET --version $WASM_BINDGEN_VERSION || \
+        cargo install wasm-bindgen-cli --locked --version $WASM_BINDGEN_VERSION
 
 # Code + Linux + Android deps
 code-android:
@@ -204,10 +234,10 @@ code-android:
 # Clippy only
 clippy:
     FROM +code-linux
-    RUN cargo clippy --locked --target x86_64-unknown-linux-gnu
-    RUN cargo clippy --locked --target x86_64-pc-windows-gnu
-    RUN cargo clippy --locked --target aarch64-apple-darwin
-    RUN cargo clippy --locked --manifest-path=veilid-wasm/Cargo.toml --target wasm32-unknown-unknown
+    RUN cargo clippy --locked --target x86_64-unknown-linux-gnu --workspace --all-targets
+    RUN cargo clippy --locked --target x86_64-pc-windows-gnu --workspace --all-targets
+    RUN cargo clippy --locked --target aarch64-apple-darwin --workspace --all-targets
+    RUN cargo clippy --locked --manifest-path=veilid-wasm/Cargo.toml --target wasm32-unknown-unknown --features=js,dart
 
 # Build
 build-linux-amd64:
@@ -237,7 +267,7 @@ build-linux-arm64:
 #         RUN echo "not enough container memory to build. increase build host memory."
 #         RUN false
 #     END
-#     RUN cargo zigbuild --locked --target x86_64-pc-windows-gnu --release -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core
+#     RUN cargo zigbuild --locked --target x86_64-pc-windows-gnu --release -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core -p veilid-remote-api
 #     SAVE ARTIFACT ./target/x86_64-pc-windows-gnu AS LOCAL ./target/artifacts/x86_64-pc-windows-gnu
 
 # build-macos-arm64:
@@ -247,14 +277,14 @@ build-linux-arm64:
 #         RUN echo "not enough container memory to build. increase build host memory."
 #         RUN false
 #     END
-#     RUN cargo zigbuild --locked --target aarch64-apple-darwin --release -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core
+#     RUN cargo zigbuild --locked --target aarch64-apple-darwin --release -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core -p veilid-remote-api
 #     SAVE ARTIFACT ./target/aarch64-apple-darwin AS LOCAL ./target/artifacts/aarch64-apple-darwin
 
 
 build-android:
     FROM +code-android
     WORKDIR /veilid/veilid-core
-    ENV PATH=$PATH:/Android/Sdk/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/
+    ENV PATH=$PATH:/Android/Sdk/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-$(arch)/bin/
     RUN cargo build --locked --target aarch64-linux-android --release
     RUN cargo build --locked --target armv7-linux-androideabi --release
     RUN cargo build --locked --target i686-linux-android --release
@@ -266,58 +296,28 @@ build-android:
     SAVE ARTIFACT ./target/x86_64-linux-android AS LOCAL ./target/artifacts/x86_64-linux-android
 
 # Unit tests
-unit-tests-clippy-linux:
-    FROM +code-linux
-    RUN cargo clippy --target $DEFAULT_CARGO_TARGET
-
-unit-tests-clippy-wasm-linux:
-    FROM +code-linux
-    RUN cargo clippy --manifest-path=veilid-wasm/Cargo.toml --target wasm32-unknown-unknown
-
-unit-tests-clippy-windows-linux:
-    FROM +code-linux
-    RUN cargo-zigbuild clippy --target x86_64-pc-windows-gnu
-
-unit-tests-clippy-macos-linux:
-    FROM +code-linux
-    RUN cargo-zigbuild clippy --target aarch64-apple-darwin
-
-unit-tests-docs-linux:
-    FROM +code-linux
-    RUN ./build_docs.sh $RUST_UNIT_TESTS_NIGHTLY_VERSION
-
-unit-tests-native-linux:
-    FROM +code-linux
-    RUN cargo test --locked --tests --target $DEFAULT_CARGO_TARGET -p veilid-server -p veilid-cli -p veilid-tools -p veilid-core -p veilid-remote-api
-
-unit-tests-wasm-linux:
-    FROM +code-linux
-    # Just run build now because actual unit tests require network access
-    # which should be moved to a separate integration test
-    RUN veilid-wasm/wasm_build_dart.sh release
-
 unit-tests-linux:
-    WAIT
-        BUILD +unit-tests-clippy-linux
-    END
-    WAIT
-        BUILD +unit-tests-clippy-wasm-linux
-    END
-    WAIT
-        BUILD +unit-tests-clippy-windows-linux
-    END
-    WAIT
-        BUILD +unit-tests-clippy-macos-linux
-    END
-    WAIT
-        BUILD +unit-tests-docs-linux
-    END
-    WAIT
-        BUILD +unit-tests-native-linux
-    END
-    WAIT
-        BUILD +unit-tests-wasm-linux
-    END
+    FROM +code-linux
+    RUN cargo msrv verify --manifest-path=veilid-tools/Cargo.toml
+    RUN cargo msrv verify --manifest-path=veilid-core/Cargo.toml
+    RUN cargo msrv verify --manifest-path=veilid-server/Cargo.toml
+    RUN cargo msrv verify --manifest-path=veilid-cli/Cargo.toml
+    RUN cargo msrv verify --manifest-path=veilid-flutter/rust/Cargo.toml
+    # WASM checks
+    RUN cargo clippy --manifest-path=veilid-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets
+    RUN veilid-wasm/wasm_build_dart.sh release
+    RUN veilid-wasm/wasm_build_js.sh release
+    RUN rm -rf target/wasm32-unknown-unknown
+    # Windows checks
+    RUN cargo-zigbuild clippy --target x86_64-pc-windows-gnu --all-targets
+    RUN rm -rf target/x86_64-pc-windows-gnu
+    # MacOS checks
+    RUN cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets
+    RUN rm -rf target/aarch64-apple-darwin
+    # Default target checks
+    RUN cargo clippy --target $DEFAULT_CARGO_TARGET --all-targets
+    RUN ./build_docs.sh
+    RUN cargo nextest run --locked --tests --target $DEFAULT_CARGO_TARGET --workspace --all-targets
 
 # Package
 package-linux-amd64-deb:

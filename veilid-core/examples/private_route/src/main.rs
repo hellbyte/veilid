@@ -1,6 +1,5 @@
 use clap::Parser;
 use std::{future::Future, io::Write as _, sync::Arc};
-use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer};
 use veilid_core::*;
 
 #[derive(Parser)]
@@ -29,8 +28,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .expect("Error setting Ctrl-C handler");
 
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
     // Set up some basic Veilid terminal logging
-    setup_veilid_terminal_logging(cli.debug);
+    let logs = VeilidTracing::stderr();
+
+    // Use RUST_LOG environment variable to set up logging
+    logs.try_apply_default_env()?;
+
+    // If the '-d' flag is specified, determine which log level to override
+    let debug_level = match cli.debug {
+        1 => VeilidConfigLogLevel::Info,
+        2 => VeilidConfigLogLevel::Debug,
+        3.. => VeilidConfigLogLevel::Trace,
+        _ => VeilidConfigLogLevel::Warn,
+    };
+
+    // Override the veilid 'common' facility tag from the command line
+    logs.try_apply_facility_level("#common", debug_level)?;
 
     // Set up a config for this application
     let exe_dir = std::env::current_exe()
@@ -97,16 +112,6 @@ async fn try_again_loop<R, F: Future<Output = VeilidAPIResult<R>>>(
                 let _ = std::io::stdout().flush();
                 tools::sleep(1000).await;
             }
-            // XXX: This should not be necessary, and VeilidAPIError::TryAgain should
-            // be used in the case of 'allocated route failed to test'.
-            Err(VeilidAPIError::Generic { message }) => {
-                if waiting {
-                    println!();
-                    waiting = false;
-                }
-                println!("Error: {message}");
-                tools::sleep(1000).await;
-            }
             Err(e) => {
                 if waiting {
                     println!();
@@ -115,40 +120,6 @@ async fn try_again_loop<R, F: Future<Output = VeilidAPIResult<R>>>(
             }
         }
     }
-}
-
-fn setup_veilid_terminal_logging(debug: u8) {
-    // Set up logging
-    let subscriber = tracing_subscriber::Registry::default();
-    let mut layers = Vec::new();
-    let mut fields_to_strip = std::collections::HashSet::<&'static str>::new();
-    fields_to_strip.insert(veilid_core::VEILID_LOG_KEY_FIELD);
-
-    let filter = VeilidLayerFilter::new(
-        if debug == 1 {
-            VeilidConfigLogLevel::Info
-        } else if debug == 2 {
-            VeilidConfigLogLevel::Debug
-        } else if debug >= 3 {
-            VeilidConfigLogLevel::Trace
-        } else {
-            VeilidConfigLogLevel::Warn
-        },
-        &[],
-        None,
-    );
-    let layer = tracing_subscriber::fmt::Layer::new()
-        .compact()
-        .map_fmt_fields(|f| veilid_core::FmtStripFields::new(f, fields_to_strip.clone()))
-        .with_writer(std::io::stdout)
-        .with_filter(filter.clone());
-    layers.push(layer.boxed());
-    let subscriber = subscriber.with(layers);
-
-    subscriber
-        .try_init()
-        .map_err(|e| e.to_string())
-        .expect("failed to initialize logging");
 }
 
 async fn veilid_api_scope<'a, F: Future<Output = Result<T, Box<dyn std::error::Error>>>, T>(
@@ -262,7 +233,7 @@ fn update_callback(update: VeilidUpdate) {
         VeilidUpdate::Config(_veilid_state_config) => {}
         VeilidUpdate::RouteChange(veilid_route_change) => {
             // XXX: If this happens, the route is dead, and a new one should be generated and
-            // exchanged. This will no longer be necessary after DHT Route Autopublish is implemented
+            // exchanged. This will no longer be necessary after DHT Route Autopublish is implemented in veilid-core v0.6.0
             println!("{veilid_route_change:?}");
         }
         VeilidUpdate::ValueChange(_veilid_value_change) => {}

@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Sends a high level app request and wait for response
     // Can be sent via all methods including relays and routes
-    #[instrument(level = "trace", target = "rpc", skip(self, message), fields(message.len = message.len(), ret.latency, ret.len), err(level=Level::DEBUG))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, message), fields(message.len = message.len(), ret.latency, ret.len), err(level=Level::DEBUG)))]
     pub async fn rpc_call_app_call(
         &self,
         dest: Destination,
@@ -62,7 +62,7 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_app_call_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ignore if disabled
         let routing_table = self.routing_table();
@@ -109,7 +109,7 @@ impl RPCProcessor {
         let sender = msg
             .opt_sender_nr
             .as_ref()
-            .map(|nr| nr.node_ids().get(crypto_kind).unwrap());
+            .map(|nr| nr.node_ids().get(crypto_kind).unwrap_or_log());
 
         #[cfg(not(feature = "footgun"))]
         {
@@ -156,7 +156,10 @@ impl RPCProcessor {
     }
 
     /// Exposed to API for apps to return app call answers
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn app_call_reply(&self, call_id: OperationId, message: Vec<u8>) -> Result<(), RPCError> {
         let _guard = self
             .startup_context

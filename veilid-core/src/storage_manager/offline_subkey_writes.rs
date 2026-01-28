@@ -14,7 +14,10 @@ pub struct OfflineSubkeyWrite {
 }
 
 impl StorageManager {
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn add_offline_subkey_write(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -38,7 +41,10 @@ impl StorageManager {
     /// If we write to a subkey, we first clear out any existing offline write to that subkey.
     /// If the new write succeeds, then this stays cleared
     /// If the new write was offline, then it will add it back in
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn remove_offline_subkey_write_inner(
         &self,
         inner: &mut StorageManagerInner,
@@ -70,7 +76,10 @@ impl StorageManager {
     /// and if we didn't finish all the subkeys they are returned to the list of offline subkeys
     /// so we can try again later. If the data associated with the write is no longer necessary
     /// we can drop it.
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn finish_offline_subkey_writes(
         &self,
         opaque_record_key: &OpaqueRecordKey,

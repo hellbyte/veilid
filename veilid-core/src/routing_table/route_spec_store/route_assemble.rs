@@ -3,7 +3,10 @@ use super::*;
 impl RouteSpecStore {
     /// Assemble a single private route for publication from an allocated route key
     /// Returns a PrivateRoute object for an allocated route key
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn assemble_single_private_route(
         &self,
         allocated_route_key: &PublicKey,
@@ -24,14 +27,17 @@ impl RouteSpecStore {
 
         let rsd = rssd
             .get_route_by_key(allocated_route_key)
-            .expect("route key index is broken");
+            .expect_or_log("route key index is broken");
 
         self.assemble_single_private_route_inner(allocated_route_key, rsd, rssd, optimized)
     }
 
     /// Assemble private route set for publication
     /// Returns a vec of assembled PrivateRoute objects for an RouteId
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn assemble_private_route_set(
         &self,
         id: &RouteId,

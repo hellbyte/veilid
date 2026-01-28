@@ -1,5 +1,7 @@
-use super::native::*;
-use crate::*;
+use crate::{
+    tests::{native::block_on, run_all_tests},
+    *,
+};
 use backtrace::Backtrace;
 use std::panic;
 use tracing_oslog::OsLogger;
@@ -16,9 +18,10 @@ pub extern "C" fn run_veilid_core_tests() {
 
 pub fn veilid_core_setup_ios_tests() {
     // Set up subscriber and layers
-    let filter = VeilidLayerFilter::new(VeilidConfigLogLevel::Info, &[], None);
+    let filter = VeilidLayerFilter::default();
+    filter.apply_common_log_level(VeilidConfigLogLevel::Info);
     tracing_subscriber::registry()
-        .with(OsLogger::new("com.veilid.veilidcore-tests", "").with_filter(filter))
+        .with(OsLogger::new("com.veilid.veilid_core_ios_tests", "default").with_filter(filter))
         .init();
 
     panic::set_hook(Box::new(|panic_info| {

@@ -74,10 +74,10 @@ mod tests {
         ];
 
         for (ip_str, expected_country) in test_cases {
-            let ip = ip_str.parse().unwrap();
-            let expected_country_code = CountryCode::from_str(expected_country).unwrap();
+            let ip = ip_str.parse().unwrap_or_log();
+            let expected_country_code = CountryCode::from_str(expected_country).unwrap_or_log();
 
-            let country_code = super::query_country_code(ip).unwrap();
+            let country_code = super::query_country_code(ip).unwrap_or_log();
             assert_eq!(
                 country_code, expected_country_code,
                 "Wrong country for {ip_str}",
@@ -86,19 +86,19 @@ mod tests {
             eprintln!("{ip_str} -> {country_code}");
         }
 
-        assert!(super::query_country_code("127.0.0.1".parse().unwrap()).is_none());
-        assert!(super::query_country_code("10.0.0.1".parse().unwrap()).is_none());
-        assert!(super::query_country_code("::1".parse().unwrap()).is_none());
+        assert!(super::query_country_code("127.0.0.1".parse().unwrap_or_log()).is_none());
+        assert!(super::query_country_code("10.0.0.1".parse().unwrap_or_log()).is_none());
+        assert!(super::query_country_code("::1".parse().unwrap_or_log()).is_none());
     }
 
     #[test]
     fn test_iter_over_ipv4_mmdb() {
-        let db = super::IPV4.as_ref().unwrap();
+        let db = super::IPV4.as_ref().unwrap_or_log();
 
         let count = db
-            .within("0.0.0.0/0".parse().unwrap())
-            .unwrap()
-            .map(|item: Result<WithinItem<super::Country>, _>| item.unwrap())
+            .within("0.0.0.0/0".parse().unwrap_or_log())
+            .unwrap_or_log()
+            .map(|item: Result<WithinItem<super::Country>, _>| item.unwrap_or_log())
             .count();
 
         assert!(count > 100, "Expecting some IPv4 subnets in IPv4 MMDB");
@@ -106,12 +106,12 @@ mod tests {
 
     #[test]
     fn test_iter_over_ipv6_mmdb() {
-        let db = super::IPV6.as_ref().unwrap();
+        let db = super::IPV6.as_ref().unwrap_or_log();
 
         let count = db
-            .within("::/0".parse().unwrap())
-            .unwrap()
-            .map(|item: Result<WithinItem<super::Country>, _>| item.unwrap())
+            .within("::/0".parse().unwrap_or_log())
+            .unwrap_or_log()
+            .map(|item: Result<WithinItem<super::Country>, _>| item.unwrap_or_log())
             .count();
 
         assert!(count > 100, "Expecting some IPv6 subnets in IPv6 MMDB");

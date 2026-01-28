@@ -1,9 +1,15 @@
 #!/bin/bash
 set -eo pipefail
 
-SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+if [ $(id -u) -eq 0 ]; then
+    echo "Don't run this as root"
+    exit
+fi
 
-if [ ! "$(uname)" == "Darwin" ]; then
+SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+pushd "$SCRIPTDIR" &> /dev/null
+
+if [[ "$(uname)" != "Darwin" ]]; then
     echo Not running on MacOS
     exit 1
 fi
@@ -140,29 +146,13 @@ else
     BREW_COMMAND="sudo -H -u $BREW_USER brew"
 fi
 
-$BREW_COMMAND install capnp cmake llvm jq
+$BREW_COMMAND install capnp cmake llvm jq binaryen bumpversion
 
 # install targets
 rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-darwin x86_64-apple-ios wasm32-unknown-unknown aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 
 # install cargo packages
-cargo install wasm-bindgen-cli wasm-pack cargo-edit@0.13.0
-
-# attempt to install pip packages - this may result in an error, which we will try to catch
-pip3 install --upgrade bumpversion || ( \
-if [ $? -gt 0 ]; then
-    # it was probably because of the Python installation being externally managed, so we'll try to get the package via Homebrew, but only if Python was installed from there
-    echo "Installation via pip3 failed. Checking if Python was installed via Homebrew..."
-    if [[ ! -z $(brew list | grep python) ]]; then
-        echo "Python was installed from Homebrew. Installing bumpversion..."
-        $BREW_COMMAND install bumpversion && \
-            echo "[X] Bumpversion Python package installed" || \
-            echo "Failed to install the bumpversion Python package. Please install manually."
-    else
-        echo "Python was not installed from Homebrew. Please install the "bumpversion" Python package manually."
-    fi
-fi
-)
+cargo install wasm-bindgen-cli wasm-pack cargo-edit@0.13.0 cargo-nextest
 
 if command -v pod &>/dev/null; then
     echo '[X] CocoaPods is available in the path'
@@ -170,3 +160,8 @@ else
     echo 'CocoaPods is not available in the path, installing it now'
     $BREW_COMMAND install cocoapods
 fi
+
+# check wasm requirements
+./_wasm_setup_check.sh
+
+popd &> /dev/null

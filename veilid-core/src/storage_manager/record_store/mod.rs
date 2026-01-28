@@ -15,6 +15,10 @@ mod record_store_limits;
 mod record_store_locks;
 mod results;
 
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests;
+
 use super::*;
 
 pub(super) use inbound_watch::*;
@@ -27,8 +31,6 @@ pub(super) use results::*;
 
 use record_store_inner::*;
 use record_store_locks::*;
-
-use hashlink::LruCache;
 
 impl_veilid_log_facility!("stor");
 
@@ -48,14 +50,6 @@ pub(super) trait RecordDetail:
     fmt::Debug + Clone + PartialEq + Eq + Serialize + for<'d> Deserialize<'d> + GetSize
 {
     fn is_new(&self) -> bool;
-}
-
-/// Reclaimed space return value
-#[derive(Debug, Clone)]
-pub(super) struct ReclaimedSpace {
-    pub reclaimed: u64,
-    pub total: u64,
-    pub dead_records: Vec<OpaqueRecordKey>,
 }
 
 /// Record store interface
@@ -133,15 +127,22 @@ where
         })
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn flush(&self) {
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
+    pub async fn flush(&self) -> VeilidAPIResult<()> {
         let opt_commit_action = self.inner.lock().flush();
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
+        Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn new_record(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -162,13 +163,16 @@ where
 
         let opt_commit_action = self.inner.lock().new_record(opaque_record_key, record)?;
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn delete_record(&self, opaque_record_key: &OpaqueRecordKey) -> VeilidAPIResult<()> {
         let _record_lock = self
             .record_store_lock_table
@@ -188,13 +192,16 @@ where
 
         let opt_commit_action = self.inner.lock().delete_record(opaque_record_key)?;
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn get_subkey(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -220,7 +227,7 @@ where
 
         let load_action_result = {
             let mut inner = self.inner.lock();
-            inner.prepare_get_load_action(opaque_record_key, subkey)
+            inner.prepare_get_load_action(opaque_record_key, subkey)?
         };
 
         match load_action_result {
@@ -256,7 +263,10 @@ where
         }
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn peek_subkey(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -282,7 +292,7 @@ where
 
         let load_action_result = {
             let mut inner = self.inner.lock();
-            inner.prepare_peek_load_action(opaque_record_key, subkey)
+            inner.prepare_peek_load_action(opaque_record_key, subkey)?
         };
 
         match load_action_result {
@@ -318,7 +328,10 @@ where
         }
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn set_single_subkey(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -343,13 +356,16 @@ where
         )?;
 
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn set_subkeys_single_record(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -376,13 +392,16 @@ where
         )?;
 
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn set_subkeys_multiple_records(
         &self,
         keys_and_subkeys: &RecordSubkeyValueList,
@@ -410,13 +429,16 @@ where
             .set_subkeys_multiple_records(keys_and_subkeys, &watch_update_mode)?;
 
         if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn inspect_record(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -458,7 +480,7 @@ where
             let seqs = schema_subkeys
                 .iter()
                 .map(|subkey| record.subkey_seq(subkey))
-                .collect();
+                .collect::<VeilidAPIResult<Vec<ValueSeqNum>>>()?;
 
             Ok(Some(InspectResult::new(
                 self,
@@ -476,7 +498,10 @@ where
         }
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn peek_record<F, R>(&self, opaque_record_key: &OpaqueRecordKey, func: F) -> Option<R>
     where
         F: FnOnce(&Record<D>) -> R,
@@ -485,7 +510,22 @@ where
         inner.peek_record(opaque_record_key, func)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
+    pub fn peek_lru<F, R>(&self, func: F) -> Option<R>
+    where
+        F: FnOnce(&OpaqueRecordKey, &Record<D>) -> R,
+    {
+        let inner = self.inner.lock();
+        inner.peek_lru(func)
+    }
+
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn with_record<F, R>(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -498,7 +538,10 @@ where
         inner.with_record(opaque_record_key, func)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn with_record_detail_mut<R, F>(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -511,7 +554,10 @@ where
         inner.with_record_detail_mut(opaque_record_key, func)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub fn lookup_inbound_transaction_id(
         &self,
         raw_id: u64,
@@ -519,7 +565,10 @@ where
         self.inner.lock().lookup_inbound_transaction_id(raw_id)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn begin_inbound_transaction(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -569,7 +618,10 @@ where
             .finish_begin_inbound_transaction(begin_context, opt_snapshot)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn end_inbound_transaction(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -615,7 +667,10 @@ where
             .finish_end_inbound_transaction(end_context, res_opt_end_snapshot)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn commit_inbound_transaction<C: FnOnce() -> D>(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -656,7 +711,7 @@ where
 
         // commit action
         if let Some(commit_action) = commit_context.opt_commit_action.take() {
-            self.process_commit_action(commit_action).await;
+            self.process_commit_action(commit_action).await?;
         };
 
         // finish
@@ -665,7 +720,10 @@ where
             .finish_commit_inbound_transaction(commit_context)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn rollback_inbound_transaction(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -692,7 +750,10 @@ where
             .rollback_inbound_transaction(opaque_record_key, transaction_id)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn inbound_transaction_get(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -720,7 +781,10 @@ where
             .inbound_transaction_get(opaque_record_key, transaction_id, opt_subkey)
     }
 
-    #[instrument(level = "debug", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "stor", skip_all, err)
+    )]
     pub async fn inbound_transaction_set(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -750,47 +814,36 @@ where
     }
 
     /// See if any inbound transactions have expired and clear them out
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub fn drop_expired_inbound_transactions(&self) {
         self.inner.lock().drop_expired_inbound_transactions();
     }
 
-    /// LRU out some records until we reclaim the amount of space requested
-    /// This will force a garbage collection of the space immediately
-    /// If zero is passed in here, it is equivalent to flush()
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub async fn reclaim_space(&self, space: u64) -> ReclaimedSpace {
-        let (opt_commit_action, reclaimed_space) = {
-            let mut inner = self.inner.lock();
-            inner.reclaim_space(space)
-        };
-        if let Some(commit_action) = opt_commit_action {
-            self.process_commit_action(commit_action).await;
-        };
-
-        veilid_log!(self debug "RecordStore({}): Reclaimed space ({} requested, {} reclaimed, {} total)", self.unlocked_inner.name, space, reclaimed_space.reclaimed, reclaimed_space.total);
-
-        reclaimed_space
+    pub fn total_storage_space(&self) -> u64 {
+        self.inner.lock().total_storage_space()
     }
 
     //////////////////////////////////////////////////////////////////////////////////
 
-    async fn process_commit_action(&self, mut commit_action: CommitAction<D>) {
+    async fn process_commit_action(
+        &self,
+        mut commit_action: CommitAction<D>,
+    ) -> VeilidAPIResult<()> {
         if let Err(e) = commit_action.commit().await {
-            veilid_log!(self error "Error committing record index: {}", e);
+            veilid_log!(self error "Error committing record index: {}\n{:#?}", e, commit_action);
         }
 
-        let res = {
-            let mut inner = self.inner.lock();
-            inner.finish_commit_action(commit_action)
-        };
-
-        if let Err(e) = res {
-            veilid_log!(self error "Error finishing record index commit: {}", e);
-        }
+        let mut inner = self.inner.lock();
+        inner.finish_commit_action(commit_action)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) fn contains_record(&self, opaque_record_key: &OpaqueRecordKey) -> bool {
         self.inner
             .lock()

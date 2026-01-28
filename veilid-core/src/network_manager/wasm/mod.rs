@@ -10,45 +10,6 @@ impl_veilid_log_facility!("net");
 
 /////////////////////////////////////////////////////////////////
 
-cfg_if! {
-    if #[cfg(all(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 6;
-    } else if #[cfg(any(feature = "unstable-blockstore", feature="unstable-tunnels"))] {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 5;
-    } else  {
-        const PUBLIC_INTERNET_CAPABILITIES_LEN: usize = 4;
-    }
-}
-pub const PUBLIC_INTERNET_CAPABILITIES: [VeilidCapability; PUBLIC_INTERNET_CAPABILITIES_LEN] = [
-    VEILID_CAPABILITY_ROUTE,
-    #[cfg(feature = "unstable-tunnels")]
-    VEILID_CAPABILITY_TUNNEL,
-    VEILID_CAPABILITY_SIGNAL,
-    //VEILID_CAPABILITY_RELAY,
-    //VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
-    VEILID_CAPABILITY_DHT,
-    VEILID_CAPABILITY_APPMESSAGE,
-    #[cfg(feature = "unstable-blockstore")]
-    VEILID_CAPABILITY_BLOCKSTORE,
-];
-
-// #[cfg(feature = "unstable-blockstore")]
-// const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 2;
-// #[cfg(not(feature = "unstable-blockstore"))]
-// const LOCAL_NETWORK_CAPABILITIES_LEN: usize = 1;
-
-// pub const LOCAL_NETWORK_CAPABILITIES: [VeilidCapability; LOCAL_NETWORK_CAPABILITIES_LEN] = [
-//     //VEILID_CAPABILITY_RELAY,
-//     VEILID_CAPABILITY_DHT,
-//     VEILID_CAPABILITY_APPMESSAGE,
-//     #[cfg(feature = "unstable-blockstore")]
-//     VEILID_CAPABILITY_BLOCKSTORE,
-// ];
-
-pub const MAX_CAPABILITIES: usize = 64;
-
-/////////////////////////////////////////////////////////////////
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProtocolConfig {
     pub outbound: ProtocolTypeSet,
@@ -127,7 +88,7 @@ impl Network {
     // This creates a short-lived connection in the case of connection-oriented protocols
     // for the purpose of sending this one message.
     // This bypasses the connection table as it is not a 'node to node' connection.
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_unbound_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -191,7 +152,7 @@ impl Network {
     // This creates a short-lived connection in the case of connection-oriented protocols
     // for the purpose of sending this one message.
     // This bypasses the connection table as it is not a 'node to node' connection.
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_recv_data_unbound_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -264,7 +225,7 @@ impl Network {
         .await
     }
 
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_to_existing_flow(
         &self,
         flow: Flow,
@@ -317,7 +278,7 @@ impl Network {
 
     // Send data directly to a dial info, possibly without knowing which node it is going to
     // Returns a flow for the connection used to send the data
-    #[instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="net", err, skip(self, data), fields(data.len = data.len())))]
     pub async fn send_data_to_dial_info(
         &self,
         dial_info: DialInfo,
@@ -361,14 +322,18 @@ impl Network {
 
     // Send hole punch attempt to a specific dialinfo. May not be appropriate for all protocols.
     // Returns a flow for the connection used to send the data
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    #[allow(clippy::unused_async)]
     pub async fn send_hole_punch(
         &self,
-        dial_info: DialInfo,
+        _dial_info: DialInfo,
     ) -> EyreResult<NetworkResult<UniqueFlow>> {
-        return Ok(NetworkResult::ServiceUnavailable(
+        Ok(NetworkResult::ServiceUnavailable(
             "unimplemented for this platform".to_owned(),
-        ));
+        ))
     }
 
     /////////////////////////////////////////////////////////////////
@@ -435,7 +400,7 @@ impl Network {
         Ok(StartupDisposition::Success)
     }
 
-    #[instrument(level = "debug", err, skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn startup(&self) -> EyreResult<StartupDisposition> {
         let guard = self.startup_lock.startup()?;
 
@@ -464,12 +429,12 @@ impl Network {
         self.startup_lock.is_started()
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn restart_network(&self) {
         self.inner.lock().network_needs_restart = true;
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting low level network shutdown");
         let Ok(guard) = self.startup_lock.shutdown().await else {
@@ -508,7 +473,7 @@ impl Network {
     #[expect(dead_code)]
     pub fn needs_update_dial_info(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'needs_update_dial_info' due to not started up");
             return false;
         };
 
@@ -517,7 +482,7 @@ impl Network {
 
     pub fn resolved_detect_address_changes(&self) -> bool {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'resolved_detect_address_changes' due to not started up");
             return false;
         };
 
@@ -526,15 +491,19 @@ impl Network {
 
     pub fn trigger_update_dial_info(&self, _routing_domain: RoutingDomain) {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'trigger_update_dial_info' due to not started up");
             return;
         };
     }
     //////////////////////////////////////////
-    #[instrument(level = "trace", target = "net", name = "Network::tick", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", name = "Network::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    #[allow(clippy::unused_async)]
     pub async fn tick(&self) -> EyreResult<()> {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'Network::tick' due to not started up");
             return Ok(());
         };
 

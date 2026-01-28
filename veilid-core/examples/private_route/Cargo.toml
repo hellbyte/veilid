@@ -21,8 +21,7 @@ async-stdin = "0.3.1"
 clap = { version = "4.5.39", features = ["derive"] }
 ctrlc = "3.4.7"
 data-encoding = "2.9.0"
-tokio = "1.45.1"
-tracing = "0.1.41"
+tokio = { version = "^1.43.0", features = [ "signal", "macros", "rt", "sync" ] }
 tracing-subscriber = "0.3.19"
 veilid-core = { path = "../../../veilid-core" }
 

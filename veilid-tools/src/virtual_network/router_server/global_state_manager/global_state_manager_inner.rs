@@ -45,7 +45,7 @@ impl GlobalStateManagerInner {
         }
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn execute_config(&mut self, cfg: config::Config) -> GlobalStateManagerResult<()> {
         // Create random number generator
         if let Some(seed) = cfg.seed {
@@ -208,7 +208,7 @@ impl GlobalStateManagerInner {
                         let template_state = self
                             .template_states()
                             .get_state(template_state_id)
-                            .expect("must exist");
+                            .expect_or_log("must exist");
                         if !template_state.is_active(self) {
                             Ok(None)
                         } else {
@@ -333,7 +333,7 @@ impl GlobalStateManagerInner {
         &mut self.blueprint_state_registry
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     fn execute_config_allocations(
         &mut self,
         config_allocations: &HashMap<String, config::Allocation>,
@@ -353,7 +353,10 @@ impl GlobalStateManagerInner {
         }
         Ok(())
     }
-    #[instrument(level = "debug", skip(self, model), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, model), err)
+    )]
     fn execute_config_model(
         &mut self,
         name: &str,
@@ -367,7 +370,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, profile), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, profile), err)
+    )]
     fn execute_config_profile(
         &mut self,
         name: &str,
@@ -385,14 +391,17 @@ impl GlobalStateManagerInner {
         let state = ProfileState::new(id, name.to_owned(), profile.clone());
         self.profile_state_registry
             .attach_state(state)
-            .expect("must attach");
+            .expect_or_log("must attach");
 
         debug!("Added profile: {}: {:?}", name, profile);
 
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, network), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, network), err)
+    )]
     fn execute_config_network(
         &mut self,
         name: &str,
@@ -428,17 +437,20 @@ impl GlobalStateManagerInner {
         .inspect_err(|_| {
             self.network_state_registry
                 .release_id(id)
-                .expect("must release");
+                .expect_or_log("must release");
         })?;
         self.network_state_registry
             .attach_state(state)
-            .expect("must attach");
+            .expect_or_log("must attach");
 
         debug!("Added network: {}: {:?}", name, network);
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv4), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv4), err)
+    )]
     fn execute_config_network_ipv4(
         &mut self,
         name: &str,
@@ -447,11 +459,11 @@ impl GlobalStateManagerInner {
         let network_state_id = self
             .network_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut network_state = self
             .network_state_registry
             .get_state(network_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         // Get IPV4 allocation
         let address_pool = &self
@@ -479,7 +491,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv6), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv6), err)
+    )]
     fn execute_config_network_ipv6(
         &mut self,
         name: &str,
@@ -488,11 +503,11 @@ impl GlobalStateManagerInner {
         let network_state_id = self
             .network_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut network_state = self
             .network_state_registry
             .get_state(network_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         // Get IPV4 allocation
         let address_pool = &self
@@ -520,7 +535,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv4gw), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv4gw), err)
+    )]
     fn execute_config_network_ipv4_gateway(
         &mut self,
         name: &str,
@@ -529,11 +547,11 @@ impl GlobalStateManagerInner {
         let network_state_id = self
             .network_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut network_state = self
             .network_state_registry
             .get_state(network_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let translation = ipv4gw.translation;
         let upnp = ipv4gw.upnp;
@@ -561,7 +579,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv6gw), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv6gw), err)
+    )]
     fn execute_config_network_ipv6_gateway(
         &mut self,
         name: &str,
@@ -570,11 +591,11 @@ impl GlobalStateManagerInner {
         let network_state_id = self
             .network_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut network_state = self
             .network_state_registry
             .get_state(network_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let translation = ipv6gw.translation;
         let upnp = ipv6gw.upnp;
@@ -602,7 +623,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, blueprint), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, blueprint), err)
+    )]
     fn execute_config_blueprint(
         &mut self,
         name: &str,
@@ -643,18 +667,21 @@ impl GlobalStateManagerInner {
         .inspect_err(|_| {
             self.blueprint_state_registry
                 .release_id(id)
-                .expect("must release");
+                .expect_or_log("must release");
         })?;
         self.blueprint_state_registry
             .attach_state(state)
-            .expect("must attach");
+            .expect_or_log("must attach");
 
         debug!("Added blueprint: {}: {:?}", name, blueprint);
 
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv4), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv4), err)
+    )]
     fn execute_config_blueprint_ipv4(
         &mut self,
         name: &str,
@@ -663,11 +690,11 @@ impl GlobalStateManagerInner {
         let blueprint_state_id = self
             .blueprint_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut blueprint_state = self
             .blueprint_state_registry
             .get_state(blueprint_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let locations = match ipv4.location.clone() {
             config::BlueprintLocation::Allocation { allocation } => {
@@ -715,7 +742,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv4gw), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv4gw), err)
+    )]
     fn execute_config_blueprint_ipv4_gateway(
         &mut self,
         name: &str,
@@ -724,11 +754,11 @@ impl GlobalStateManagerInner {
         let blueprint_state_id = self
             .blueprint_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut blueprint_state = self
             .blueprint_state_registry
             .get_state(blueprint_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let translation = ipv4gw.translation.clone();
         let upnp = ipv4gw.upnp;
@@ -766,7 +796,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv6), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv6), err)
+    )]
     fn execute_config_blueprint_ipv6(
         &mut self,
         name: &str,
@@ -775,11 +808,11 @@ impl GlobalStateManagerInner {
         let blueprint_state_id = self
             .blueprint_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut blueprint_state = self
             .blueprint_state_registry
             .get_state(blueprint_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let locations = match ipv6.location.clone() {
             config::BlueprintLocation::Allocation { allocation } => {
@@ -827,7 +860,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, ipv6gw), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, ipv6gw), err)
+    )]
     fn execute_config_blueprint_ipv6_gateway(
         &mut self,
         name: &str,
@@ -836,11 +872,11 @@ impl GlobalStateManagerInner {
         let blueprint_state_id = self
             .blueprint_state_registry
             .get_state_id_by_name(name)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut blueprint_state = self
             .blueprint_state_registry
             .get_state(blueprint_state_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
 
         let translation = ipv6gw.translation.clone();
         let upnp = ipv6gw.upnp;
@@ -878,7 +914,10 @@ impl GlobalStateManagerInner {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, template), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, template), err)
+    )]
     fn execute_config_template(
         &mut self,
         name: &str,
@@ -929,17 +968,20 @@ impl GlobalStateManagerInner {
         .inspect_err(|_| {
             self.template_state_registry
                 .release_id(id)
-                .expect("must release");
+                .expect_or_log("must release");
         })?;
         self.template_state_registry
             .attach_state(state)
-            .expect("must attach");
+            .expect_or_log("must attach");
 
         debug!("Added template: {}: {:?}", name, template);
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, machine), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, machine), err)
+    )]
     fn execute_config_machine(
         &mut self,
         name: &str,
@@ -1001,16 +1043,19 @@ impl GlobalStateManagerInner {
         .inspect_err(|_| {
             self.machine_state_registry
                 .release_id(id)
-                .expect("must release");
+                .expect_or_log("must release");
         })?;
         self.machine_state_registry
             .attach_state(state)
-            .expect("must attach");
+            .expect_or_log("must attach");
         debug!("Added machine: {}: {:?}", name, machine);
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, config_allocations), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, config_allocations), err)
+    )]
     fn resolve_address_pool(
         &self,
         allocation_name: String,

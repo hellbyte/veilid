@@ -7,7 +7,7 @@
 //! utility functions is encouraged rather than adding 'common' functionality to `veilid-core`, allowing it to
 //! remain free of boilerplate and utility classes that could be reused elsewhere.
 //!
-//! Everything added to this crate must be extensively unit-tested.
+//! Everything added to this crate must be extensively unit-tested (work in progress).
 //!
 //! ## Cargo features
 //!
@@ -22,8 +22,8 @@
 //!
 
 pub mod assembly_buffer;
+pub mod async_locks;
 pub mod async_peek_stream;
-pub mod async_tag_lock;
 pub mod clone_stream;
 pub mod deferred_stream_processor;
 pub mod event_bus;
@@ -37,6 +37,7 @@ pub mod interval;
 pub mod ip_addr_port;
 pub mod ip_extra;
 pub mod ipc;
+pub mod log_unwrap;
 pub mod must_join_handle;
 pub mod must_join_single_future;
 pub mod mutable_future;
@@ -45,6 +46,7 @@ pub mod network_result;
 pub mod pin;
 pub mod random;
 pub mod raw_timestamp;
+pub mod resolver;
 pub mod single_shot_eventual;
 pub mod sleep;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -57,10 +59,14 @@ pub mod tick_task;
 pub mod timeout;
 pub mod timeout_or;
 pub mod tools;
+pub mod trim_backtrace;
 #[cfg(feature = "virtual-network")]
 pub mod virtual_network;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub mod wasm;
+pub mod wasm_tools;
+
+///////////////////////////////////////////////////////////////
+// Veilid-tools Prelude
 
 #[doc(no_inline)]
 pub use std::borrow::{Cow, ToOwned};
@@ -107,7 +113,7 @@ pub use std::string::{String, ToString};
 #[doc(no_inline)]
 pub use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[doc(no_inline)]
-pub use std::sync::{Arc, Weak};
+pub use std::sync::{Arc, LazyLock, Weak};
 #[doc(no_inline)]
 pub use std::task;
 #[doc(no_inline)]
@@ -115,32 +121,8 @@ pub use std::time::Duration;
 #[doc(no_inline)]
 pub use std::vec::Vec;
 
-#[doc(no_inline)]
-pub use async_lock::RwLock as AsyncRwLock;
-#[doc(no_inline)]
-pub use async_lock::RwLockReadGuard as AsyncRwLockReadGuard;
-#[doc(no_inline)]
-pub use async_lock::RwLockReadGuardArc as AsyncRwLockReadGuardArc;
-#[doc(no_inline)]
-pub use async_lock::RwLockWriteGuard as AsyncRwLockWriteGuard;
-#[doc(no_inline)]
-pub use async_lock::RwLockWriteGuardArc as AsyncRwLockWriteGuardArc;
-
-#[doc(no_inline)]
-pub use async_lock::Semaphore as AsyncSemaphore;
-#[doc(no_inline)]
-pub use async_lock::SemaphoreGuard as AsyncSemaphoreGuard;
-#[doc(no_inline)]
-pub use async_lock::SemaphoreGuardArc as AsyncSemaphoreGuardArc;
-
 cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
-        #[doc(no_inline)]
-        pub use async_lock::Mutex as AsyncMutex;
-        #[doc(no_inline)]
-        pub use async_lock::MutexGuard as AsyncMutexGuard;
-        #[doc(no_inline)]
-        pub use async_lock::MutexGuardArc as AsyncMutexGuardArc;
 
         #[doc(no_inline)]
         pub use async_executors::JoinHandle as LowLevelJoinHandle;
@@ -149,22 +131,9 @@ cfg_if! {
         cfg_if! {
             if #[cfg(feature="rt-async-std")] {
                 #[doc(no_inline)]
-                pub use async_std::sync::Mutex as AsyncMutex;
-                #[doc(no_inline)]
-                pub use async_std::sync::MutexGuard as AsyncMutexGuard;
-                #[doc(no_inline)]
-                pub use async_std::sync::MutexGuardArc as AsyncMutexGuardArc;
-
-                #[doc(no_inline)]
                 pub use async_std::task::JoinHandle as LowLevelJoinHandle;
 
             } else if #[cfg(feature="rt-tokio")] {
-                #[doc(no_inline)]
-                pub use tokio::sync::Mutex as AsyncMutex;
-                #[doc(no_inline)]
-                pub use tokio::sync::MutexGuard as AsyncMutexGuard;
-                #[doc(no_inline)]
-                pub use tokio::sync::OwnedMutexGuard as AsyncMutexGuardArc;
 
                 #[doc(no_inline)]
                 pub use tokio::task::JoinHandle as LowLevelJoinHandle;
@@ -178,9 +147,9 @@ cfg_if! {
 #[doc(inline)]
 pub use assembly_buffer::*;
 #[doc(inline)]
-pub use async_peek_stream::*;
+pub use async_locks::*;
 #[doc(inline)]
-pub use async_tag_lock::*;
+pub use async_peek_stream::*;
 #[doc(inline)]
 pub use clone_stream::*;
 #[doc(inline)]
@@ -208,6 +177,8 @@ pub use ip_extra::*;
 #[doc(inline)]
 pub use ipc::*;
 #[doc(inline)]
+pub use log_unwrap::*;
+#[doc(inline)]
 pub use must_join_handle::*;
 #[doc(inline)]
 pub use must_join_single_future::*;
@@ -223,6 +194,8 @@ pub use pin::*;
 pub use random::*;
 #[doc(inline)]
 pub use raw_timestamp::*;
+#[doc(inline)]
+pub use resolver::*;
 #[doc(inline)]
 pub use single_shot_eventual::*;
 #[doc(inline)]
@@ -246,10 +219,13 @@ pub use timeout::*;
 pub use timeout_or::*;
 #[doc(inline)]
 pub use tools::*;
+#[doc(inline)]
+pub use trim_backtrace::*;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use wasm::*;
+pub use wasm_tools::*;
 
-// Tests must be public for wasm-pack tests
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 pub mod tests;
 
 cfg_if! {

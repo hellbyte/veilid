@@ -1,6 +1,6 @@
 # Contributing to Veilid
 
-Before you get started, please review our [Code of Conduct](./code_of_conduct.md). We're here to make things better and we cannot do that without treating each other with respect.
+Before you get started, please review our [Code of Conduct](./CODE_OF_CONDUCT.md). We're here to make things better and we cannot do that without treating each other with respect.
 
 ## Code Contributions
 
@@ -43,7 +43,7 @@ There are numerous ways you can contribute to the growth and success of the Veil
 - Submit bugs as well as feature/enhancement requests. Letting us know you found a bug, have an idea for a new feature, or see a way we can enhance existing features is just as important and useful as writing the code related to those things. Send us detailed information about your issue or idea:
   - Features/Enhancements: Describe your idea. If you're able to, sketch out a diagram or mock-up.
   - Bugs: Please be sure to include the expected behavior, the observed behavior, and steps to reproduce the problem. Please be descriptive about the environment you've installed your node or application into.
-- [Help other users with open issues]. Sometimes all an issue needs is a little conversation to clear up a process or misunderstanding. Please keep the [Code of Conduct](./code_of_conduct.md) in mind.
+- [Help other users with open issues]. Sometimes all an issue needs is a little conversation to clear up a process or misunderstanding. Please keep the [Code of Conduct](./CODE_OF_CONDUCT.md) in mind.
 - Help other contributors test recently submitted merge requests. By pulling down a merge request and testing it, you can help validate new code contributions for stability and quality.
 - Report a security or privacy vulnerability. Please let us know if you find ways in which Veilid could handle security and/or privacy in a different or better way. Surely let us know if you find broken or otherwise flawed security and/or privacy functions. You can report these directly to <security@veilid.org>.
 - Add or edit documentation. Documentation is a living and evolving library of knowledge. As such, care, feeding, and even pruning is needed from time to time. If you're a non-native english speaker, you can help by replacing any ambiguous idioms, metaphors, or unclear language that might make our documentation hard to understand.

@@ -2,6 +2,17 @@
 /// The Flutter/Dart bindings are in this lib.rs directly
 use super::*;
 
+#[wasm_bindgen]
+extern "C" {
+    // Use `js_namespace` here to bind `console.log(..)` instead of just
+    // `log(..)`
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    pub fn console_log(s: &str);
+
+    // #[wasm_bindgen]
+    // pub fn alert(s: &str);
+}
+
 // API Singleton
 lazy_static! {
     static ref VEILID_API: SendWrapper<RefCell<Option<veilid_core::VeilidAPI>>> =
@@ -70,7 +81,7 @@ pub fn initialize_veilid_core(platform_config: String) {
         return;
     }
     let platform_config: VeilidWASMConfig = veilid_core::deserialize_json(&platform_config)
-        .expect("failed to deserialize platform config json");
+        .expect_or_log("failed to deserialize platform config json");
 
     // Set up subscriber and layers
     let subscriber = Registry::default();
@@ -79,11 +90,13 @@ pub fn initialize_veilid_core(platform_config: String) {
 
     // Performance logger
     if platform_config.logging.performance.enabled {
-        let filter = veilid_core::VeilidLayerFilter::new(
-            platform_config.logging.performance.level,
-            &platform_config.logging.performance.ignore_log_targets,
-            None,
+        let filter = VeilidLayerFilter::new_with_config(
+            VeilidLayerFilterConfig::new()
+                .with_common_log_level(platform_config.logging.performance.level),
         );
+        #[allow(deprecated)]
+        filter.apply_ignore_change_list(&platform_config.logging.performance.ignore_log_targets);
+
         let layer = WASMLayer::new(
             WASMLayerConfig::new()
                 .with_report_logs_in_timings(platform_config.logging.performance.logs_in_timings)
@@ -105,11 +118,12 @@ pub fn initialize_veilid_core(platform_config: String) {
 
     // API logger
     if platform_config.logging.api.enabled {
-        let filter = veilid_core::VeilidLayerFilter::new(
-            platform_config.logging.api.level,
-            &platform_config.logging.api.ignore_log_targets,
-            None,
+        let filter = VeilidLayerFilter::new_with_config(
+            VeilidLayerFilterConfig::new().with_common_log_level(platform_config.logging.api.level),
         );
+        #[allow(deprecated)]
+        filter.apply_ignore_change_list(&platform_config.logging.api.ignore_log_targets);
+
         let layer = veilid_core::ApiTracingLayer::init().with_filter(filter.clone());
         filters.insert("api", filter);
         layers.push(layer.boxed());
@@ -119,27 +133,32 @@ pub fn initialize_veilid_core(platform_config: String) {
     subscriber
         .try_init()
         .map_err(|e| format!("failed to initialize logging: {}", e))
-        .expect("failed to initalize WASM platform");
+        .expect_or_log("failed to initalize WASM platform");
 }
 
 #[wasm_bindgen()]
-pub fn change_log_level(layer: String, log_level: String) {
+#[must_use]
+pub fn change_log_level(layer: String, directives: String) -> i32 {
     let layer = if layer == "all" { "".to_owned() } else { layer };
-    let Ok(log_level) = deserialize_json::<veilid_core::VeilidConfigLogLevel>(&log_level) else {
-        return;
-    };
     let filters = (*FILTERS).borrow();
+
     if layer.is_empty() {
         // Change all layers
         for f in filters.values() {
-            f.set_max_level(log_level);
+            if f.try_apply_directives_string(directives.clone()).is_err() {
+                return 2;
+            }
         }
     } else {
         // Change a specific layer
-        if let Some(f) = filters.get(layer.as_str()) {
-            f.set_max_level(log_level);
+        let Some(f) = filters.get(layer.as_str()) else {
+            return 1;
+        };
+        if f.try_apply_directives_string(directives).is_err() {
+            return 2;
         }
     }
+    0
 }
 
 #[wasm_bindgen()]
@@ -150,18 +169,14 @@ pub fn change_log_ignore(layer: String, log_ignore: String) {
     if layer.is_empty() {
         // Change all layers
         for f in filters.values() {
-            f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
-                &f.ignore_list(),
-                log_ignore.clone(),
-            )));
+            #[allow(deprecated)]
+            f.apply_ignore_change_string(log_ignore.clone());
         }
     } else {
         // Change a specific layer
         if let Some(f) = filters.get(layer.as_str()) {
-            f.set_ignore_list(Some(VeilidLayerFilter::apply_ignore_change(
-                &f.ignore_list(),
-                log_ignore.clone(),
-            )));
+            #[allow(deprecated)]
+            f.apply_ignore_change_string(log_ignore.clone());
         }
     }
 }
@@ -206,7 +221,7 @@ pub fn is_shutdown() -> VeilidAPIResult<bool> {
     if let Err(veilid_core::VeilidAPIError::NotInitialized) = veilid_api {
         return VeilidAPIResult::Ok(true);
     }
-    let veilid_api = veilid_api.unwrap();
+    let veilid_api = veilid_api.unwrap_or_log();
     let is_shutdown = veilid_api.is_shutdown();
     VeilidAPIResult::Ok(is_shutdown)
 }
@@ -288,7 +303,7 @@ pub fn routing_context_with_default_safety(id: u32) -> u32 {
 #[must_use]
 pub fn routing_context_with_safety(id: u32, safety_selection: String) -> u32 {
     let safety_selection: veilid_core::SafetySelection =
-        veilid_core::deserialize_json(&safety_selection).unwrap();
+        veilid_core::deserialize_json(&safety_selection).unwrap_or_log();
 
     let routing_context = {
         let rc = (*ROUTING_CONTEXTS).borrow();
@@ -306,7 +321,8 @@ pub fn routing_context_with_safety(id: u32, safety_selection: String) -> u32 {
 #[wasm_bindgen()]
 #[must_use]
 pub fn routing_context_with_sequencing(id: u32, sequencing: String) -> u32 {
-    let sequencing: veilid_core::Sequencing = veilid_core::deserialize_json(&sequencing).unwrap();
+    let sequencing: veilid_core::Sequencing =
+        veilid_core::deserialize_json(&sequencing).unwrap_or_log();
 
     let routing_context = {
         let rc = (*ROUTING_CONTEXTS).borrow();
@@ -1167,7 +1183,7 @@ pub fn crypto_generate_shared_secret(
 }
 
 #[wasm_bindgen()]
-pub fn crypto_random_bytes(kind: u32, len: u32) -> Promise {
+pub fn crypto_random_bytes(kind: u32, len: usize) -> Promise {
     let kind: veilid_core::CryptoKind = veilid_core::CryptoKind::from(kind);
 
     wrap_api_future_plain(async move {
@@ -1883,7 +1899,7 @@ pub fn veilid_version() -> JsValue {
         minor,
         patch,
     };
-    <JsValue as JsValueSerdeExt>::from_serde(&vv).unwrap()
+    <JsValue as JsValueSerdeExt>::from_serde(&vv).unwrap_or_log()
 }
 
 #[wasm_bindgen()]

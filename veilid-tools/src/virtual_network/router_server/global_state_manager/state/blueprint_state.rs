@@ -82,7 +82,7 @@ impl BlueprintState {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn set_limit_network_count(&mut self, limit_network_count: Option<usize>) {
         // Update fields
         self.fields = Arc::new(BlueprintStateFields {
@@ -91,7 +91,7 @@ impl BlueprintState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn set_model(&mut self, model: WeightedList<String>) {
         let model = Some(model.map(|x| Arc::new(x.clone())));
         // Update fields
@@ -101,7 +101,10 @@ impl BlueprintState {
         });
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -121,7 +124,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, _gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, _gsm_inner), err)
+    )]
     pub fn clear_ipv4_gateway(
         &mut self,
         _gsm_inner: &mut GlobalStateManagerInner,
@@ -145,7 +151,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -171,7 +180,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv4_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -185,7 +197,7 @@ impl BlueprintState {
 
         if ipv4.gateway.is_some() {
             if let Some(gateway_params) = gateway_params {
-                ipv4.gateway.as_mut().expect("must exist").params = gateway_params;
+                ipv4.gateway.as_mut().expect_or_log("must exist").params = gateway_params;
             } else {
                 ipv4.gateway = None;
             }
@@ -204,7 +216,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn clear_ipv6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -224,7 +239,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, _gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, _gsm_inner), err)
+    )]
     pub fn clear_ipv6_gateway(
         &mut self,
         _gsm_inner: &mut GlobalStateManagerInner,
@@ -248,7 +266,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -274,7 +295,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn set_ipv6_gateway(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -288,7 +312,7 @@ impl BlueprintState {
 
         if ipv6.gateway.is_some() {
             if let Some(gateway_params) = gateway_params {
-                ipv6.gateway.as_mut().expect("must exist").params = gateway_params;
+                ipv6.gateway.as_mut().expect_or_log("must exist").params = gateway_params;
             } else {
                 ipv6.gateway = None;
             }
@@ -324,7 +348,10 @@ impl BlueprintState {
         ok
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     fn generate_model_inner(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -349,7 +376,10 @@ impl BlueprintState {
     }
 
     /// Network filter that ensures we can allocate an ipv4 gateway address on a network
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     fn gateway_network_filter_v4(
         &self,
         gsm_inner: &GlobalStateManagerInner,
@@ -365,7 +395,10 @@ impl BlueprintState {
     }
 
     /// Network filter that ensures we can allocate an ipv4 gateway address on a network
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     fn gateway_network_filter_v6(
         &self,
         gsm_inner: &GlobalStateManagerInner,
@@ -380,7 +413,10 @@ impl BlueprintState {
         Ok(can_allocate)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     fn generate_ipv4_inner(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -478,7 +514,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     fn generate_ipv6_inner(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -576,7 +615,10 @@ impl BlueprintState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn generate(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -608,7 +650,7 @@ impl BlueprintState {
             gsm_inner
                 .network_states_mut()
                 .release_id(network_state_id)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
             return Err(e);
         }
 
@@ -628,7 +670,10 @@ impl BlueprintState {
         Ok(network_state_id)
     }
 
-    #[instrument(level = "debug", skip(self, callback), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, callback), err)
+    )]
     pub fn for_each_network_id<F, R>(&self, mut callback: F) -> GlobalStateManagerResult<Option<R>>
     where
         F: FnMut(NetworkStateId) -> GlobalStateManagerResult<Option<R>>,
@@ -641,7 +686,7 @@ impl BlueprintState {
         Ok(None)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn on_network_released(&mut self, network_id: NetworkStateId) {
         // Remove network from list
         let pos = self
@@ -649,7 +694,7 @@ impl BlueprintState {
             .networks
             .iter()
             .position(|id| *id == network_id)
-            .expect("must exist");
+            .expect_or_log("must exist");
         let mut networks = self.fields.networks.clone();
         networks.remove(pos);
 

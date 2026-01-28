@@ -1,3 +1,4 @@
+import sys
 from typing import Annotated
 from pathlib import Path
 import os
@@ -10,259 +11,31 @@ VEILID_REPO = "registry.gitlab.com/veilid/veilid"
 ZIG_VERSION = "0.13.0"
 CMAKE_VERSION_MINOR = "4.0"
 CMAKE_VERSION_PATCH = "4.0.2"
-WASM_BINDGEN_CLI_VERSION = "0.2.106"
-RUST_VERSION = "1.86.0"
+BINARYEN_VERSION = "125"
 RUST_UNIT_TESTS_NIGHTLY_VERSION="nightly-2026-01-01"
 RUST_PACKAGE_TESTS_NIGHTLY_VERSION="nightly"
 RETRY_COUNT = "12"
+RUSTUP_HOME = "/usr/local/rustup"
+RUSTUP_DIST_SERVER = "https://static.rust-lang.org"
+CARGO_HOME = "/usr/local/cargo"
 
+# Contains ignore patterns that are not included in the .gitignore file
 DIRECTORY_IGNORE_PATTERNS = [
-    "__pycache__/",
-    "__pypackages__/",
-    "._*",
-    ".accio/",
-    ".apdisk",
-    ".AppleDB",
-    ".AppleDesktop",
-    ".AppleDouble",
-    ".atom/",
-    ".build/",
-    ".buildlog/",
-    ".cache",
-    ".com.apple.timemachine.donotpresent",
-    ".config/",
-    ".coverage",
-    ".coverage.*",
-    ".cxx",
-    ".dart_tool/",
-    ".dart/",
-    ".dagger/"
-    ".dmypy.json",
-    ".DocumentRevisions-V100",
-    ".DS_Store",
-    ".eggs/",
-    ".env",
-    ".externalNativeBuild",
-    ".flutter",
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    ".flutter-plugins-dependencies/",
-    ".flutter-plugins/",
-    ".fseventsd",
-    ".generated/"
-    ".git/",
-    ".gradle",
-    ".history",
-    ".hypothesis/",
-    ".idea",
-    ".idea/",
-    ".installed.cfg",
-    ".ipynb_checkpoints",
-    ".LSOverride",
-    ".mypy_cache/",
-    ".nox/",
-    ".packages",
-    ".pdm-build/",
-    ".pdm-python",
-    ".pdm.toml",
-    ".pub-cache/",
-    ".pub/",
-    ".pybuilder/",
-    ".pyre/",
-    ".pytest_cache/",
-    ".Python",
-    ".python-version",
-    ".pytype/",
-    ".ropeproject",
-    ".ruff_cache/",
-    ".sconsign.dblite",
-    ".scrapy",
-    ".Spotlight-V100",
-    ".spyderproject",
-    ".spyproject",
-    ".svn/",
-    ".tags*",
-    ".TemporaryItems",
-    ".tmp-earthly-out/",
-    ".tox/",
-    ".Trashes",
-    ".vagrant/",
-    ".venv",
-    ".VolumeIcon.icns",
-    ".vscode/",
-    ".vscode/*",
-    ".webassets-cache",
-    "[Dd]esktop.ini",
-    "*.[Cc]ache",
-    "*.cab",
-    "*.class",
-    "*.cover",
-    "*.dSYM",
-    "*.dSYM.zip",
-    "*.egg",
-    "*.egg-info/",
-    "*.hmap",
-    "*.iml",
-    "*.ipa",
-    "*.ipr",
-    "*.iws",
-    "*.lnk",
-    "*.local",
-    "*.log",
-    "*.manifest",
-    "*.mo",
-    "*.mode1v3",
-    "*.mode2v3",
-    "*.moved-aside",
-    "*.msi",
-    "*.msix",
-    "*.msm",
-    "*.msp",
-    "*.njsproj",
-    "*.ntvs*",
-    "*.pbxuser",
-    "*.perspectivev3",
-    "*.pot",
-    "*.py,cover",
-    "*.py[cod]",
-    "*.pyc",
-    "*.sage.py",
-    "*.sln.docstates",
-    "*.so",
-    "*.spec",
-    "*.stackdump",
-    "*.suo",
-    "*.sw?",
-    "*.swp",
-    "*.user",
-    "*.userosscache",
-    "*.xccheckout",
-    "*.xcscmblueprint",
-    "***/*.rs.bk",
-    "**/__pycache__/",
-    "**/.generated/",
-    "**/.symlinks/",
-    "**/.vagrant/",
-    "**/*.jks",
-    "**/*.keystore",
-    "**/*.rs.bk",
-    "**/*sync/",
-    "**/DerivedData/",
-    "**/dgph",
-    "**/doc/api/",
-    "**/Flutter/ephemeral/",
-    "**/ios/Flutter/.last_build_id",
-    "**/Pods/",
-    "**/xcuserdata/",
-    ".venv/",
-    "*$py.class",
-    "*sync/",
-    "__pycache__",
-    "android/app/debug",
-    "android/app/profile",
-    "android/app/release",
-    "captures/",
+    ".dagger/",
     "dagger.gen.go",
-    "~*",
-    "$RECYCLE.BIN/",
-    "app.*.map.json",
-    "app.*.symbols",
-    "bin/",
-    "build/",
-    "Carthage/Build/",
-    "celerybeat-schedule",
-    "celerybeat.pid",
-    "cover/",
-    "coverage.xml",
-    "coverage/target",
-    "cython_debug/",
-    "db.sqlite3",
-    "db.sqlite3-journal",
-    "Dependencies/",
-    "DerivedData/",
-    "develop-eggs/",
-    "dist-ssr",
-    "dist/",
-    "dmypy.json",
-    "docs/_build/",
-    "downloads/",
-    "eggs/",
-    "ehthumbs_vista.db",
-    "ehthumbs.db",
-    "env.bak/",
-    "env/",
-    "ENV/",
-    "fastlane/Preview.html",
-    "fastlane/report.xml",
-    "fastlane/screenshots/**/*.png",
-    "fastlane/test_output",
-    "flamegraph.svg",
-    "flutter/",
-    "Flutter/",
-    "GeneratedPluginRegistrant.h",
-    "GeneratedPluginRegistrant.java",
-    "GeneratedPluginRegistrant.m",
-    "gradle-wrapper.jar",
-    "htmlcov/",
-    "Icon",
-    "Icon?",
-    "instance/",
-    "iOSInjectionProject/",
-    "ipython_config.py",
-    "key.properties",
-    "lerna-debug.log*",
-    "lib/",
-    "lib64/",
-    "local_settings.py",
-    "local.properties",
-    "logs",
-    "logs/",
-    "MANIFEST",
-    "Network",
-    "Trash",
-    "Folder",
-    "node_modules",
-    "nosetests.xml",
-    "npm-debug.log*",
-    "packages/",
-    "parts/",
-    "perf.data",
-    "perf.data.old",
-    "pip-delete-this-directory.txt",
-    "pip-log.txt",
-    "pkg/",
-    "playground.xcworkspace",
-    "pnpm-debug.log*",
-    "profile",
-    "profile_default/",
-    "Runner/GeneratedPluginRegistrant.*",
-    "sdist/",
-    "ServiceDefinitions.json",
-    "share/python-wheels/",
-    "target/",
-    "Temporary",
-    "Items",
-    "Thumbs.db",
-    "Thumbs.db:encryptable",
-    "timeline.xctimeline",
-    "tmp/*",
-    "var/",
-    "venv.bak/",
-    "venv/",
-    "wasm-pack.log",
-    "wheels/",
-    "x64/",
-    "x86/",
-    "xcuserdata",
-    "xcuserdata/",
-    "yarn-debug.log*",
-    "yarn-error.log*",
+    "dagger.json",
 ]
 
 # Validate host architecture
-arch = platform.machine()
-if arch != "x86_64" and arch != "aarch64":
-    raise ValueError(f"Unsupported host platform: {arch}")
+ARCH = platform.machine()
+if ARCH == "x86_64":
+    DEFAULT_CARGO_TARGET = "x86_64-unknown-linux-gnu"
+    DEFAULT_CARGO_MUSL_TARGET = "x86_64-unknown-linux-musl"
+elif ARCH == "aarch64":
+    DEFAULT_CARGO_TARGET = "aarch64-unknown-linux-gnu"
+    DEFAULT_CARGO_MUSL_TARGET = "aarch64-unknown-linux-musl"
+else:
+    raise ValueError(f"Unsupported host platform: {ARCH}")
 
 @object_type
 class Veilid:
@@ -273,12 +46,15 @@ class Veilid:
         return (
             dag.container()
             .from_("ubuntu:18.04")
-            .with_env_variable("RUSTUP_HOME", "/usr/local/rustup")
-            .with_env_variable("RUSTUP_DIST_SERVER", "https://static.rust-lang.org")
-            .with_env_variable("CARGO_HOME", "/usr/local/cargo")
-            .with_env_variable("PATH", "$PATH:/usr/local/cargo/bin:/usr/local/zig", expand=True)
+            .with_env_variable("RUSTUP_HOME", RUSTUP_HOME)
+            .with_env_variable("RUSTUP_DIST_SERVER", RUSTUP_DIST_SERVER)
+            .with_env_variable("CARGO_HOME", CARGO_HOME)
+            .with_env_variable("PATH", f"$PATH:{CARGO_HOME}/bin:/usr/local/zig", expand=True)
             .with_env_variable("LD_LIBRARY_PATH", "/usr/local/lib")
             .with_env_variable("RUST_BACKTRACE", "1")
+            .with_env_variable("BINSTALL_DISABLE_TELEMETRY", "true")
+            .with_env_variable("BINSTALL_NO_CONFIRM", "true")
+            .with_env_variable("DEFAULT_CARGO_TARGET", DEFAULT_CARGO_TARGET)
             .with_workdir("/veilid")
         )
 
@@ -308,7 +84,7 @@ class Veilid:
             "libssl-dev", "openssl", "file", "git", "pkg-config",
             "libdbus-1-dev", "libdbus-glib-1-dev", "libgirepository1.0-dev",
             "libcairo2-dev", "checkinstall", "unzip", "zip", "libncursesw5-dev",
-            "libncurses5-dev", "gcc-mingw-w64-x86-64", "mingw-w64"
+            "libncurses5-dev", "gcc-mingw-w64-x86-64", "mingw-w64", "jq"
         ]
         container = container.with_exec(base_packages)
 
@@ -352,12 +128,12 @@ class Veilid:
         # Install rustup and Rust toolchain
         container = container.with_exec([
             "sh", "-c",
-            f"curl --retry {RETRY_COUNT} --retry-connrefused --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain={RUST_VERSION} -y --no-modify-path"
+            f"curl --retry {RETRY_COUNT} --retry-connrefused --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path"
         ])
 
         # Set permissions and verify installation
         container = container.with_exec([
-            "chmod", "-R", "a+w", "/usr/local/rustup", "/usr/local/cargo"
+            "chmod", "-R", "a+w", RUSTUP_HOME, CARGO_HOME
         ]).with_exec([
             "rustup", "--version"
         ]).with_exec([
@@ -385,26 +161,48 @@ class Veilid:
             container = container.with_exec(["rustup", "target", "add", target])
 
         # Add a single default-target nightly toolchain for some tests
-        container = container.with_exec(["rustup", "toolchain", "install", f"nightly-{RUST_NIGHTLY_VERSION}"])
+        container = container.with_exec(["rustup", "toolchain", "install", f"{RUST_UNIT_TESTS_NIGHTLY_VERSION}", "-c", "miri,rust-src"])
 
-        # Install cargo tools
+        # Install cargo tools (try binstall of musl targets first, then fallback to regular install)
+        # (Doing it this way so we don't have to install the musl rust targets, which binstall will default to building with)
         container = container.with_exec([
-            "cargo", "install", "wasm-pack", "wasm-opt", "--locked"
+            "sh", "-c",
+            "curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash",
+        ]).with_exec([ "sh", "-c",
+            f"cargo binstall wasm-pack --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} || cargo install wasm-pack --locked"
         ]).with_exec([
-            "cargo", "install", "-f", "wasm-bindgen-cli", "--locked", "--version", WASM_BINDGEN_CLI_VERSION
+            "sh", "-c",
+            f"cargo binstall cargo-chef --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} || cargo install cargo-chef --locked"
         ]).with_exec([
-            "cargo", "install", "cargo-chef", "--locked"
+            "sh", "-c",
+            f"cargo binstall cargo-msrv --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} || cargo install cargo-msrv --locked"
+        ]).with_exec([
+            "sh", "-c",
+            f"cargo binstall cargo-nextest --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} || cargo install cargo-nextest --locked"
+        ]).with_exec([
+            "sh", "-c",
+            f"cargo binstall cargo-docs-rs --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} || cargo install cargo-docs-rs --locked"
         ])
 
-        # Install Zig for cross-compilation
+        # Install Zig for cross-compilation (no binstall available for zigbuild yet)
         arch = platform.machine()
         zig_url = f"https://ziglang.org/download/{ZIG_VERSION}/zig-linux-{arch}-{ZIG_VERSION}.tar.xz"
         container = (
             container
-            .with_exec(["curl", "--retry", RETRY_COUNT, "--retry-connrefused", "-O", zig_url])
+            .with_exec(["curl", "--retry", RETRY_COUNT, "--retry-connrefused", "-L", "-O", zig_url])
             .with_exec(["tar", "-C", "/usr/local", "-xJf", f"zig-linux-{arch}-{ZIG_VERSION}.tar.xz"])
             .with_exec(["mv", f"/usr/local/zig-linux-{arch}-{ZIG_VERSION}", "/usr/local/zig"])
-            .with_exec(["cargo", "install", "cargo-zigbuild"])
+            .with_exec(["cargo", "install", "cargo-zigbuild", "--locked"])
+        )
+
+        # Install binaryen wasm-opt
+        binaryen_url = f"https://github.com/WebAssembly/binaryen/releases/download/version_{BINARYEN_VERSION}/binaryen-version_{BINARYEN_VERSION}-{arch}-linux.tar.gz"
+        container = (
+            container
+            .with_exec(["curl", "--retry", RETRY_COUNT, "--retry-connrefused", "-L", "-o", "binaryen.tar.gz", "-O", binaryen_url])
+            .with_exec(["mkdir", "/tmp/binaryen"])
+            .with_exec(["tar", "-C", "/tmp/binaryen", "-xvf", "binaryen.tar.gz", f"--strip-components=1"])
+            .with_exec(["cp", f"/tmp/binaryen/bin/wasm-opt", f"{CARGO_HOME}/bin"])
         )
 
         return container
@@ -453,18 +251,9 @@ class Veilid:
             "cargo", "chef", "prepare", "--recipe-path", "recipe.json"
         ])
 
-        # Cook dependencies for test profile using architecture-specific target
-        arch = platform.machine()
-        if arch == "x86_64":
-            default_target = "x86_64-unknown-linux-gnu"
-        elif arch == "aarch64":
-            default_target = "aarch64-unknown-linux-gnu"
-        else:
-            default_target = "x86_64-unknown-linux-gnu"  # fallback
-
         container = container.with_exec([
             "cargo", "chef", "cook", "--profile=test", "--tests",
-            "--target", default_target, "--recipe-path", "recipe.json",
+            "--target", DEFAULT_CARGO_TARGET, "--recipe-path", "recipe.json",
             "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
             "-p", "veilid-core", "-p", "veilid-remote-api"
         ])
@@ -524,7 +313,27 @@ class Veilid:
         # Restore original Cargo.lock (copy it again to ensure it's preserved)
         container = container.with_file("Cargo.lock", source.file("Cargo.lock"))
 
+        # Install the wasm-bindgen CLI tool that we need, which depends on the Cargo.lock version of wasm-bindgen being used
+        container = container.with_exec([
+            "sh", "-c", 
+            f"WASM_BINDGEN_VERSION=$(cargo tree --locked -p veilid-wasm -i wasm-bindgen | head -n 1 | cut -c 15-); "
+            f"cargo binstall wasm-bindgen-cli --disable-strategies=compile --targets {DEFAULT_CARGO_MUSL_TARGET} --version $WASM_BINDGEN_VERSION || "
+            f"cargo install wasm-bindgen-cli --locked --version $WASM_BINDGEN_VERSION"
+        ])
+
         return container
+
+    @function
+    def test_msrv(self, source: dagger.Directory, base: str = "local", ci_registry_image: str = VEILID_REPO) -> str:
+        """Run MSRV check"""
+        container = self.code_linux(source, base, ci_registry_image)
+        container = container.with_exec(["cargo", "msrv", "verify", "--manifest-path", "veilid-tools/Cargo.toml"])
+        container = container.with_exec(["cargo", "msrv", "verify", "--manifest-path", "veilid-core/Cargo.toml"])
+        container = container.with_exec(["cargo", "msrv", "verify", "--manifest-path", "veilid-server/Cargo.toml"])
+        container = container.with_exec(["cargo", "msrv", "verify", "--manifest-path", "veilid-cli/Cargo.toml"])
+        container = container.with_exec(["cargo", "msrv", "verify", "--manifest-path", "veilid-flutter/rust/Cargo.toml"])
+        
+        return container.combined_output()
 
     @function
     def clippy(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Container:
@@ -534,10 +343,10 @@ class Veilid:
         # Run clippy for different targets
         container = (
             container
-            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "x86_64-unknown-linux-gnu"])
-            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "x86_64-pc-windows-gnu"])
-            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "aarch64-apple-darwin"])
-            .with_exec(["cargo", "clippy", "--locked", "--manifest-path=veilid-wasm/Cargo.toml", "--target", "wasm32-unknown-unknown"])
+            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "x86_64-unknown-linux-gnu", "--workspace", "--all-targets"])
+            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "x86_64-pc-windows-gnu", "--workspace", "--all-targets"])
+            .with_exec(["cargo-zigbuild", "clippy", "--locked", "--target", "aarch64-apple-darwin", "--workspace", "--all-targets"])
+            .with_exec(["cargo", "clippy", "--locked", "--manifest-path=veilid-wasm/Cargo.toml", "--target", "wasm32-unknown-unknown", "--features=js,dart"])
         )
 
         return container
@@ -546,93 +355,108 @@ class Veilid:
     def build_windows_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Build Windows AMD64 binaries and return the target directory"""
         container = self.code_linux(source, base, ci_registry_image)
+        target="x86_64-pc-windows-gnu"
 
         # Build release binaries for x86_64-pc-windows-gnu
         # Careful not to include veilid-flutter or veilid-wasm here as they add the 'json-camel-case' feature
         # which will screw up the build of veilid-server because it will automatically add that feature inappropriately
-        container = container.with_exec([
-            "cargo", "zigbuild", "--locked", "--target", "x86_64-pc-windows-gnu", "--release",
-            "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
-            "-p", "veilid-core", "-p", "veilid-remote-api"
-        ])
+        out = (
+            container.with_exec([
+                "cargo", "zigbuild", "--locked", "--target", target, "--release", "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools", "-p", "veilid-core", "-p", "veilid-remote-api"
+            ])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/.fingerprint"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/build"]) 
+            .with_exec(["rm", "-rf", f"./target/{target}/release/deps"]) 
+            .with_exec(["rm", "-rf", f"./target/{target}/release/examples"]) 
+            .with_exec(["rm", "-rf", f"./target/{target}/release/incremental"]) 
+            .directory(f"./target/{target}/release")
+        )
 
         # Return the built artifacts directory
-        return container.directory("./target/x86_64-pc-windows-gnu")
+        return out
 
 
     @function
     def build_linux_amd64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Build Linux AMD64 binaries and return the target directory"""
         container = self.code_linux(source, base, ci_registry_image)
+        target="x86_64-unknown-linux-gnu"
 
         # Build release binaries for x86_64-unknown-linux-gnu
         # Careful not to include veilid-flutter or veilid-wasm here as they add the 'json-camel-case' feature
         # which will screw up the build of veilid-server because it will automatically add that feature inappropriately
-        container = container.with_exec([
-            "cargo", "zigbuild", "--locked", "--target", "x86_64-unknown-linux-gnu", "--release",
-            "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
-            "-p", "veilid-core", "-p", "veilid-remote-api"
-        ])
+        out = (
+            container.with_exec([
+                "cargo", "zigbuild", "--locked", "--target", target, "--release", "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools", "-p", "veilid-core", "-p", "veilid-remote-api"
+            ])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/.fingerprint"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/build"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/deps"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/examples"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/incremental"])
+            .directory(f"./target/{target}/release")
+        )
 
         # Return the built artifacts directory
-        return container.directory("./target/x86_64-unknown-linux-gnu")
+        return out
 
     @function
     def build_linux_arm64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
         """Build Linux ARM64 binaries and return the target directory"""
         container = self.code_linux(source, base, ci_registry_image)
+        target="aarch64-unknown-linux-gnu"
 
         # Build release binaries for aarch64-unknown-linux-gnu
         # Careful not to include veilid-flutter or veilid-wasm here as they add the 'json-camel-case' feature
         # which will screw up the build of veilid-server because it will automatically add that feature inappropriately
-        container = container.with_exec([
-            "cargo", "zigbuild", "--locked", "--target", "aarch64-unknown-linux-gnu", "--release",
-            "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
-            "-p", "veilid-core", "-p", "veilid-remote-api"
-        ])
+        out = (
+            container.with_exec([
+                "cargo", "zigbuild", "--locked", "--target", target, "--release", "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools", "-p", "veilid-core", "-p", "veilid-remote-api"
+            ])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/.fingerprint"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/build"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/deps"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/examples"])
+            .with_exec(["rm", "-rf", f"./target/{target}/release/incremental"])
+            .directory(f"./target/{target}/release")
+        )
 
         # Return the built artifacts directory
-        return container.directory("./target/aarch64-unknown-linux-gnu")
+        return out
 
     # No support yet. One could do this with a host-mount of the Apple Developer SDKs and running on a MacOS machine.
     # @function
     # def build_macos_arm64(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> dagger.Directory:
     #     """Build MacOS ARM64 binaries and return the target directory"""
     #     container = self.code_linux(source, base, ci_registry_image)
-
+    #     target="aarch64-apple-darwin"
     #     # Build release binaries for aarch64-apple-darwin
     #     # Careful not to include veilid-flutter or veilid-wasm here as they add the 'json-camel-case' feature
     #     # which will screw up the build of veilid-server because it will automatically add that feature inappropriately
-    #     container = container.with_exec([
-    #         "cargo", "zigbuild", "--locked", "--target", "aarch64-apple-darwin", "--release",
-    #         "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
-    #         "-p", "veilid-core", "-p", "veilid-remote-api"
-    #     ]).terminal()
+    #     out = (
+    #         container.with_exec([
+    #             "cargo", "zigbuild", "--locked", "--target", target, "--release", "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools", "-p", "veilid-core", "-p", "veilid-remote-api"
+    #         ])
+    #         .with_exec(["rm", "-rf", f"./target/{target}/release/.fingerprint"])
+    #         .with_exec(["rm", "-rf", f"./target/{target}/release/build"])
+    #         .with_exec(["rm", "-rf", f"./target/{target}/release/deps"])
+    #         .with_exec(["rm", "-rf", f"./target/{target}/release/examples"])
+    #         .with_exec(["rm", "-rf", f"./target/{target}/release/incremental"])
+    #         .directory(f"./target/{target}/release")
+    #     )
 
     #     # Return the built artifacts directory
-    #     return container.directory("./target/aarch64-apple-darwin")
-
-
+    #     return out
+        
     @function
     async def test_native(self, source: Annotated[dagger.Directory, Ignore(DIRECTORY_IGNORE_PATTERNS)], base: str = "local", ci_registry_image: str = VEILID_REPO) -> str:
         """Run native unit tests"""
         container = self.code_linux(source, base, ci_registry_image)
 
-        # Determine default cargo target based on architecture
-        arch = platform.machine()
-        if arch == "x86_64":
-            default_target = "x86_64-unknown-linux-gnu"
-        elif arch == "aarch64":
-            default_target = "aarch64-unknown-linux-gnu"
-        else:
-            default_target = "x86_64-unknown-linux-gnu"  # fallback
-
         # Run native unit tests and capture output
         result = await container.with_exec([
-            "cargo", "test", "--locked", "--tests", "--target", default_target,
-            "-p", "veilid-server", "-p", "veilid-cli", "-p", "veilid-tools",
-            "-p", "veilid-core", "-p", "veilid-remote-api"
-        ]).stdout()
+            "cargo", "test", "--locked", "--tests", "--target", DEFAULT_CARGO_TARGET, "--workspace", "--all-targets"
+        ]).combined_output()
 
         return f"Native tests completed:\n{result}"
 
@@ -642,7 +466,7 @@ class Veilid:
         container = self.code_linux(source, base, ci_registry_image)
 
         # Run documentation build and capture output
-        result = await container.with_exec(["./build_docs.sh", rust_nightly_version]).stdout()
+        result = await container.with_exec(["./build_docs.sh", rust_nightly_version]).combined_output()
 
         return f"Documentation build completed:\n{result}"
 
@@ -652,7 +476,8 @@ class Veilid:
         container = self.code_linux(source, base, ci_registry_image)
 
         # Build WASM release and capture output (tests require network access, so just build for now)
-        result = await container.with_exec(["veilid-wasm/wasm_build_dart.sh", "release"]).stdout()
+        container = await container.with_exec(["veilid-wasm/wasm_build_dart.sh", "release"])
+        result = await container.with_exec(["veilid-wasm/wasm_build_js.sh", "release"]).combined_output()
 
         return f"WASM build completed:\n{result}"
 
@@ -661,9 +486,13 @@ class Veilid:
         """Run all tests: clippy, native tests, docs, and WASM build"""
         results = []
 
+        # Run MSRV check
+        msrv_result = self.test_msrv(source, base, ci_registry_image)
+        results.append(f"MSRV check completed:\n{msrv_result}")
+
         # Run clippy (already includes multiple targets)
         clippy_container = self.clippy(source, base, ci_registry_image)
-        clippy_result = await clippy_container.stdout()
+        clippy_result = await clippy_container.combined_output()
         results.append(f"Clippy completed:\n{clippy_result}")
 
         # Run native tests
@@ -685,7 +514,7 @@ class Veilid:
         """Tests to run before packaging releases"""
         results = []
 
-        # Test DOCS.RS build with most recent nightly
+        # Test DOCS.RS build with most recent nightly (this will probably install a newer version than what is in the cache, but for this test it is important to use the latest nightly)
         docs_result = await self.test_docs(source, RUST_PACKAGE_TESTS_NIGHTLY_VERSION, base, ci_registry_image)
         results.append(docs_result)
 
@@ -711,8 +540,8 @@ class Veilid:
         container = (
             container
             .with_directory("/veilid/package", source.directory("package"))
-            .with_file(f"/veilid/target/{rust_target}/release/veilid-server", build_dir.file("release/veilid-server"))
-            .with_file(f"/veilid/target/{rust_target}/release/veilid-cli", build_dir.file("release/veilid-cli"))
+            .with_file(f"/veilid/target/{rust_target}/release/veilid-server", build_dir.file("veilid-server"))
+            .with_file(f"/veilid/target/{rust_target}/release/veilid-cli", build_dir.file("veilid-cli"))
         )
 
         # Set nightly flag
@@ -771,8 +600,8 @@ class Veilid:
             .with_file("/veilid/veilid-cli/Cargo.toml", source.file("veilid-cli/Cargo.toml"))
             .with_file("/veilid/veilid-server/Cargo.toml", source.file("veilid-server/Cargo.toml"))
             .with_directory("/veilid/package", source.directory("package"))
-            .with_file(f"/veilid/target/{rust_target}/release/veilid-server", build_dir.file("release/veilid-server"))
-            .with_file(f"/veilid/target/{rust_target}/release/veilid-cli", build_dir.file("release/veilid-cli"))
+            .with_file(f"/veilid/target/{rust_target}/release/veilid-server", build_dir.file("veilid-server"))
+            .with_file(f"/veilid/target/{rust_target}/release/veilid-cli", build_dir.file("veilid-cli"))
         )
 
         # Set nightly flag
@@ -811,7 +640,7 @@ class Veilid:
         container = self.code_linux(source, base, ci_registry_image)
 
         # Copy build artifacts into container
-        container = container.with_directory(f"/veilid/target/{rust_target}", build_dir)
+        container = container.with_directory(f"/veilid/target/{rust_target}/release", build_dir)
 
         # Copy package directory
         container = container.with_directory("/veilid/package", source.directory("package"))

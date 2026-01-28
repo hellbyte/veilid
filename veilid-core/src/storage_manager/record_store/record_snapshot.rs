@@ -50,7 +50,10 @@ impl<D> RecordStore<D>
 where
     D: RecordDetail,
 {
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn prepare_snapshot_lock(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -60,7 +63,10 @@ where
             .await
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub async fn snapshot_record_locked(
         &self,
         record_lock: &RecordStoreRecordLockGuard,
@@ -86,20 +92,30 @@ where
                 Vec::with_capacity(max_subkey as usize + 1);
 
             // Prepare all load actions
+            let mut opt_prepare_error = None;
             for subkey in 0..=max_subkey {
                 if !stored_subkeys.contains(subkey) {
                     all_value_load_actions.push(None);
                     continue;
                 }
 
-                let load_action_result = inner.prepare_get_load_action(&opaque_record_key, subkey);
+                let load_action_result =
+                    match inner.prepare_get_load_action(&opaque_record_key, subkey) {
+                        Ok(load_action_result) => load_action_result,
+                        Err(e) => {
+                            opt_prepare_error = Some(e);
+                            break;
+                        }
+                    };
 
                 match load_action_result {
                     LoadActionResult::NoRecord => {
-                        apibail_internal!("Should not get a no-record result here since it was asserted the record existed earlier");
+                        opt_prepare_error = Some(VeilidAPIError::internal("Should not get a no-record result here since it was asserted the record existed earlier"));
+                        break;
                     }
                     LoadActionResult::NoSubkey { descriptor: _ } => {
-                        apibail_internal!("Should not get a no-subkey result here since it was listed in stored_subkeys");
+                        opt_prepare_error = Some(VeilidAPIError::internal("Should not get a no-subkey result here since it was listed in stored_subkeys"));
+                        break;
                     }
                     LoadActionResult::Subkey {
                         descriptor: _,
@@ -108,6 +124,17 @@ where
                         all_value_load_actions.push(Some(load_action));
                     }
                 }
+            }
+
+            if let Some(prepare_error) = opt_prepare_error {
+                // Finish all load actions
+                {
+                    let mut inner = self.inner.lock();
+                    for load_action in all_value_load_actions.into_iter().flatten() {
+                        inner.finish_load_action(load_action);
+                    }
+                }
+                return Err(prepare_error);
             }
 
             all_value_load_actions

@@ -47,12 +47,14 @@ cfg_if::cfg_if! {
 extern crate alloc;
 
 mod attachment_manager;
+#[cfg(feature = "unstable-blockstore")]
+mod block_store;
 mod component;
 mod core_context;
 mod crypto;
-mod intf;
 mod logging;
 mod network_manager;
+mod protected_store;
 mod routing_table;
 mod rpc_processor;
 mod stats_accounting;
@@ -61,61 +63,35 @@ mod table_store;
 mod veilid_api;
 mod veilid_config;
 
-pub(crate) use self::component::*;
-pub(crate) use self::core_context::RegisteredComponents;
-#[allow(unused_imports)]
-pub(crate) use self::logging::{
-    debug_duration, record_duration, record_duration_fut, MeasureDebugFuture, MeasureFuture,
-    DEBUGWARN,
-};
-pub(crate) use self::stats_accounting::*;
+////////////////////////////////////////////////////////////////////////////////////////////
+// Public API Exports
 
 pub use self::component::VeilidComponentGuard;
 pub use self::core_context::{api_startup, api_startup_json, UpdateCallback};
 pub use self::logging::{
-    ApiTracingLayer, FmtStripFields, VeilidLayerFilter, VeilidLayerLogKeyFilter,
-    DEFAULT_LOG_FACILITIES_ENABLED_LIST, DEFAULT_LOG_FACILITIES_IGNORE_LIST,
-    FLAME_LOG_FACILITIES_IGNORE_LIST, VEILID_LOG_KEY_FIELD,
+    ApiTracingLayer, FmtStripVeilidFields, VeilidLayerFilter, VeilidLayerFilterConfig,
+    VeilidLayerLogKeyFilter, VeilidLogDirective, VeilidLogKey, VeilidLogKeyFilterMode,
+    VEILID_LOG_KEY_FIELD,
 };
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use self::logging::{LogOutput, LogOutputKind, VeilidTracing};
 pub use self::veilid_api::*;
 pub use self::veilid_config::*;
+/// Re-exported from `async-trait` crate
+pub use async_trait;
+/// Re-exported from `tracing` crate
+pub use tracing;
+/// Re-exported from `tracing-subscriber` crate
+pub use tracing_subscriber;
+/// Re-exported from `veilid-tools` crate
 pub use veilid_tools as tools;
 
-/// The on-the-wire serialization format for Veilid RPC.
-pub(crate) mod veilid_capnp {
-    #![allow(
-        clippy::all,
-        clippy::must_use_candidate,
-        clippy::large_futures,
-        clippy::large_stack_arrays,
-        clippy::large_stack_frames,
-        clippy::large_types_passed_by_value,
-        clippy::unused_async,
-        clippy::ptr_cast_constness
-    )]
-    include!("../proto/veilid_capnp.rs");
-}
+#[cfg(target_os = "android")]
+pub use veilid_api::android::veilid_core_setup_android;
 
+#[cfg(any(test, feature = "test-util"))]
 #[doc(hidden)]
 pub mod tests;
-
-#[cfg(target_os = "android")]
-pub use intf::android::veilid_core_setup_android;
-
-use cfg_if::*;
-use enumset::*;
-use eyre::{bail, eyre, Report as EyreReport, Result as EyreResult, WrapErr};
-#[allow(unused_imports)]
-use futures_util::stream::{FuturesOrdered, FuturesUnordered};
-use get_size::*;
-use indent::*;
-use parking_lot::*;
-use schemars::JsonSchema;
-use serde::*;
-use stop_token::*;
-use thiserror::Error as ThisError;
-use tracing::*;
-use veilid_tools::*;
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
@@ -123,8 +99,6 @@ cfg_if::cfg_if! {
         pub use tsify::*;
     }
 }
-
-/////////////////////////////////////////////////////////////////////////
 
 /// Return the cargo package version of veilid-core in string format.
 #[must_use]
@@ -136,9 +110,9 @@ pub fn veilid_version_string() -> String {
 #[must_use]
 pub fn veilid_version() -> (u32, u32, u32) {
     (
-        u32::from_str(env!("CARGO_PKG_VERSION_MAJOR")).unwrap(),
-        u32::from_str(env!("CARGO_PKG_VERSION_MINOR")).unwrap(),
-        u32::from_str(env!("CARGO_PKG_VERSION_PATCH")).unwrap(),
+        u32::from_str(env!("CARGO_PKG_VERSION_MAJOR")).unwrap_or_log(),
+        u32::from_str(env!("CARGO_PKG_VERSION_MINOR")).unwrap_or_log(),
+        u32::from_str(env!("CARGO_PKG_VERSION_PATCH")).unwrap_or_log(),
     )
 }
 
@@ -157,3 +131,47 @@ pub fn veilid_features() -> Vec<String> {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////
+// Crate-only Exports
+
+mod veilid_capnp {
+    #![allow(
+        clippy::all,
+        clippy::must_use_candidate,
+        clippy::large_futures,
+        clippy::large_stack_arrays,
+        clippy::large_stack_frames,
+        clippy::large_types_passed_by_value,
+        clippy::unused_async,
+        clippy::ptr_cast_constness
+    )]
+    include!("../proto/veilid_capnp.rs");
+}
+
+use self::attachment_manager::TickEvent;
+use self::component::*;
+use self::core_context::RegisteredComponents;
+#[allow(unused_imports)]
+use self::logging::{
+    debug_duration, record_duration, record_duration_fut, MeasureDebugFuture, MeasureFuture,
+    VeilidComponentLogFacilities, VeilidComponentLogFacility, DEBUGWARN,
+};
+use self::stats_accounting::*;
+
+use async_trait::*;
+use cfg_if::*;
+use enumset::*;
+use eyre::{bail, eyre, Report as EyreReport, Result as EyreResult, WrapErr};
+use futures_util::stream::{FuturesOrdered, FuturesUnordered, StreamExt as _};
+use get_size::*;
+use indent::*;
+use parking_lot::*;
+use schemars::JsonSchema;
+use serde::*;
+use stop_token::{future::FutureExt as _, *};
+use thiserror::Error as ThisError;
+use tracing::*;
+use veilid_tools::*;
+
+/////////////////////////////////////////////////////////////////////////

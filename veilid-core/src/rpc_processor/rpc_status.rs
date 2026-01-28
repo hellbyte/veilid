@@ -18,7 +18,7 @@ impl RPCProcessor {
     // direct -> node status + sender info
     // safety -> node status
     // private -> nothing
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG)))]
     pub async fn rpc_call_status(
         &self,
         dest: Destination,
@@ -33,7 +33,6 @@ impl RPCProcessor {
         let routing_table = self.routing_table();
         let (opt_target_nr, routing_domain, node_status) = if let Some(UnsafeRoutingInfo {
             opt_node,
-            opt_relay,
             opt_routing_domain,
         }) =
             dest.get_unsafe_routing_info(&routing_table)
@@ -41,13 +40,10 @@ impl RPCProcessor {
             let Some(routing_domain) = opt_routing_domain else {
                 // Because this exits before calling 'question()',
                 // a failure to find a routing domain constitutes a send failure
-                // Record the send failure on both the node and its relay
+                // Record the send failure on the node
                 let send_ts = Timestamp::now_non_decreasing();
                 if let Some(node) = &opt_node {
                     self.record_send_failure(RPCKind::Question, send_ts, node.clone(), None, None);
-                }
-                if let Some(relay) = &opt_relay {
-                    self.record_send_failure(RPCKind::Question, send_ts, relay.clone(), None, None);
                 }
                 return Ok(NetworkResult::no_connection_other(
                     "no routing domain for target",
@@ -143,9 +139,8 @@ impl RPCProcessor {
                 }
             }
             Destination::Relay {
-                relay: _,
+                relay_di: _,
                 node: _,
-                safety_selection: _,
             }
             | Destination::PrivateRoute {
                 private_route: _,
@@ -166,7 +161,7 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_status_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Get the question
         let kind = msg.operation.kind().clone();

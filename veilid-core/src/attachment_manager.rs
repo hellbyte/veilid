@@ -5,16 +5,18 @@ impl_veilid_log_facility!("attach");
 
 const TICK_INTERVAL_MSEC: u32 = 1000;
 const ATTACHMENT_MAINTAINER_INTERVAL_MSEC: u32 = 1000;
-const BIND_WAIT_DELAY_MSEC: u32 = 10000;
+const BIND_WAIT_DELAY: TimestampDuration = TimestampDuration::new_ms(10000);
 
 #[derive(Debug, Clone)]
 pub struct AttachmentManagerStartupContext {
-    pub startup_lock: Arc<StartupLock>,
+    pub initialize_lock: Arc<StartupLock>,
+    pub attachment_lock: Arc<StartupLock>,
 }
 impl AttachmentManagerStartupContext {
     pub fn new() -> Self {
         Self {
-            startup_lock: Arc::new(StartupLock::new()),
+            initialize_lock: Arc::new(StartupLock::new()),
+            attachment_lock: Arc::new(StartupLock::new()),
         }
     }
 }
@@ -35,12 +37,11 @@ struct AttachmentManagerInner {
     attachment_state: AttachmentState,
     last_routing_table_health: Option<Arc<RoutingTableHealth>>,
     maintain_peers: bool,
-    attach_enabled: bool,
     started_ts: Timestamp,
     attach_ts: Option<Timestamp>,
+    bind_retry_ts: Option<Timestamp>,
     last_tick_ts: Option<Timestamp>,
     tick_future: Option<PinBoxFutureStatic<()>>,
-    eventual_termination: Option<EventualValue<()>>,
 }
 
 impl fmt::Debug for AttachmentManagerInner {
@@ -49,11 +50,10 @@ impl fmt::Debug for AttachmentManagerInner {
             .field("attachment_state", &self.attachment_state)
             .field("last_routing_table_health", &self.last_routing_table_health)
             .field("maintain_peers", &self.maintain_peers)
-            .field("attach_enabled", &self.attach_enabled)
             .field("started_ts", &self.started_ts)
             .field("attach_ts", &self.attach_ts)
+            .field("bind_retry_ts", &self.bind_retry_ts)
             .field("last_tick_ts", &self.last_tick_ts)
-            .field("eventual_termination", &self.eventual_termination)
             .finish()
     }
 }
@@ -84,12 +84,11 @@ impl AttachmentManager {
             attachment_state: AttachmentState::Detached,
             last_routing_table_health: None,
             maintain_peers: false,
-            attach_enabled: false,
             started_ts: Timestamp::now(),
             attach_ts: None,
             last_tick_ts: None,
+            bind_retry_ts: None,
             tick_future: None,
-            eventual_termination: None,
         }
     }
     pub fn new(
@@ -121,14 +120,21 @@ impl AttachmentManager {
         self.inner.lock().attach_ts
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new()
+            .with_facility(VeilidComponentLogFacility::try_new("attach").unwrap())
+    }
+
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn init_async(&self) -> EyreResult<()> {
-        let guard = self.startup_context.startup_lock.startup()?;
+        let guard = self.startup_context.initialize_lock.startup()?;
         guard.success();
         Ok(())
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn post_init_async(&self) -> EyreResult<()> {
         let registry = self.registry();
 
@@ -140,10 +146,17 @@ impl AttachmentManager {
             attachment_maintainer_task_routine
         );
 
+        let mut inner = self.inner.lock();
+
+        // Let the attachment maintainer run
+        let guard = self.startup_context.attachment_lock.startup()?;
+        guard.success();
+
         // Create top level tick interval
         let tick_future = interval(
             "attachment maintainer tick",
             TICK_INTERVAL_MSEC,
+            true,
             move || {
                 let registry = registry.clone();
                 async move {
@@ -155,32 +168,28 @@ impl AttachmentManager {
             },
         );
 
-        {
-            let mut inner = self.inner.lock();
-            inner.tick_future = Some(tick_future);
-
-            // Enable attachment now
-            inner.attach_enabled = true;
-        }
+        // Keep ticker, drop this to stop the ticker
+        inner.tick_future = Some(tick_future);
 
         Ok(())
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn pre_terminate_async(&self) {
-        {
-            let mut inner = self.inner.lock();
-            // Disable attachment now
-            // Will cause attachment maintainer to drive the state toward 'Detached'
-            inner.attach_enabled = false;
-        }
+        // Start attachment shutdown
+        let guard = self
+            .startup_context
+            .attachment_lock
+            .shutdown()
+            .await
+            .expect_or_log("should be initialized");
 
         // Wait for detached state
         while !matches!(
             self.inner.lock().attachment_state,
             AttachmentState::Detached
         ) {
-            sleep(500).await;
+            sleep(100).await;
         }
 
         // Stop ticker
@@ -194,31 +203,36 @@ impl AttachmentManager {
         if let Err(e) = self.attachment_maintainer_task.stop().await {
             veilid_log!(self warn "attachment_maintainer not stopped: {}", e);
         }
+
+        // Attachent shutdown successful
+        guard.success();
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn terminate_async(&self) {
         let guard = self
             .startup_context
-            .startup_lock
+            .initialize_lock
             .shutdown()
             .await
-            .expect("should be initialized");
+            .expect_or_log("should be initialized");
 
         // Shutdown successful
         guard.success();
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn attach(&self) -> bool {
-        let Ok(_guard) = self.startup_context.startup_lock.enter() else {
+        let Ok(_guard) = self.startup_context.initialize_lock.enter() else {
             return false;
         };
 
         let mut inner = self.inner.lock();
         // If attaching is disabled (because we are terminating)
         // then just return now
-        if !inner.attach_enabled {
+
+        if !self.startup_context.attachment_lock.is_started() {
             return false;
         }
         let previous = inner.maintain_peers;
@@ -227,9 +241,10 @@ impl AttachmentManager {
         previous != inner.maintain_peers
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn detach(&self) -> bool {
-        let Ok(_guard) = self.startup_context.startup_lock.enter() else {
+        let Ok(_guard) = self.startup_context.initialize_lock.enter() else {
             return false;
         };
 
@@ -279,81 +294,132 @@ impl AttachmentManager {
     }
 
     // Manage attachment state
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn attachment_maintainer_task_routine(
         &self,
         _stop_token: StopToken,
         _last_ts: Timestamp,
-        _cur_ts: Timestamp,
+        cur_ts: Timestamp,
     ) -> EyreResult<()> {
-        let (state, maintain_peers, attach_enabled) = {
-            let inner = self.inner.lock();
+        // Get the state to process
+        let (mut state, maintain_peers, bind_retry_waiting) = {
+            let mut inner = self.inner.lock();
+
+            // Check for bind wait retry timeout
+            let bind_retry_waiting =
+                if inner.bind_retry_ts.is_some() && inner.bind_retry_ts.unwrap() > cur_ts {
+                    true
+                } else {
+                    inner.bind_retry_ts = None;
+                    false
+                };
+
             (
                 inner.attachment_state,
                 inner.maintain_peers,
-                inner.attach_enabled,
+                bind_retry_waiting,
             )
         };
 
-        let next_state = match state {
-            AttachmentState::Detached => {
-                if maintain_peers && attach_enabled {
-                    veilid_log!(self debug "attachment starting");
+        // Enter the attachment lock and return if we are shutting down
+        let Ok(_guard) = self.startup_context.attachment_lock.enter() else {
+            // Only shutdown is possible if we get here
+            match state {
+                AttachmentState::Detached | AttachmentState::Detaching => {
+                    // ok
+                }
+                AttachmentState::Attaching
+                | AttachmentState::AttachedWeak
+                | AttachmentState::AttachedGood
+                | AttachmentState::AttachedStrong
+                | AttachmentState::FullyAttached
+                | AttachmentState::OverAttached => {
+                    veilid_log!(self debug "terminating attachment maintainer task");
+                    self.update_non_attached_state(AttachmentState::Detaching);
+                    self.inner.lock().attachment_state = AttachmentState::Detaching;
 
-                    match self.startup().await {
-                        Err(err) => {
-                            error!("attachment startup failed: {}", err);
-                            None
-                        }
-                        Ok(StartupDisposition::BindRetry) => {
-                            veilid_log!(self info "waiting for network to bind...");
-                            sleep(BIND_WAIT_DELAY_MSEC).await;
-                            None
-                        }
-                        Ok(StartupDisposition::Success) => {
-                            veilid_log!(self debug "started maintaining peers");
+                    self.shutdown().await;
 
-                            self.update_non_attached_state(AttachmentState::Attaching);
-                            Some(AttachmentState::Attaching)
-                        }
-                    }
-                } else {
-                    None
+                    self.update_non_attached_state(AttachmentState::Detached);
+                    self.inner.lock().attachment_state = AttachmentState::Detached;
                 }
             }
-            AttachmentState::Attaching
-            | AttachmentState::AttachedWeak
-            | AttachmentState::AttachedGood
-            | AttachmentState::AttachedStrong
-            | AttachmentState::FullyAttached
-            | AttachmentState::OverAttached => {
-                if maintain_peers && attach_enabled {
-                    let network_manager = self.network_manager();
-                    if network_manager.network_needs_restart() {
-                        veilid_log!(self info "Restarting network");
-                        self.update_non_attached_state(AttachmentState::Detaching);
-                        Some(AttachmentState::Detaching)
-                    } else {
-                        self.update_attached_state(state)
-                    }
-                } else {
-                    veilid_log!(self debug "stopped maintaining peers");
-                    Some(AttachmentState::Detaching)
-                }
-            }
-            AttachmentState::Detaching => {
-                veilid_log!(self debug "shutting down attachment");
-                self.shutdown().await;
 
-                self.update_non_attached_state(AttachmentState::Detached);
-                Some(AttachmentState::Detached)
-            }
+            return Ok(());
         };
 
-        // Transition to next state
-        if let Some(next_state) = next_state {
-            let mut inner = self.inner.lock();
-            inner.attachment_state = next_state;
+        // Process the attachment state machine
+        loop {
+            let (next_state, continue_loop) = match state {
+                AttachmentState::Detached => {
+                    if maintain_peers && !bind_retry_waiting {
+                        veilid_log!(self debug "attachment starting");
+
+                        match self.startup().await {
+                            Err(err) => {
+                                error!("attachment startup failed: {}", err);
+                                (None, false)
+                            }
+                            Ok(StartupDisposition::BindRetry) => {
+                                veilid_log!(self info "waiting for network to bind...");
+                                self.inner.lock().bind_retry_ts =
+                                    Some(Timestamp::now_non_decreasing().later(BIND_WAIT_DELAY));
+                                (None, false)
+                            }
+                            Ok(StartupDisposition::Success) => {
+                                veilid_log!(self debug "started maintaining peers");
+
+                                self.update_non_attached_state(AttachmentState::Attaching);
+                                (Some(AttachmentState::Attaching), false)
+                            }
+                        }
+                    } else {
+                        (None, false)
+                    }
+                }
+                AttachmentState::Attaching
+                | AttachmentState::AttachedWeak
+                | AttachmentState::AttachedGood
+                | AttachmentState::AttachedStrong
+                | AttachmentState::FullyAttached
+                | AttachmentState::OverAttached => {
+                    if maintain_peers {
+                        let network_manager = self.network_manager();
+                        if network_manager.network_needs_restart() {
+                            veilid_log!(self info "Restarting network");
+                            self.update_non_attached_state(AttachmentState::Detaching);
+                            (Some(AttachmentState::Detaching), true)
+                        } else {
+                            (self.update_attached_state(state), false)
+                        }
+                    } else {
+                        veilid_log!(self debug "stopped maintaining peers");
+                        (Some(AttachmentState::Detaching), true)
+                    }
+                }
+                AttachmentState::Detaching => {
+                    veilid_log!(self debug "shutting down attachment");
+                    self.shutdown().await;
+
+                    self.update_non_attached_state(AttachmentState::Detached);
+                    (Some(AttachmentState::Detached), false)
+                }
+            };
+
+            // Transition to next state if it changed
+            if let Some(next_state) = next_state {
+                let mut inner = self.inner.lock();
+                inner.attachment_state = next_state;
+                state = next_state;
+            }
+
+            // Loop again if we should process the next state immediately
+            if !continue_loop {
+                break;
+            }
         }
 
         Ok(())
@@ -376,14 +442,14 @@ impl AttachmentManager {
         }
 
         // Startup rpc processor
-        if let Err(e) = rpc_processor.startup().await {
+        if let Err(e) = rpc_processor.startup() {
             network_manager.shutdown().await;
             return Err(e);
         }
 
         // Startup routing table
         let routing_table = self.routing_table();
-        if let Err(e) = routing_table.startup().await {
+        if let Err(e) = routing_table.startup() {
             rpc_processor.shutdown().await;
             network_manager.shutdown().await;
             return Err(e);
@@ -420,29 +486,29 @@ impl AttachmentManager {
         config: &VeilidConfigRoutingTable,
     ) -> AttachmentState {
         if health.reliable_entry_count
-            >= TryInto::<usize>::try_into(config.limit_over_attached).unwrap()
+            >= TryInto::<usize>::try_into(config.limit_over_attached).unwrap_or_log()
         {
             return AttachmentState::OverAttached;
         }
         if health.reliable_entry_count
-            >= TryInto::<usize>::try_into(config.limit_fully_attached).unwrap()
+            >= TryInto::<usize>::try_into(config.limit_fully_attached).unwrap_or_log()
         {
             return AttachmentState::FullyAttached;
         }
         if health.reliable_entry_count
-            >= TryInto::<usize>::try_into(config.limit_attached_strong).unwrap()
+            >= TryInto::<usize>::try_into(config.limit_attached_strong).unwrap_or_log()
         {
             return AttachmentState::AttachedStrong;
         }
         if health.reliable_entry_count
-            >= TryInto::<usize>::try_into(config.limit_attached_good).unwrap()
+            >= TryInto::<usize>::try_into(config.limit_attached_good).unwrap_or_log()
         {
             return AttachmentState::AttachedGood;
         }
         if health.reliable_entry_count
-            >= TryInto::<usize>::try_into(config.limit_attached_weak).unwrap()
+            >= TryInto::<usize>::try_into(config.limit_attached_weak).unwrap_or_log()
             || health.unreliable_entry_count
-                >= TryInto::<usize>::try_into(config.limit_attached_weak).unwrap()
+                >= TryInto::<usize>::try_into(config.limit_attached_weak).unwrap_or_log()
         {
             return AttachmentState::AttachedWeak;
         }

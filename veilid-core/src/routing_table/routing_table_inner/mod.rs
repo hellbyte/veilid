@@ -367,7 +367,7 @@ impl RoutingTableInner {
         );
         let closest_nodes = BTreeSet::new();
         for ck in VALID_CRYPTO_KINDS {
-            for bucket in self.buckets.get_mut(&ck).unwrap().iter_mut() {
+            for bucket in self.buckets.get_mut(&ck).unwrap_or_log().iter_mut() {
                 bucket.kick(0, &closest_nodes);
             }
         }
@@ -541,7 +541,7 @@ impl RoutingTableInner {
 
         let filter_ping = Box::new(
             move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                let entry = v.unwrap();
+                let entry = v.unwrap_or_log();
                 entry.with_inner(|e| {
                     // If this entry doesn't have node info in the routing domain we are checking, don't include it
                     if !e.has_node_info(routing_domain.into()) {
@@ -559,12 +559,12 @@ impl RoutingTableInner {
                     if opt_own_node_info_ts.is_some()
                         && !e.has_seen_our_node_info_ts(
                             routing_domain,
-                            opt_own_node_info_ts.unwrap(),
+                            opt_own_node_info_ts.unwrap_or_log(),
                         )
                     {
                         #[cfg(feature="verbose-tracing")]
                         veilid_log!(self debug "Ping reason: has not seen our node info timestamp (rd={:?} ids={:?} own_ni_ts={}\n:entry:\n{}",
-                            routing_domain, e.node_ids(), opt_own_node_info_ts.unwrap(), e);
+                            routing_domain, e.node_ids(), opt_own_node_info_ts.unwrap_or_log(), e);
                         return true;
                     }
 
@@ -606,8 +606,8 @@ impl RoutingTableInner {
                 }
                 // Sort by least recently contacted regardless of reliability
                 // If something needs a ping it should get it in the order of need
-                let ae = a_entry.as_ref().unwrap();
-                let be = b_entry.as_ref().unwrap();
+                let ae = a_entry.as_ref().unwrap_or_log();
+                let be = b_entry.as_ref().unwrap_or_log();
                 ae.with_inner(|ae| {
                     be.with_inner(|be| {
                         let ca = ae
@@ -632,7 +632,7 @@ impl RoutingTableInner {
         let transform = |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
             FilteredNodeRef::new(
                 self.registry.clone(),
-                v.unwrap().clone(),
+                v.unwrap_or_log().clone(),
                 NodeRefFilter::new().with_routing_domain(routing_domain),
                 Sequencing::default(),
             )
@@ -669,17 +669,17 @@ impl RoutingTableInner {
     fn get_bucket_mut(&mut self, bucket_index: BucketIndex) -> &mut Bucket {
         self.buckets
             .get_mut(&bucket_index.0)
-            .unwrap()
+            .unwrap_or_log()
             .get_mut(bucket_index.1)
-            .unwrap()
+            .unwrap_or_log()
     }
 
     fn get_bucket(&self, bucket_index: BucketIndex) -> &Bucket {
         self.buckets
             .get(&bucket_index.0)
-            .unwrap()
+            .unwrap_or_log()
             .get(bucket_index.1)
-            .unwrap()
+            .unwrap_or_log()
     }
 
     // Update buckets with new node ids we may have learned belong to this entry
@@ -773,7 +773,7 @@ impl RoutingTableInner {
     /// Create a node reference, possibly creating a bucket entry
     /// the 'update_func' closure is called on the node, and, if created,
     /// in a locked fashion as to ensure the bucket entry state is always valid
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn create_node_ref<F>(&mut self, node_ids: &NodeIdGroup, update_func: F) -> EyreResult<NodeRef>
     where
         F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner),
@@ -862,7 +862,7 @@ impl RoutingTableInner {
     }
 
     /// Resolve an existing routing table entry using any crypto kind and return a reference to it
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn lookup_bare_node_ref(&self, node_id_key: BareNodeId) -> EyreResult<Option<NodeRef>> {
         for ck in VALID_CRYPTO_KINDS {
             if let Some(nr) = self.lookup_node_ref(NodeId::new(ck, node_id_key.clone()))? {
@@ -873,7 +873,7 @@ impl RoutingTableInner {
     }
 
     /// Resolve an existing routing table entry and return a reference to it
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn lookup_node_ref(&self, node_id: NodeId) -> EyreResult<Option<NodeRef>> {
         if self
             .routing_table()
@@ -893,7 +893,7 @@ impl RoutingTableInner {
     }
 
     /// Resolve an existing routing table entry and return a filtered reference to it
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn lookup_and_filter_noderef(
         &self,
         node_id: NodeId,
@@ -941,7 +941,7 @@ impl RoutingTableInner {
     /// Shortcut function to add a node to our routing table if it doesn't exist
     /// and add the dial info we have for it. Returns a noderef filtered to
     /// the routing domain in which this node was registered for convenience.
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn register_node_with_peer_info(
         &mut self,
         peer_info: Arc<PeerInfo>,
@@ -1003,7 +1003,7 @@ impl RoutingTableInner {
     /// Shortcut function to add a node to our routing table if it doesn't exist
     /// Returns a noderef filtered to
     /// the routing domain in which this node was registered for convenience.
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn register_node_with_id(
         &mut self,
         routing_domain: RoutingDomain,
@@ -1137,7 +1137,7 @@ impl RoutingTableInner {
     // Find Nodes
 
     // Retrieve the fastest nodes in the routing table matching an entry filter
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn find_fast_non_local_nodes_filtered(
         &self,
         registry: VeilidComponentRegistry,
@@ -1152,7 +1152,7 @@ impl RoutingTableInner {
         );
         let public_node_filter = Box::new(
             move |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                let entry = v.unwrap();
+                let entry = v.unwrap_or_log();
                 entry.with_inner(|e| {
                     // skip nodes on local network
                     if e.node_info(RoutingDomain::LocalNetwork).is_some() {
@@ -1172,12 +1172,12 @@ impl RoutingTableInner {
             node_count,
             filters,
             |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
-                NodeRef::new(registry.clone(), v.unwrap().clone())
+                NodeRef::new(registry.clone(), v.unwrap_or_log().clone())
             },
         )
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     #[expect(dead_code)]
     pub fn transform_to_peer_info(
         &self,
@@ -1187,11 +1187,11 @@ impl RoutingTableInner {
     ) -> Arc<PeerInfo> {
         match entry {
             None => own_peer_info.clone(),
-            Some(entry) => entry.with_inner(|e| e.get_peer_info(routing_domain).unwrap()),
+            Some(entry) => entry.with_inner(|e| e.get_peer_info(routing_domain).unwrap_or_log()),
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn find_peers_with_sort_and_filter<T, O>(
         &self,
         node_count: usize,
@@ -1239,7 +1239,7 @@ impl RoutingTableInner {
             .collect()
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn find_preferred_fastest_nodes<T, O>(
         &self,
         node_count: usize,
@@ -1284,8 +1284,8 @@ impl RoutingTableInner {
                     return core::cmp::Ordering::Less;
                 }
                 // reliable nodes come first
-                let ae = a_entry.as_ref().unwrap();
-                let be = b_entry.as_ref().unwrap();
+                let ae = a_entry.as_ref().unwrap_or_log();
+                let be = b_entry.as_ref().unwrap_or_log();
                 ae.with_inner(|ae| {
                     be.with_inner(|be| {
                         let ra = ae.check_unreliable(cur_ts).is_none();
@@ -1338,7 +1338,7 @@ impl RoutingTableInner {
         )
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn find_preferred_closest_nodes<T, O>(
         &self,
         node_count: usize,
@@ -1405,12 +1405,12 @@ impl RoutingTableInner {
 
                 // get keys
                 let a_key = if let Some(a_entry) = a_entry {
-                    a_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
+                    a_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap_or_log())
                 } else {
                     routing_table.node_id(crypto_kind)
                 };
                 let b_key = if let Some(b_entry) = b_entry {
-                    b_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap())
+                    b_entry.with_inner(|e| e.node_ids().get(crypto_kind).unwrap_or_log())
                 } else {
                     routing_table.node_id(crypto_kind)
                 };
@@ -1448,7 +1448,7 @@ impl RoutingTableInner {
         Ok(out)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn sort_and_clean_closest_noderefs(
         &self,
         hash_coordinate: HashCoordinate,
@@ -1476,7 +1476,10 @@ impl RoutingTableInner {
         closest_nodes_locked.iter().map(|x| x.unlocked()).collect()
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_fastest_node(
         &self,
         cur_ts: Timestamp,
@@ -1517,7 +1520,10 @@ impl RoutingTableInner {
         fastest_node.map(|e| NodeRef::new(self.registry(), e))
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_random_fast_node(
         &self,
         cur_ts: Timestamp,
@@ -1565,7 +1571,10 @@ impl RoutingTableInner {
         ))
     }
 
-    #[instrument(level = "trace", skip(self, filter, metric), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, filter, metric), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn get_node_relative_performance(
         &self,
         node_id: NodeId,
@@ -1640,8 +1649,8 @@ pub fn make_closest_noderef_sort(
         a.operate(|_rti, a_entry| {
             b.operate(|_rti, b_entry| {
                 // get keys
-                let a_key = a_entry.node_ids().get(kind).unwrap();
-                let b_key = b_entry.node_ids().get(kind).unwrap();
+                let a_key = a_entry.node_ids().get(kind).unwrap_or_log();
+                let b_key = b_entry.node_ids().get(kind).unwrap_or_log();
 
                 // distance is the next metric, closer nodes first
                 let da = a_key

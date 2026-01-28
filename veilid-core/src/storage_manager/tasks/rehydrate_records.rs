@@ -4,7 +4,10 @@ impl_veilid_log_facility!("stor");
 
 impl StorageManager {
     /// Process background rehydration requests
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub(super) async fn rehydrate_records_task_routine(
         &self,
         stop_token: StopToken,

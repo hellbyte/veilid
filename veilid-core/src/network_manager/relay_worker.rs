@@ -35,7 +35,7 @@ impl NetworkManager {
         for task_n in 0..self.concurrency {
             let registry = self.registry();
             let receiver = channel.1.clone();
-            let stop_token = inner.relay_stop_source.as_ref().unwrap().token();
+            let stop_token = inner.relay_stop_source.as_ref().unwrap_or_log().token();
             let jh = spawn(&format!("relay worker {}", task_n), async move {
                 let this = registry.network_manager();
                 Box::pin(this.relay_worker(stop_token, receiver)).await
@@ -118,7 +118,10 @@ impl NetworkManager {
         }
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn enqueue_relay(
         &self,
         relay_nr: FilteredNodeRef,

@@ -32,91 +32,6 @@ macro_rules! bail_io_error_other {
     };
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature="rt-tokio")] {
-        #[macro_export]
-        macro_rules! asyncmutex_try_lock {
-            ($x:expr) => {
-                $x.try_lock().ok()
-            };
-        }
-
-        #[macro_export]
-        macro_rules! asyncmutex_lock_arc {
-            ($x:expr) => {
-                $x.clone().lock_owned().await
-            };
-        }
-
-        #[macro_export]
-        macro_rules! asyncmutex_try_lock_arc {
-            ($x:expr) => {
-                $x.clone().try_lock_owned().ok()
-            };
-        }
-
-        // #[macro_export]
-        // macro_rules! asyncrwlock_try_read {
-        //     ($x:expr) => {
-        //         $x.try_read().ok()
-        //     };
-        // }
-
-        // #[macro_export]
-        // macro_rules! asyncrwlock_try_write {
-        //     ($x:expr) => {
-        //         $x.try_write().ok()
-        //     };
-        // }
-    } else {
-        #[macro_export]
-        macro_rules! asyncmutex_try_lock {
-            ($x:expr) => {
-                $x.try_lock()
-            };
-        }
-        #[macro_export]
-        macro_rules! asyncmutex_lock_arc {
-            ($x:expr) => {
-                $x.lock_arc().await
-            };
-        }
-        #[macro_export]
-        macro_rules! asyncmutex_try_lock_arc {
-            ($x:expr) => {
-                $x.try_lock_arc()
-            };
-        }
-
-    }
-}
-
-#[macro_export]
-macro_rules! asyncrwlock_try_read {
-    ($x:expr) => {
-        $x.try_read()
-    };
-}
-#[macro_export]
-macro_rules! asyncrwlock_try_write {
-    ($x:expr) => {
-        $x.try_write()
-    };
-}
-
-#[macro_export]
-macro_rules! asyncrwlock_try_read_arc {
-    ($x:expr) => {
-        $x.try_read_arc()
-    };
-}
-#[macro_export]
-macro_rules! asyncrwlock_try_write_arc {
-    ($x:expr) => {
-        $x.try_write_arc()
-    };
-}
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 cfg_if! {
@@ -377,7 +292,6 @@ cfg_if::cfg_if! {
     if #[cfg(unix)] {
         use std::os::unix::fs::MetadataExt;
         use std::os::unix::prelude::PermissionsExt;
-        use nix::unistd::{Uid, Gid};
 
         pub fn ensure_file_private_owner<P:AsRef<Path>>(path: P) -> Result<(), String>
         {
@@ -386,14 +300,14 @@ cfg_if::cfg_if! {
                 return Ok(());
             }
 
-            let uid = Uid::effective();
-            let gid = Gid::effective();
+            let uid = unsafe { libc::geteuid() };
+            let gid = unsafe { libc::getegid() };
             let meta = std::fs::metadata(path).map_err(|e| format!("unable to get metadata for path: {}", e))?;
 
             if meta.mode() != 0o600 {
                 std::fs::set_permissions(path,std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("unable to set correct permissions on path: {}", e))?;
             }
-            if meta.uid() != uid.as_raw() || meta.gid() != gid.as_raw() {
+            if meta.uid() != uid || meta.gid() != gid {
                 return Err("path has incorrect owner/group".to_owned());
             }
             Ok(())
@@ -406,8 +320,8 @@ cfg_if::cfg_if! {
                 return Ok(());
             }
 
-            let uid = Uid::effective();
-            let gid = Gid::effective();
+            let uid = unsafe { libc::geteuid() };
+            let gid = unsafe { libc::getegid() };
             let meta = std::fs::metadata(path).map_err(|e| format!("unable to get metadata for path: {}", e))?;
 
             let perm = if group_read {
@@ -419,7 +333,7 @@ cfg_if::cfg_if! {
             if meta.mode() != perm {
                 std::fs::set_permissions(path,std::fs::Permissions::from_mode(perm)).map_err(|e| format!("unable to set correct permissions on path: {}", e))?;
             }
-            if meta.uid() != uid.as_raw() || meta.gid() != gid.as_raw() {
+            if meta.uid() != uid || meta.gid() != gid {
                 return Err("path has incorrect owner/group".to_owned());
             }
             Ok(())
@@ -500,38 +414,6 @@ pub unsafe fn unaligned_u8_vec_uninit(n_bytes: usize) -> Vec<u8> {
     mem::forget(unaligned);
 
     Vec::from_raw_parts(ptr, n_bytes, n_bytes)
-}
-
-#[must_use]
-pub fn debug_backtrace() -> String {
-    let bt = backtrace::Backtrace::new();
-    format!("{:?}", bt)
-}
-
-pub fn debug_print_backtrace() {
-    if is_debug_backtrace_enabled() {
-        debug!("{}", debug_backtrace());
-    }
-}
-
-#[must_use]
-pub fn is_debug_backtrace_enabled() -> bool {
-    cfg_if! {
-        if #[cfg(debug_assertions)] {
-            cfg_if! {
-                if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
-                    let rbenv = get_wasm_global_string_value("RUST_BACKTRACE").unwrap_or_default();
-                }
-                else
-                {
-                    let rbenv = std::env::var("RUST_BACKTRACE").unwrap_or_default();
-                }
-            }
-            rbenv == "1" || rbenv == "full"
-        } else {
-            false
-        }
-    }
 }
 
 pub fn type_name_of_val<T: ?Sized>(_val: &T) -> &'static str {

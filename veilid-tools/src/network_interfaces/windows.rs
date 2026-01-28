@@ -39,7 +39,6 @@ impl PlatformSupportWindows {
             is_loopback: intf.get_flag_loopback(),
             is_running: intf.get_flag_running(),
             is_point_to_point: intf.get_flag_point_to_point(),
-            has_default_route: intf.get_has_default_route(),
         }
     }
 
@@ -180,6 +179,11 @@ impl PlatformSupportWindows {
                     .push(InterfaceAddress::new(intf_addr, address_flags))
             }
 
+            // Add gateways if we have them
+            for gateway_address in windows_interface.gateway_addresses() {
+                network_interface.add_gateway(gateway_address);
+            }
+
             interfaces.insert(intf_name, network_interface);
         }
 
@@ -223,8 +227,18 @@ impl IpAdapterAddresses {
     pub fn get_flag_point_to_point(&self) -> bool {
         unsafe { (*self.data).IfType == IF_TYPE_TUNNEL }
     }
-    pub fn get_has_default_route(&self) -> bool {
-        unsafe { !(*self.data).FirstGatewayAddress.is_null() }
+    pub fn gateway_addresses(&self) -> Vec<IpAddr> {
+        let mut out = vec![];
+        unsafe {
+            let mut fga = (*self.data).FirstGatewayAddress;
+            while !fga.is_null() {
+                if let Some(address) = sockaddr_tools::to_ipaddr((*fga).Address.lpSockaddr) {
+                    out.push(address);
+                }
+                fga = (*fga).Next;
+            }
+        }
+        out
     }
 }
 

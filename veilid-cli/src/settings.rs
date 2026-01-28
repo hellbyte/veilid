@@ -14,9 +14,9 @@ enable_network: false
 address: "localhost:5959"
 autoconnect: true
 autoreconnect: true
-logging: 
+logging:
     level: "info"
-    terminal: 
+    terminal:
         enabled: false
     file:
         enabled: true
@@ -109,13 +109,16 @@ impl<'de> serde::Deserialize<'de> for LogLevel {
         }
     }
 }
-pub fn convert_loglevel(log_level: LogLevel) -> log::LevelFilter {
-    match log_level {
-        LogLevel::Error => log::LevelFilter::Error,
-        LogLevel::Warn => log::LevelFilter::Warn,
-        LogLevel::Info => log::LevelFilter::Info,
-        LogLevel::Debug => log::LevelFilter::Debug,
-        LogLevel::Trace => log::LevelFilter::Trace,
+
+impl From<LogLevel> for log::LevelFilter {
+    fn from(log_level: LogLevel) -> Self {
+        match log_level {
+            LogLevel::Error => log::LevelFilter::Error,
+            LogLevel::Warn => log::LevelFilter::Warn,
+            LogLevel::Info => log::LevelFilter::Info,
+            LogLevel::Debug => log::LevelFilter::Debug,
+            LogLevel::Trace => log::LevelFilter::Trace,
+        }
     }
 }
 
@@ -372,8 +375,8 @@ impl Settings {
 
 #[test]
 fn test_default_config() {
-    let cfg = load_default_config().unwrap();
-    let settings = cfg.try_deserialize::<Settings>().unwrap();
+    let cfg = load_default_config().unwrap_or_log();
+    let settings = cfg.try_deserialize::<Settings>().unwrap_or_log();
 
     println!("default settings: {:?}", settings);
 }

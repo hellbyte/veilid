@@ -3,10 +3,14 @@ use std::time::Duration;
 
 cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
-        use async_executors::{Bindgen, Timer};
+        use async_executors::{Bindgen, Timer, YieldNow};
 
         pub async fn sleep(millis: u32) {
-            Bindgen.sleep(Duration::from_millis(millis.into())).await
+            if millis == 0 {
+                Bindgen.yield_now().await;
+            } else {
+                Bindgen.sleep(Duration::from_millis(millis.into())).await
+            }
         }
 
     } else {

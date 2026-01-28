@@ -1,9 +1,13 @@
 use super::*;
 
 mod table_db;
+mod tasks;
+
 pub use table_db::*;
 
-pub mod tests;
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests_table_store;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod wasm;
@@ -20,6 +24,8 @@ use weak_table::WeakValueHashMap;
 impl_veilid_log_facility!("tstore");
 
 const ALL_TABLE_NAMES: &[u8] = b"all_table_names";
+const FLUSH_TABLES_INTERVAL_SECS: u32 = 60;
+const CLEANUP_TABLES_INTERVAL_SECS: u32 = 600;
 
 /// Description of column
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -80,6 +86,8 @@ struct TableStoreInner {
     encryption_key: Option<SharedSecret>,
     all_table_names: HashMap<String, String>,
     all_tables_db: Option<Database>,
+    /// Tick subscription
+    tick_subscription: Option<EventBusSubscription>,
 }
 
 impl fmt::Debug for TableStoreInner {
@@ -88,7 +96,6 @@ impl fmt::Debug for TableStoreInner {
             .field("opened", &self.opened)
             .field("encryption_key", &self.encryption_key)
             .field("all_table_names", &self.all_table_names)
-            //.field("all_tables_db", &self.all_tables_db)
             .finish()
     }
 }
@@ -101,6 +108,8 @@ pub struct TableStore {
     inner: Mutex<TableStoreInner>, // Sync mutex here because TableDB drops can happen at any time
     table_store_driver: TableStoreDriver,
     async_lock: Arc<AsyncMutex<()>>,
+    flush_tables_task: TickTask<EyreReport>,
+    cleanup_tables_task: TickTask<EyreReport>,
 }
 
 impl fmt::Debug for TableStore {
@@ -108,7 +117,6 @@ impl fmt::Debug for TableStore {
         f.debug_struct("TableStore")
             .field("registry", &self.registry)
             .field("inner", &self.inner)
-            //.field("table_store_driver", &self.table_store_driver)
             .field("async_lock", &self.async_lock)
             .finish()
     }
@@ -123,18 +131,25 @@ impl TableStore {
             encryption_key: None,
             all_table_names: HashMap::new(),
             all_tables_db: None,
+            tick_subscription: None,
         }
     }
     pub(crate) fn new(registry: VeilidComponentRegistry) -> Self {
         let inner = Self::new_inner();
         let table_store_driver = TableStoreDriver::new(registry.clone());
 
-        Self {
+        let this = Self {
             registry,
             inner: Mutex::new(inner),
             table_store_driver,
             async_lock: Arc::new(AsyncMutex::new(())),
-        }
+            flush_tables_task: TickTask::new("flush_tables_task", FLUSH_TABLES_INTERVAL_SECS),
+            cleanup_tables_task: TickTask::new("cleanup_tables_task", CLEANUP_TABLES_INTERVAL_SECS),
+        };
+
+        this.setup_tasks();
+
+        this
     }
 
     // Flush internal control state
@@ -142,14 +157,20 @@ impl TableStore {
         let (all_table_names_value, all_tables_db) = {
             let inner = self.inner.lock();
             let all_table_names_value = serialize_json_bytes(&inner.all_table_names);
-            (all_table_names_value, inner.all_tables_db.clone().unwrap())
+            (
+                all_table_names_value,
+                inner.all_tables_db.clone().unwrap_or_log(),
+            )
         };
         let mut dbt = DBTransaction::new();
         dbt.put(0, ALL_TABLE_NAMES, &all_table_names_value);
         if let Err(e) = all_tables_db.write(dbt).await {
             error!("failed to write all tables db: {}", e);
         }
+    }
 
+    // Cleanup/vacuum database
+    async fn cleanup(&self) {
         // Vacuum the open databases while we're at it
         let all_open_db: Vec<_> = {
             let inner = self.inner.lock();
@@ -206,24 +227,33 @@ impl TableStore {
         Ok(real_name)
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
-    async fn name_delete(&self, table: &str) -> VeilidAPIResult<Option<String>> {
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    fn name_delete(&self, table: &str) -> VeilidAPIResult<Option<String>> {
         let name = self.namespaced_name(table)?;
         let mut inner = self.inner.lock();
         let real_name = inner.all_table_names.remove(&name);
         Ok(real_name)
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
-    async fn name_get(&self, table: &str) -> VeilidAPIResult<Option<String>> {
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    fn name_get(&self, table: &str) -> VeilidAPIResult<Option<String>> {
         let name = self.namespaced_name(table)?;
         let inner = self.inner.lock();
         let real_name = inner.all_table_names.get(&name).cloned();
         Ok(real_name)
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
-    async fn name_rename(&self, old_table: &str, new_table: &str) -> VeilidAPIResult<()> {
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    fn name_rename(&self, old_table: &str, new_table: &str) -> VeilidAPIResult<()> {
         let old_name = self.namespaced_name(old_table)?;
         let new_name = self.namespaced_name(new_table)?;
 
@@ -243,7 +273,10 @@ impl TableStore {
     }
 
     /// List all known tables
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub fn list_all(&self) -> Vec<(String, String)> {
         let inner = self.inner.lock();
         inner
@@ -254,7 +287,10 @@ impl TableStore {
     }
 
     /// Delete all known tables
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn delete_all(&self) {
         // Get all tables
         let real_names = {
@@ -277,7 +313,10 @@ impl TableStore {
         self.flush().await;
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub(crate) async fn maybe_unprotect_device_encryption_key(
         &self,
         dek_bytes: &[u8],
@@ -290,7 +329,7 @@ impl TableStore {
         }
 
         // Get cryptosystem
-        let kind = CryptoKind::try_from(&dek_bytes[0..4]).unwrap();
+        let kind = CryptoKind::try_from(&dek_bytes[0..4]).unwrap_or_log();
         let crypto = self.crypto();
         let Some(vcrypto) = crypto.get_async(kind) else {
             bail!("unsupported cryptosystem '{kind}'");
@@ -336,7 +375,10 @@ impl TableStore {
         ))
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub(crate) async fn maybe_protect_device_encryption_key(
         &self,
         dek: SharedSecret,
@@ -377,7 +419,10 @@ impl TableStore {
         Ok(out)
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     async fn load_device_encryption_key(&self) -> EyreResult<Option<SharedSecret>> {
         let dek_bytes: Option<Vec<u8>> = self
             .protected_store()
@@ -400,7 +445,10 @@ impl TableStore {
         ))
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     async fn save_device_encryption_key(
         &self,
         device_encryption_key: Option<SharedSecret>,
@@ -449,7 +497,16 @@ impl TableStore {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new().with_facility(
+            VeilidComponentLogFacility::try_new_with_tags("tstore", ["#common"]).unwrap(),
+        )
+    }
+
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     async fn init_async(&self) -> EyreResult<()> {
         {
             let _async_guard = self.async_lock.lock().await;
@@ -488,11 +545,17 @@ impl TableStore {
             }
 
             // Deserialize all table names
-            let all_tables_db = self
+            let all_tables_db = match self
                 .table_store_driver
                 .open("__veilid_all_tables", 1, 1)
                 .await
-                .wrap_err("failed to create all tables table")?;
+            {
+                Ok(db) => db,
+                Err(e) => {
+                    veilid_log!(self error "failed to create all tables table: {}", e);
+                    return Err(e.into());
+                }
+            };
             match all_tables_db.get(0, ALL_TABLE_NAMES).await {
                 Ok(Some(v)) => match deserialize_json_bytes::<HashMap<String, String>>(&v) {
                     Ok(all_table_names) => {
@@ -500,7 +563,7 @@ impl TableStore {
                         inner.all_table_names = all_table_names;
                     }
                     Err(e) => {
-                        error!("could not deserialize __veilid_all_tables: {}", e);
+                        veilid_log!(self error "could not deserialize __veilid_all_tables: {}", e);
                     }
                 },
                 Ok(None) => {
@@ -508,7 +571,7 @@ impl TableStore {
                     veilid_log!(self trace "__veilid_all_tables is empty");
                 }
                 Err(e) => {
-                    error!("could not get __veilid_all_tables: {}", e);
+                    veilid_log!(self error "could not get __veilid_all_tables: {}", e);
                 }
             };
 
@@ -532,15 +595,44 @@ impl TableStore {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    #[allow(clippy::unused_async)]
     async fn post_init_async(&self) -> EyreResult<()> {
+        // Register event handlers
+        let tick_subscription = impl_subscribe_event_bus_async!(self, Self, tick_event_handler);
+
+        let mut inner = self.inner.lock();
+
+        // Schedule tick
+        inner.tick_subscription = Some(tick_subscription);
+
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
-    async fn pre_terminate_async(&self) {}
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    async fn pre_terminate_async(&self) {
+        // Stop background operations
+        {
+            let mut inner = self.inner.lock();
+            if let Some(sub) = inner.tick_subscription.take() {
+                self.event_bus().unsubscribe(sub);
+            }
+        }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+        // Cancel all tasks associated with the tick future
+        self.cancel_tasks().await;
+    }
+
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     async fn terminate_async(&self) {
         let _async_guard = self.async_lock.lock().await;
 
@@ -562,12 +654,18 @@ impl TableStore {
 
     /// Get or create a TableDB database table. If the column count is greater than an
     /// existing TableDB's column count, the database will be upgraded to add the missing columns.
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn open(&self, name: &str, column_count: u32) -> VeilidAPIResult<TableDB> {
         self.open_pooled(name, column_count, 1).await
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn open_pooled(
         &self,
         name: &str,
@@ -613,7 +711,7 @@ impl TableStore {
         {
             Ok(db) => db,
             Err(e) => {
-                self.name_delete(name).await.expect("cleanup failed");
+                self.name_delete(name).expect_or_log("removing name failed");
                 self.flush().await;
                 return Err(e);
             }
@@ -621,9 +719,6 @@ impl TableStore {
 
         // Flush table names to disk
         self.flush().await;
-
-        // Clean  up the new database before it gets added to the opened list
-        db.cleanup().await.map_err(VeilidAPIError::internal)?;
 
         // If more columns are available, open the low level db with the max column count but restrict the tabledb object to the number requested
         let existing_col_count = db.num_columns().map_err(VeilidAPIError::from)?;
@@ -636,7 +731,7 @@ impl TableStore {
             {
                 Ok(db) => db,
                 Err(e) => {
-                    self.name_delete(name).await.expect("cleanup failed");
+                    self.name_delete(name).expect_or_log("removing name failed");
                     self.flush().await;
                     return Err(e);
                 }
@@ -663,7 +758,10 @@ impl TableStore {
     }
 
     /// Delete a TableDB table by name
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn delete(&self, name: &str) -> VeilidAPIResult<bool> {
         let _async_guard = self.async_lock.lock().await;
         // If we aren't initialized yet, bail
@@ -674,7 +772,7 @@ impl TableStore {
             }
         }
 
-        let Some(table_name) = self.name_get(name).await? else {
+        let Some(table_name) = self.name_get(name)? else {
             // Did not exist in name table
             return Ok(false);
         };
@@ -696,14 +794,18 @@ impl TableStore {
                 name, table_name
             );
         }
-        self.name_delete(name).await.expect("failed to delete name");
+        self.name_delete(name)
+            .expect_or_log("failed to delete name");
         self.flush().await;
 
         Ok(true)
     }
 
     /// Get the description of a TableDB table
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn info(&self, name: &str) -> VeilidAPIResult<Option<TableInfo>> {
         // Open with the default number of columns
         let tdb = self.open(name, 0).await?;
@@ -760,7 +862,10 @@ impl TableStore {
     }
 
     /// Rename a TableDB table
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     pub async fn rename(&self, old_name: &str, new_name: &str) -> VeilidAPIResult<()> {
         let _async_guard = self.async_lock.lock().await;
         // If we aren't initialized yet, bail
@@ -771,8 +876,15 @@ impl TableStore {
             }
         }
         veilid_log!(self debug "TableStore::rename {} -> {}", old_name, new_name);
-        self.name_rename(old_name, new_name).await?;
+        self.name_rename(old_name, new_name)?;
         self.flush().await;
         Ok(())
+    }
+
+    async fn tick_event_handler(&self, evt: Arc<TickEvent>) {
+        let lag = evt.last_tick_ts.map(|x| evt.cur_tick_ts.duration_since(x));
+        if let Err(e) = self.tick(lag).await {
+            error!("Error in table store tick: {}", e);
+        }
     }
 }

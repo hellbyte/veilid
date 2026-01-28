@@ -22,7 +22,7 @@ impl VirtualUdpSocket {
         opt_local_address: Option<SocketAddr>,
         options: VirtualUdpOptions,
     ) -> VirtualNetworkResult<Self> {
-        let machine = default_machine().unwrap();
+        let machine = default_machine().unwrap_or_log();
         Self::bind_with_machine(machine, opt_local_address, options).await
     }
 

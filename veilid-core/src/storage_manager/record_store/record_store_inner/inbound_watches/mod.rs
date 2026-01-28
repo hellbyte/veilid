@@ -145,7 +145,7 @@ impl InboundWatches {
         let mut watches_keys = self.record_watches.keys().collect::<Vec<_>>();
         watches_keys.sort();
         for rtk in watches_keys {
-            let inbound_watch_list = self.record_watches.get(rtk).unwrap();
+            let inbound_watch_list = self.record_watches.get(rtk).unwrap_or_log();
             out += &format!("  {}: {:?}\n", rtk, inbound_watch_list);
         }
 

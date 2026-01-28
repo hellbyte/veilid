@@ -21,45 +21,33 @@ pub extern "system" fn Java_com_veilid_veilid_1tools_1android_1tests_MainActivit
 
 pub fn veilid_tools_setup_android_tests() {
     cfg_if! {
-        if #[cfg(feature = "tracing")] {
-            use tracing::*;
-            use tracing_subscriber::prelude::*;
-            use tracing_subscriber::*;
+            if #[cfg(feature = "tracing")] {
+                use tracing::level_filters::LevelFilter;
+                use tracing_subscriber::prelude::*;
+                use tracing_subscriber::filter::Targets;
 
-            let mut filters = filter::Targets::new();
-            for ig in DEFAULT_LOG_IGNORE_LIST {
-                filters = filters.with_target(ig, filter::LevelFilter::OFF);
+                let mut filters = Targets::default();
+                filters = filters.with_default(LevelFilter::OFF);
+                filters = filters.with_target("veilid_tools", LevelFilter::INFO);
+                tracing_subscriber::registry()
+                    .with(paranoid_android::layer("com.veilid.veilidtools-tests")
+                    .with_target(true)
+                    .with_filter(filters))
+                    .init();
+            } else {
+                use log::LevelFilter;
+                use android_logger::{Config,FilterBuilder};
+
+                let mut builder = FilterBuilder::new();
+                builder.filter_level(LevelFilter::Info);
+    //            builder.filter_module("veilid_tools", LevelFilter::Info);
+                android_logger::init_once(
+                    Config::default()
+                        .with_tag("veilid_tools")
+                        .with_filter(builder.build())
+                );
             }
-
-            // Set up subscriber and layers
-            let subscriber = Registry::default();
-            let mut layers = Vec::new();
-            let layer = paranoid_android::layer("veilid-tools")
-                .with_filter(filter::LevelFilter::TRACE)
-                .with_filter(filters);
-            layers.push(layer.boxed());
-
-            let subscriber = subscriber.with(layers);
-            subscriber
-                .try_init()
-                .expect("failed to init android tracing");
-        } else {
-            use log::LevelFilter;
-            use android_logger::{Config,FilterBuilder};
-
-            let mut builder = FilterBuilder::new();
-            builder.filter_level(LevelFilter::Trace);
-            for ig in DEFAULT_LOG_IGNORE_LIST {
-                builder.filter_module(ig, LevelFilter::Off);
-            }
-            android_logger::init_once(
-                Config::default()
-                    .with_max_level(LevelFilter::Trace) // limit log level
-                    .with_tag("veilid-tools") // logs will show under mytag tag
-                    .with_filter(builder.build())
-            );
         }
-    }
 
     // Set up panic hook for backtraces
     panic::set_hook(Box::new(|panic_info| {

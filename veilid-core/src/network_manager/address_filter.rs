@@ -58,13 +58,13 @@ struct AddressFilterInner {
     punishments_by_ip4: BTreeMap<Ipv4Addr, Punishment>,
     punishments_by_ip6_prefix: BTreeMap<Ipv6Addr, Punishment>,
     punishments_by_node_id: BTreeMap<NodeId, Punishment>,
-    envelope_info_by_node_id: LruCache<NodeId, EnvelopeInfo>,
+    envelope_info_by_node_id: hashlink::LruCache<NodeId, EnvelopeInfo>,
     dial_info_failures: BTreeMap<DialInfo, Timestamp>,
 }
 
 impl fmt::Debug for AddressFilterInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut envelope_by_node_id = LruCache::<NodeId, EnvelopeInfo>::new(64);
+        let mut envelope_by_node_id = hashlink::LruCache::<NodeId, EnvelopeInfo>::new(64);
         for entry in self.envelope_info_by_node_id.iter().skip(
             if f.sign_plus() || self.envelope_info_by_node_id.len() <= 64 {
                 0
@@ -172,7 +172,7 @@ impl AddressFilter {
                 punishments_by_ip4: BTreeMap::new(),
                 punishments_by_ip6_prefix: BTreeMap::new(),
                 punishments_by_node_id: BTreeMap::new(),
-                envelope_info_by_node_id: LruCache::new(MAX_ENVELOPE_INFO_BY_NODE_ID),
+                envelope_info_by_node_id: hashlink::LruCache::new(MAX_ENVELOPE_INFO_BY_NODE_ID),
                 dial_info_failures: BTreeMap::new(),
             }),
             max_connections_per_ip4: config.network.max_connections_per_ip4 as usize,
@@ -361,7 +361,7 @@ impl AddressFilter {
     }
 
     pub fn punish_ip_addr(&self, addr: IpAddr, reason: PunishmentReason) {
-        veilid_log!(self warn "Punished: {} for {:?}", addr, reason);
+        veilid_log!(self debugwarn "Punished: {} for {:?}", addr, reason);
         let timestamp = Timestamp::now();
         let punishment = Punishment { reason, timestamp };
 
@@ -419,10 +419,10 @@ impl AddressFilter {
 
         let mut inner = self.inner.lock();
         if inner.punishments_by_node_id.len() >= MAX_PUNISHMENTS_BY_NODE_ID {
-            veilid_log!(self warn "Punishment table full: {}", node_id);
+            veilid_log!(self debugwarn "Punishment table full: {}", node_id);
             return;
         }
-        veilid_log!(self warn "Punished: {} for {:?}", node_id, reason);
+        veilid_log!(self debugwarn "Punished: {} for {:?}", node_id, reason);
         inner
             .punishments_by_node_id
             .entry(node_id)
@@ -444,7 +444,8 @@ impl AddressFilter {
         }
     }
 
-    #[instrument(parent = None, level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    #[allow(clippy::unused_async)]
     pub async fn address_filter_task_routine(
         &self,
         _stop_token: StopToken,

@@ -68,7 +68,10 @@ impl StorageManager {
 
     /// Perform a transact begin query on the network for a single record
     /// This routine uses fanout and stores the fanout result and individual transaction ids in xxxx
-    #[instrument(level = "trace", target = "dht", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, err)
+    )]
     pub(super) async fn outbound_transact_begin(
         &self,
         params: OutboundTransactBeginParams,
@@ -137,7 +140,7 @@ impl StorageManager {
                         let rpc_processor = registry.rpc_processor();
 
                         // check the cache to see if we should send the descriptor
-                        let node_id = next_node.node_ids().get(opaque_record_key.kind()).unwrap();
+                        let node_id = next_node.node_ids().get(opaque_record_key.kind()).unwrap_or_log();
                         let dc_key = DescriptorCacheKey{ opaque_record_key: opaque_record_key.clone(), node_id };
                         let mut descriptor_mode = DescriptorMode::new(descriptor_cache.lock().get(&dc_key).is_none(), context.lock().opt_descriptor.clone());
 
@@ -147,7 +150,7 @@ impl StorageManager {
                             let tva = match
                             rpc_processor
                                 .rpc_call_transact_begin(
-                                    Destination::direct(next_node.routing_domain_filtered(routing_domain)).with_safety(safety_selection.clone()),
+                                    Destination::direct(next_node.routing_domain_filtered(routing_domain), Some(safety_selection.clone())),
                                     opaque_record_key.clone(),
                                     descriptor_mode.clone(),
                                     signing_keypair.clone(),
@@ -307,9 +310,9 @@ impl StorageManager {
 
         veilid_log!(self debug target: "network_result", "TransactBegin Fanout: {:#}", fanout_result);
 
-        let descriptor = ctx.opt_descriptor.clone().unwrap();
+        let descriptor = ctx.opt_descriptor.clone().unwrap_or_log();
         let seqs = if fanout_result.value_nodes.is_empty() {
-            vec![ValueSeqNum::NONE; descriptor.schema().unwrap().subkey_count()]
+            vec![ValueSeqNum::NONE; descriptor.schema().unwrap_or_log().subkey_count()]
         } else {
             ctx.seqs.clone()
         };
@@ -328,7 +331,7 @@ impl StorageManager {
     ////////////////////////////////////////////////////////////////////////
 
     /// Handle a received 'TransactBegin' query
-    #[instrument(level = "debug", target = "dht", ret(Display), err, fields(duration, __VEILID_LOG_KEY = self.log_key(), opt_descriptor = opt_descriptor.is_some()), skip(self, opt_descriptor))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", target = "dht", ret(Display), err, fields(duration, __VEILID_LOG_KEY = self.log_key(), opt_descriptor = opt_descriptor.is_some()), skip(self, opt_descriptor)))]
     pub async fn inbound_transact_begin(
         &self,
         opaque_record_key: OpaqueRecordKey,

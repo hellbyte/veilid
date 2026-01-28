@@ -69,25 +69,56 @@ impl StorageManager {
 
             local_record_store
         };
-        let reclaimed_space = local_record_store
-            .reclaim_space(reclaim.unwrap_or(u64::MAX))
-            .await;
-        let record_locks = self
-            .record_lock_table
-            .lock_records(
-                reclaimed_space.dead_records,
-                StorageManagerRecordLockPurpose::Delete,
-            )
-            .await;
 
-        if let Err(e) = self.cleanup_records_locked(&record_locks).await {
-            veilid_log!(self error "Error cleaning up records in local purge: {}", e);
+        let starting_space = local_record_store.total_storage_space();
+        let desired_space = if let Some(reclaim) = reclaim {
+            starting_space.saturating_sub(reclaim)
+        } else {
+            0u64
+        };
+
+        let mut total_space = local_record_store.total_storage_space();
+
+        loop {
+            if total_space <= desired_space {
+                break;
+            }
+
+            let Some(opaque_record_key) = local_record_store.peek_lru(|key, _| key.clone()) else {
+                break;
+            };
+
+            let records_lock = self
+                .record_lock_table
+                .lock_records(
+                    vec![opaque_record_key.clone()],
+                    StorageManagerRecordLockPurpose::Delete,
+                )
+                .await;
+            veilid_log!(self debug "Purging local record {}: total={} desired={}", opaque_record_key, total_space, desired_space);
+            if let Err(e) = local_record_store.delete_record(&opaque_record_key).await {
+                total_space = local_record_store.total_storage_space();
+                veilid_log!(self error "Error deleting record {}: {}", opaque_record_key, e);
+                break;
+            }
+
+            total_space = local_record_store.total_storage_space();
+
+            if let Err(e) = self.cleanup_records_locked(&records_lock) {
+                veilid_log!(self error "Error cleaning up record in local purge {}: {}", opaque_record_key, e);
+                break;
+            }
         }
 
-        format!(
+        let msg = format!(
             "Local records purged: purged {} bytes, now {} bytes total",
-            reclaimed_space.reclaimed, reclaimed_space.total
-        )
+            starting_space - total_space,
+            total_space
+        );
+
+        veilid_log!(self debug "{}", msg);
+
+        msg
     }
 
     pub async fn purge_remote_records(&self, reclaim: Option<u64>) -> String {
@@ -96,18 +127,46 @@ impl StorageManager {
             let Some(remote_record_store) = inner.remote_record_store.clone() else {
                 return "not initialized".to_owned();
             };
-            if !inner.opened_records.is_empty() {
-                return "records still opened".to_owned();
-            }
             remote_record_store
         };
-        let reclaimed_space = remote_record_store
-            .reclaim_space(reclaim.unwrap_or(u64::MAX))
-            .await;
-        format!(
-            "Remote records purged: reclaimed {} bytes, now {} bytes total",
-            reclaimed_space.reclaimed, reclaimed_space.total
-        )
+
+        let starting_space = remote_record_store.total_storage_space();
+        let desired_space = if let Some(reclaim) = reclaim {
+            starting_space.saturating_sub(reclaim)
+        } else {
+            0u64
+        };
+
+        let mut total_space = remote_record_store.total_storage_space();
+
+        loop {
+            if total_space <= desired_space {
+                break;
+            }
+
+            let Some(opaque_record_key) = remote_record_store.peek_lru(|key, _| key.clone()) else {
+                break;
+            };
+
+            veilid_log!(self debug "Purging remote record {}: total={} desired={}", opaque_record_key, total_space, desired_space);
+            if let Err(e) = remote_record_store.delete_record(&opaque_record_key).await {
+                total_space = remote_record_store.total_storage_space();
+                veilid_log!(self error "Error deleting record {}: {}", opaque_record_key, e);
+                break;
+            }
+
+            total_space = remote_record_store.total_storage_space();
+        }
+
+        let msg = format!(
+            "Remote records purged: purged {} bytes, now {} bytes total",
+            starting_space - total_space,
+            total_space
+        );
+
+        veilid_log!(self debug "{}", msg);
+
+        msg
     }
 
     pub async fn debug_local_record_subkey_info(

@@ -36,7 +36,10 @@ pub(crate) enum InboundSetValueResult {
 
 impl StorageManager {
     /// Set the value of a subkey on an opened local record
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn set_value(
         &self,
         record_key: RecordKey,
@@ -118,16 +121,13 @@ impl StorageManager {
         veilid_log!(self debug "Writing subkey to the network: {}:{} len={}", opaque_record_key, subkey, signed_value_data.value_data().data().len() );
 
         // Use the safety selection we opened the record with
-        let res_rx = match self
-            .outbound_set_value(
-                &opaque_record_key,
-                subkey,
-                safety_selection.clone(),
-                signed_value_data.clone(),
-                descriptor,
-            )
-            .await
-        {
+        let res_rx = match self.outbound_set_value(
+            &opaque_record_key,
+            subkey,
+            safety_selection.clone(),
+            signed_value_data.clone(),
+            descriptor,
+        ) {
             Ok(v) => v,
             Err(e) => {
                 // Failed to write, try again later
@@ -337,8 +337,11 @@ impl StorageManager {
 
     /// Perform a 'set value' query on the network
     /// Performs the work without a transaction
-    #[instrument(level = "trace", target = "dht", skip_all, err)]
-    pub(super) async fn outbound_set_value(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, err)
+    )]
+    pub(super) fn outbound_set_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
@@ -400,7 +403,7 @@ impl StorageManager {
                         let rpc_processor = registry.rpc_processor();
 
                         // check the cache to see if we should send the descriptor
-                        let node_id = next_node.node_ids().get(opaque_record_key.kind()).unwrap();
+                        let node_id = next_node.node_ids().get(opaque_record_key.kind()).unwrap_or_log();
                         let dc_key = DescriptorCacheKey{ opaque_record_key: opaque_record_key.clone(), node_id };
                         let mut descriptor_mode = SetDescriptorMode::new(descriptor_cache.lock().get(&dc_key).is_none(), descriptor);
 
@@ -416,8 +419,7 @@ impl StorageManager {
                             let sva = match
                                 rpc_processor
                                     .rpc_call_set_value(
-                                        Destination::direct(next_node.routing_domain_filtered(routing_domain))
-                                            .with_safety(safety_selection.clone()),
+                                        Destination::direct(next_node.routing_domain_filtered(routing_domain), Some(safety_selection.clone())),
                                         opaque_record_key.clone(),
                                         subkey,
                                         (*sent_value).clone(),
@@ -639,7 +641,10 @@ impl StorageManager {
         Ok(out_rx)
     }
 
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all)
+    )]
     pub(super) fn process_deferred_outbound_set_value_result(
         &self,
         subkey_lock: StorageManagerSubkeyLockGuard,
@@ -727,7 +732,10 @@ impl StorageManager {
         );
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) async fn process_outbound_set_value_result_locked(
         &self,
         subkey_lock: &StorageManagerSubkeyLockGuard,
@@ -794,7 +802,10 @@ impl StorageManager {
     /// Handle a received 'Set Value' query
     /// Returns a None if the value passed in was set
     /// Returns a Some(current value) if the value was older and the current value was kept
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all)
+    )]
     pub async fn inbound_set_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,

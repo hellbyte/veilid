@@ -2,7 +2,7 @@ use super::*;
 
 impl StorageManager {
     // Check if client-side transactions on opened records have expired
-    //#[instrument(level = "trace", target = "stor", skip_all, err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", target = "stor", skip_all, err))]
     pub(super) fn check_outbound_transactions_task_routine(
         &self,
         _stop_token: StopToken,

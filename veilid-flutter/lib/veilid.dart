@@ -230,7 +230,8 @@ abstract class Veilid {
   static Veilid instance = getVeilid();
 
   void initializeVeilidCore(Map<String, dynamic> platformConfigJson);
-  void changeLogLevel(String layer, VeilidConfigLogLevel logLevel);
+  void changeLogLevel(String layer, String directives);
+  @Deprecated("'ignore' syntax was confusing, migrate to changeLogLevel")
   void changeLogIgnore(String layer, List<String> changes);
   Future<Stream<VeilidUpdate>> startupVeilidCore(VeilidConfig config);
   Future<VeilidState> getVeilidState();

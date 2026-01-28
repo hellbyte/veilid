@@ -91,7 +91,7 @@ impl DHTRecordReport {
             .zip(self.network_seqs.iter())
         {
             if let Some(nseq) = nseq.to_option() {
-                if lseq.is_none() || nseq > lseq.to_option().unwrap() {
+                if lseq.is_none() || nseq > lseq.to_option().unwrap_or_log() {
                     newer_online.insert(sk);
                 }
             }

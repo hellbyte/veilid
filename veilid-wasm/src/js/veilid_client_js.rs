@@ -12,6 +12,11 @@ export type UpdateVeilidFunction = (event: VeilidUpdate) => void;
 extern "C" {
     #[wasm_bindgen(extends = Function, typescript_type = "UpdateVeilidFunction")]
     pub type UpdateVeilidFunction;
+
+    // Use `js_namespace` here to bind `console.log(..)` instead of just
+    // `log(..)`
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    pub fn console_log(s: &str);
 }
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -127,11 +132,13 @@ impl VeilidClient {
 
         // Performance logger
         if platformConfig.logging.performance.enabled {
-            let filter = VeilidLayerFilter::new(
-                platformConfig.logging.performance.level,
-                &platformConfig.logging.performance.ignore_log_targets,
-                None,
+            let filter = VeilidLayerFilter::new_with_config(
+                VeilidLayerFilterConfig::new()
+                    .with_common_log_level(platformConfig.logging.performance.level),
             );
+            #[allow(deprecated)]
+            filter.apply_ignore_change_list(&platformConfig.logging.performance.ignore_log_targets);
+
             let layer = WASMLayer::new(
                 WASMLayerConfig::new()
                     .with_report_logs_in_timings(platformConfig.logging.performance.logs_in_timings)
@@ -153,11 +160,13 @@ impl VeilidClient {
 
         // API logger
         if platformConfig.logging.api.enabled {
-            let filter = VeilidLayerFilter::new(
-                platformConfig.logging.api.level,
-                &platformConfig.logging.api.ignore_log_targets,
-                None,
+            let filter = VeilidLayerFilter::new_with_config(
+                VeilidLayerFilterConfig::new()
+                    .with_common_log_level(platformConfig.logging.api.level),
             );
+            #[allow(deprecated)]
+            filter.apply_ignore_change_list(&platformConfig.logging.api.ignore_log_targets);
+
             let layer = ApiTracingLayer::init().with_filter(filter.clone());
             filters.insert("api", filter);
             layers.push(layer.boxed());
@@ -167,7 +176,7 @@ impl VeilidClient {
         subscriber
             .try_init()
             .map_err(|e| format!("failed to initialize logging: {}", e))
-            .expect("failed to initalize WASM platform");
+            .expect_or_log("failed to initalize WASM platform");
     }
 
     /// Initialize a Veilid node, with the configuration in JSON format
@@ -205,20 +214,21 @@ impl VeilidClient {
     }
 
     // TODO: can we refine the TS type of `layer`?
-    pub fn changeLogLevel(layer: String, logLevel: VeilidConfigLogLevel) {
+    pub fn changeLogLevel(layer: String, directive: String) -> VeilidAPIResult<()> {
         let layer = if layer == "all" { "".to_owned() } else { layer };
         let filters = (*FILTERS).borrow();
         if layer.is_empty() {
             // Change all layers
             for f in filters.values() {
-                f.set_max_level(logLevel);
+                f.try_apply_directives_string(&directive)?;
             }
         } else {
             // Change a specific layer
             if let Some(f) = filters.get(layer.as_str()) {
-                f.set_max_level(logLevel);
+                f.try_apply_directives_string(&directive)?;
             }
         }
+        Ok(())
     }
 
     // TODO: can we refine the TS type of `layer`?
@@ -228,16 +238,14 @@ impl VeilidClient {
         if layer.is_empty() {
             // Change all layers
             for f in filters.values() {
-                let mut ignore_list = f.ignore_list();
-                VeilidLayerFilter::apply_ignore_change_list(&mut ignore_list, &changes);
-                f.set_ignore_list(Some(ignore_list));
+                #[allow(deprecated)]
+                f.apply_ignore_change_list(&changes);
             }
         } else {
             // Change a specific layer
             if let Some(f) = filters.get(layer.as_str()) {
-                let mut ignore_list = f.ignore_list();
-                VeilidLayerFilter::apply_ignore_change_list(&mut ignore_list, &changes);
-                f.set_ignore_list(Some(ignore_list));
+                #[allow(deprecated)]
+                f.apply_ignore_change_list(&changes);
             }
         }
     }
@@ -254,7 +262,7 @@ impl VeilidClient {
         if let Err(VeilidAPIError::NotInitialized) = veilid_api {
             return Ok(true);
         }
-        let veilid_api = veilid_api.unwrap();
+        let veilid_api = veilid_api.unwrap_or_log();
         let is_shutdown = veilid_api.is_shutdown();
         Ok(is_shutdown)
     }

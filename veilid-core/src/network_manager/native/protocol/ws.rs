@@ -100,7 +100,10 @@ where
         self.flow
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn close(&self) -> io::Result<NetworkResult<()>> {
         let timeout_ms = self.config().network.connection_initial_timeout_ms;
 
@@ -122,7 +125,7 @@ where
         Ok(NetworkResult::value(()))
     }
 
-    #[instrument(level = "trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len())))]
     pub async fn send(&self, message: Vec<u8>) -> io::Result<NetworkResult<()>> {
         if message.len() > MAX_MESSAGE_SIZE {
             bail_io_error_other!("sending too large WS message");
@@ -137,7 +140,7 @@ where
         Ok(out)
     }
 
-    #[instrument(level = "trace", target="protocol", err, skip(self), fields(network_result, ret.len))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="protocol", err, skip(self), fields(network_result, ret.len)))]
     pub async fn recv(&self) -> io::Result<NetworkResult<Vec<u8>>> {
         let out = match self.stream.clone().next().await {
             Some(Ok(Message::Binary(v))) => {
@@ -221,7 +224,10 @@ impl WebsocketProtocolHandler {
         }
     }
 
-    #[instrument(level = "trace", target = "protocol", ret, err, skip(self, ps))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", ret, err, skip(self, ps), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn on_accept_async(
         self,
         ps: AsyncPeekStream,
@@ -314,7 +320,10 @@ impl WebsocketProtocolHandler {
         Ok(Some(conn))
     }
 
-    #[instrument(level = "trace", target = "protocol", skip(registry), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", skip(registry), ret, err, fields(__VEILID_LOG_KEY = registry.log_key()))
+    )]
     pub async fn connect(
         registry: VeilidComponentRegistry,
         local_address: Option<SocketAddr>,
@@ -328,7 +337,7 @@ impl WebsocketProtocolHandler {
             DialInfo::WSS(_) => (true, "wss"),
             _ => panic!("invalid dialinfo for websocket protocol"),
         };
-        let request = dial_info.request().unwrap();
+        let request = dial_info.request().unwrap_or_log();
         let split_url = SplitUrl::from_str(&request).map_err(to_io_error_other)?;
         if split_url.scheme != scheme {
             bail_io_error_other!("invalid websocket url scheme");

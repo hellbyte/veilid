@@ -1,11 +1,14 @@
+use crate::logs::*;
 use crate::server::*;
 use crate::settings::Settings;
 use crate::tools::*;
-use crate::veilid_logs::*;
 use crate::*;
-use futures_util::StreamExt;
+use futures_util::StreamExt as _;
 use signal_hook::consts::signal::*;
+#[cfg(feature = "rt-async-std")]
 use signal_hook_async_std::Signals;
+#[cfg(feature = "rt-tokio")]
+use signal_hook_tokio::Signals;
 use veilid_core::tools::*;
 
 #[instrument(level = "trace", skip_all)]
@@ -27,7 +30,7 @@ async fn handle_signals(mut signals: Signals) {
 pub async fn run_veilid_server_with_signals(
     settings: Settings,
     server_mode: ServerMode,
-    veilid_logs: VeilidLogs,
+    veilid_logs: Logs,
 ) -> EyreResult<()> {
     // Catch signals
     let signals =
@@ -79,7 +82,7 @@ pub fn run_daemon(settings: Settings, _args: CmdlineArgs) -> EyreResult<()> {
                 daemon = daemon.stderr(
                     stdout_file
                         .as_ref()
-                        .unwrap()
+                        .unwrap_or_log()
                         .try_clone()
                         .wrap_err("Failed to clone stdout file")?,
                 );
@@ -102,7 +105,7 @@ pub fn run_daemon(settings: Settings, _args: CmdlineArgs) -> EyreResult<()> {
     // Now, run the server
     block_on(async {
         // Init combined console/file logger
-        let veilid_logs = VeilidLogs::setup(settings.clone())?;
+        let veilid_logs = Logs::setup(settings.clone())?;
 
         run_veilid_server_with_signals(settings, ServerMode::Normal, veilid_logs).await
     })

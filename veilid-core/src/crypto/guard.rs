@@ -61,7 +61,7 @@ impl AsyncCryptoSystemGuard<'_> {
     }
 
     // Generation
-    pub async fn random_bytes(&self, len: u32) -> Vec<u8> {
+    pub async fn random_bytes(&self, len: usize) -> Vec<u8> {
         yielding(|| self.guard.random_bytes(len)).await
     }
 

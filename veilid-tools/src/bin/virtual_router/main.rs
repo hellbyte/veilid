@@ -3,7 +3,7 @@
 use cfg_if::*;
 use clap::{Args, Parser};
 use parking_lot::*;
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 use stop_token::StopSource;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer, Registry};
 use veilid_tools::*;
@@ -18,7 +18,7 @@ cfg_if! {
         }
     } else if #[cfg(feature="rt-tokio")] {
         pub fn block_on<F: Future<Output = T>, T>(f: F) -> T {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = tokio::runtime::Runtime::new().unwrap_or_log();
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, f)
         }
@@ -105,24 +105,24 @@ fn setup_tracing(logging: &Logging) -> Result<(), String> {
     }
     ignore_log_targets.retain(|x| !logging.enable_log_targets.contains(x));
 
-    let timer =
-        time::format_description::parse("[hour]:[minute]:[second]").expect("invalid time format");
+    let timer = time::format_description::parse("[hour]:[minute]:[second]")
+        .expect_or_log("invalid time format");
 
     // Use chrono instead of time crate to get local offset
     let offset_in_sec = chrono::Local::now().offset().local_minus_utc();
     let time_offset =
-        time::UtcOffset::from_whole_seconds(offset_in_sec).expect("invalid utc offset");
+        time::UtcOffset::from_whole_seconds(offset_in_sec).expect_or_log("invalid utc offset");
     let timer = fmt::time::OffsetTime::new(time_offset, timer);
 
     let mut filter = tracing_subscriber::EnvFilter::from_default_env().add_directive(level.into());
     for x in ignore_log_targets {
-        filter = filter.add_directive(format!("{x}=off").parse().unwrap());
+        filter = filter.add_directive(format!("{x}=off").parse().unwrap_or_log());
     }
 
     let layer = fmt::Layer::new()
         .pretty()
         .with_timer(timer)
-        .with_ansi(true)
+        .with_ansi(std::io::stdout().is_terminal())
         .with_writer(std::io::stdout)
         .with_filter(filter);
 
@@ -152,7 +152,7 @@ fn real_main() -> Result<(), String> {
         println!("Exiting...");
         *(stop_mutex.lock()) = None;
     })
-    .expect("Error setting Ctrl-C handler");
+    .expect_or_log("Error setting Ctrl-C handler");
 
     block_on(async {
         println!("Veilid VirtualRouter v{}", VERSION);
@@ -162,7 +162,8 @@ fn real_main() -> Result<(), String> {
         #[cfg(debug_assertions)]
         if args.wait_for_debug {
             use bugsalot::debugger;
-            debugger::wait_until_attached(None).expect("state() not implemented on this platform");
+            debugger::wait_until_attached(None)
+                .expect_or_log("state() not implemented on this platform");
         }
 
         setup_tracing(&args.logging)?;

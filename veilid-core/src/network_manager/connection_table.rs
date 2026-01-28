@@ -98,7 +98,7 @@ impl ConnectionTable {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn join(&self) {
         let mut unord = {
             let mut inner = self.inner.lock();
@@ -123,7 +123,7 @@ impl ConnectionTable {
     // to the same address and port with the same low level protocol type.
     // Specifically right now this checks for a TCP connection that exists to the same
     // low level TCP remote as a WS or WSS connection, since they are all low-level TCP
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn check_for_colliding_connection(&self, dial_info: &DialInfo) -> bool {
         let inner = self.inner.lock();
 
@@ -205,7 +205,7 @@ impl ConnectionTable {
         Ok(Some(dead_conn))
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn add_connection(
         &self,
         network_connection: NetworkConnection,
@@ -260,7 +260,7 @@ impl ConnectionTable {
         };
 
         // Add the connection to the table
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
         let res = conn_by_id_table.insert(id, network_connection);
         assert!(res.is_none());
 
@@ -272,7 +272,7 @@ impl ConnectionTable {
         Ok(out_conn)
     }
 
-    //#[instrument(level = "trace", skip(self), ret)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn peek_connection_by_flow(&self, flow: Flow) -> Option<ConnectionHandle> {
         if flow.protocol_type() == ProtocolType::UDP {
             return None;
@@ -282,17 +282,17 @@ impl ConnectionTable {
 
         let id = *inner.id_by_flow.get(&flow)?;
         let protocol_type = flow.protocol_type();
-        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap();
+        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap_or_log();
         Some(out.get_handle())
     }
 
-    //#[instrument(level = "trace", skip(self), ret)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn touch_connection_by_id(&self, id: NetworkConnectionId) {
         let mut inner = self.inner.lock();
         let Some(protocol_type) = inner.protocol_type_by_id.get(&id).copied() else {
             return;
         };
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
         let _ = conn_by_id_table.get(&id);
     }
 
@@ -310,7 +310,7 @@ impl ConnectionTable {
 
         let id = *inner.id_by_flow.get(&flow)?;
         let protocol_type = flow.protocol_type();
-        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap();
+        let out = inner.conn_by_id[&protocol_type].peek(&id).unwrap_or_log();
         Some(closure(out))
     }
 
@@ -328,8 +328,8 @@ impl ConnectionTable {
 
         let id = *inner.id_by_flow.get(&flow)?;
         let protocol_type = flow.protocol_type();
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
-        let out = conn_by_id_table.peek_mut(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
+        let out = conn_by_id_table.peek_mut(&id).unwrap_or_log();
         Some(closure(out))
     }
 
@@ -340,7 +340,7 @@ impl ConnectionTable {
         let mut inner_lock = self.inner.lock();
         let inner = &mut *inner_lock;
         for (id, pt) in inner.protocol_type_by_id.iter() {
-            let conn_by_id_table = inner.conn_by_id.get_mut(pt).unwrap();
+            let conn_by_id_table = inner.conn_by_id.get_mut(pt).unwrap_or_log();
             if let Some(conn) = conn_by_id_table.peek_mut(id) {
                 if let Some(out) = closure(conn) {
                     return Some(out);
@@ -350,7 +350,7 @@ impl ConnectionTable {
         None
     }
 
-    //#[instrument(level = "trace", skip(self), ret)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn ref_connection_by_id(
         &self,
         id: NetworkConnectionId,
@@ -361,8 +361,8 @@ impl ConnectionTable {
             // Sometimes network connections die before we can ref/unref them
             return false;
         };
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
-        let out = conn_by_id_table.get_mut(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
+        let out = conn_by_id_table.get_mut(&id).unwrap_or_log();
         match ref_type {
             ConnectionRefKind::AddRef => out.add_ref(),
             ConnectionRefKind::RemoveRef => out.remove_ref(),
@@ -370,7 +370,7 @@ impl ConnectionTable {
         true
     }
 
-    // #[instrument(level = "trace", skip(self), ret)]
+    // #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn get_best_connection_by_remote(
         &self,
         best_port: Option<u16>,
@@ -380,7 +380,7 @@ impl ConnectionTable {
 
         let all_ids_by_remote = inner.ids_by_remote.get(&remote)?;
         let protocol_type = remote.protocol_type();
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
 
         if all_ids_by_remote.is_empty() {
             // no connections
@@ -389,28 +389,28 @@ impl ConnectionTable {
         if all_ids_by_remote.len() == 1 {
             // only one connection
             let id = all_ids_by_remote[0];
-            let nc = conn_by_id_table.get(&id).unwrap();
+            let nc = conn_by_id_table.get(&id).unwrap_or_log();
             return Some(nc.get_handle());
         }
         // multiple connections, find the one that matches the best port, or the most recent
         if let Some(best_port) = best_port {
             for id in all_ids_by_remote {
-                let nc = conn_by_id_table.peek(id).unwrap();
+                let nc = conn_by_id_table.peek(id).unwrap_or_log();
                 if let Some(local_addr) = nc.flow().local() {
                     if local_addr.port() == best_port {
-                        let nc = conn_by_id_table.get(id).unwrap();
+                        let nc = conn_by_id_table.get(id).unwrap_or_log();
                         return Some(nc.get_handle());
                     }
                 }
             }
         }
         // just return most recent network connection if a best port match can not be found
-        let best_id = *all_ids_by_remote.last().unwrap();
-        let nc = conn_by_id_table.get(&best_id).unwrap();
+        let best_id = *all_ids_by_remote.last().unwrap_or_log();
+        let nc = conn_by_id_table.get(&best_id).unwrap_or_log();
         Some(nc.get_handle())
     }
 
-    //#[instrument(level = "trace", skip(self), ret)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     #[expect(dead_code)]
     pub fn get_connection_ids_by_remote(&self, remote: PeerAddress) -> Vec<NetworkConnectionId> {
         let inner = self.inner.lock();
@@ -442,6 +442,7 @@ impl ConnectionTable {
     //     filtered_connections
     // }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn connection_count(&self) -> usize {
         let inner = self.inner.lock();
         inner
@@ -450,31 +451,31 @@ impl ConnectionTable {
             .fold(0, |acc, (_pt, c)| acc + c.len())
     }
 
-    #[instrument(level = "trace", skip(inner), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(inner), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn remove_connection_records_inner(
         &self,
         inner: &mut ConnectionTableInner,
         id: NetworkConnectionId,
     ) -> NetworkConnection {
         // protocol_type_by_id
-        let protocol_type = inner.protocol_type_by_id.remove(&id).unwrap();
+        let protocol_type = inner.protocol_type_by_id.remove(&id).unwrap_or_log();
         // conn_by_id
-        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap();
-        let conn = conn_by_id_table.remove(&id).unwrap();
+        let conn_by_id_table = inner.conn_by_id.get_mut(&protocol_type).unwrap_or_log();
+        let conn = conn_by_id_table.remove(&id).unwrap_or_log();
         // id_by_flow
         let flow = conn.flow();
         let _ = inner
             .id_by_flow
             .remove(&flow)
-            .expect("must have removed something here");
+            .expect_or_log("must have removed something here");
         // ids_by_remote
         let remote = flow.remote();
-        let ids = inner.ids_by_remote.get_mut(&remote).unwrap();
+        let ids = inner.ids_by_remote.get_mut(&remote).unwrap_or_log();
         for (n, elem) in ids.iter().enumerate() {
             if *elem == id {
                 let _ = ids.remove(n);
                 if ids.is_empty() {
-                    inner.ids_by_remote.remove(&remote).unwrap();
+                    inner.ids_by_remote.remove(&remote).unwrap_or_log();
                 }
                 break;
             }
@@ -484,11 +485,11 @@ impl ConnectionTable {
         self.network_manager()
             .address_filter()
             .remove_connection(ip_addr)
-            .expect("Inconsistency in connection table");
+            .expect_or_log("Inconsistency in connection table");
         conn
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub fn remove_connection_by_id(&self, id: NetworkConnectionId) -> Option<NetworkConnection> {
         let mut inner = self.inner.lock();
 

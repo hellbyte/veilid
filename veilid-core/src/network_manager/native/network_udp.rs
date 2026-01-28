@@ -2,7 +2,7 @@ use super::*;
 use stop_token::future::FutureExt;
 
 impl Network {
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn create_udp_listener_tasks(&self) -> EyreResult<()> {
         // Spawn socket tasks
         let mut task_count = self.config().network.protocol.udp.socket_pool_size;
@@ -40,7 +40,7 @@ impl Network {
                         veilid_log!(this debug "exiting UDP listener before it starts because we encountered an error");
                         return;
                     }
-                    inner.stop_source.as_ref().unwrap().token()
+                    inner.stop_source.as_ref().unwrap_or_log().token()
                 };
 
                 for ph in protocol_handlers {
@@ -97,7 +97,7 @@ impl Network {
                 }
 
                 veilid_log!(this trace "UDP listener task stopped");
-            }.instrument(trace_span!(parent: None, "UDP Listener")));
+            }.instrument(trace_span!(parent: None, "UDP Listener", __VEILID_LOG_KEY = self.log_key())));
             ////////////////////////////////////////////////////////////
 
             // Add to join handle
@@ -107,7 +107,7 @@ impl Network {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn create_udp_protocol_handler(&self, addr: SocketAddr) -> EyreResult<bool> {
         veilid_log!(self debug "create_udp_protocol_handler on {:?}", &addr);
 
@@ -130,9 +130,12 @@ impl Network {
         Ok(true)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn create_outbound_udp_protocol_handlers(&self) -> EyreResult<bool> {
-        let enable_ipv4 = self.last_network_state().unwrap().enable_ipv4;
+        let last_network_state = self.last_network_state().unwrap_or_log();
+
+        let enable_ipv4 =
+            last_network_state.enable_ipv4_local || last_network_state.enable_ipv4_global;
         if enable_ipv4 {
             let has_ipv4_handler = self
                 .inner
@@ -153,7 +156,8 @@ impl Network {
                 }
             }
         }
-        let enable_ipv6 = self.last_network_state().unwrap().enable_ipv6;
+        let enable_ipv6 =
+            last_network_state.enable_ipv6_local || last_network_state.enable_ipv6_global;
         if enable_ipv6 {
             let has_ipv6_handler = self
                 .inner
@@ -179,7 +183,7 @@ impl Network {
         Ok(true)
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub(super) async fn create_inbound_udp_protocol_handlers(
         &self,
         bind_set: NetworkBindSet,

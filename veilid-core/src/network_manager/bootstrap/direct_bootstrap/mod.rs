@@ -10,7 +10,10 @@ impl NetworkManager {
     /// Direct bootstrap request
     /// Sends a bootstrap request to a dialinfo and returns the list of peers to bootstrap with
     /// If no bootstrap keys are specified, uses the v0 mechanism, otherwise uses the v1 mechanism
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn direct_bootstrap(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
         let direct_boot_version = if self
             .config()
@@ -32,7 +35,10 @@ impl NetworkManager {
     }
 
     /// Uses the bootstrap v0 (BOOT) mechanism
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn direct_bootstrap_v0(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
         let timeout_ms = self.config().network.rpc.timeout_ms;
         // Send boot magic to requested peer address
@@ -61,7 +67,10 @@ impl NetworkManager {
     }
 
     /// Uses the bootstrap v1 (B01T) mechanism
-    #[instrument(level = "trace", target = "net", err, skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", err, skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn direct_bootstrap_v1(&self, dial_info: DialInfo) -> EyreResult<Vec<Arc<PeerInfo>>> {
         let timeout_ms = self.config().network.rpc.timeout_ms;
 

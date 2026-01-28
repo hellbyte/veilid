@@ -39,22 +39,22 @@ pub fn encode_address(address: &Address, builder: &mut veilid_capnp::address::Bu
             v6b.set_addr0(u32::from_be_bytes(
                 v6.octets()[0..4]
                     .try_into()
-                    .expect("slice with incorrect length"),
+                    .expect_or_log("slice with incorrect length"),
             ));
             v6b.set_addr1(u32::from_be_bytes(
                 v6.octets()[4..8]
                     .try_into()
-                    .expect("slice with incorrect length"),
+                    .expect_or_log("slice with incorrect length"),
             ));
             v6b.set_addr2(u32::from_be_bytes(
                 v6.octets()[8..12]
                     .try_into()
-                    .expect("slice with incorrect length"),
+                    .expect_or_log("slice with incorrect length"),
             ));
             v6b.set_addr3(u32::from_be_bytes(
                 v6.octets()[12..16]
                     .try_into()
-                    .expect("slice with incorrect length"),
+                    .expect_or_log("slice with incorrect length"),
             ));
         }
         Address::IPV4(v4) => {

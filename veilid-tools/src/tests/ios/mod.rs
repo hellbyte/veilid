@@ -20,13 +20,11 @@ pub fn veilid_tools_setup_ios_tests() {
             use tracing_subscriber::prelude::*;
             use tracing_subscriber::filter::Targets;
 
-            let mut filters = Targets::new();
-            for ig in DEFAULT_LOG_IGNORE_LIST {
-                filters = filters.with_target(ig, LevelFilter::OFF);
-            }
+            let mut filters = Targets::default();
+            filters = filters.with_default(LevelFilter::OFF);
+            filters = filters.with_target("veilid_tools", LevelFilter::INFO);
             tracing_subscriber::registry()
                 .with(OsLogger::new("com.veilid.veilidtools-tests", "default"))
-                .with(LevelFilter::TRACE)
                 .with(filters)
                 .init();
         } else {
@@ -34,7 +32,8 @@ pub fn veilid_tools_setup_ios_tests() {
             use log::LevelFilter;
 
             OsLogger::new("com.veilid.veilidtools-tests")
-                .level_filter(LevelFilter::Trace)
+                .level_filter(LevelFilter::Info)
+                // .filter_module("veilid-tools", LevelFilter::Info)
                 .init()
                 .unwrap();
         }

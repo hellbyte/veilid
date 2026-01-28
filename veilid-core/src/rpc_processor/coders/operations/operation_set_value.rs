@@ -122,7 +122,7 @@ impl RPCOperationSetValueA {
         let question_context = validate_context
             .question_context
             .as_ref()
-            .expect("SetValueA requires question context");
+            .expect_or_log("SetValueA requires question context");
         let QuestionContext::SetValue(set_value_context) = question_context else {
             panic!("Wrong context type for SetValueA");
         };

@@ -89,7 +89,7 @@ impl StorageManager {
         );
     }
 
-    #[instrument(parent = None, level = "trace", target = "stor", name = "StorageManager::tick", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", target = "stor", name = "StorageManager::tick", skip_all, err))]
     pub async fn tick(&self, lag: Option<TimestampDuration>) -> EyreResult<()> {
         // Run the flush stores task
         self.flush_record_stores_task.tick().await?;
@@ -135,7 +135,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub(super) async fn cancel_tasks(&self) {
         veilid_log!(self debug "stopping check inbound transactions task");
         if let Err(e) = self.check_inbound_transactions_task.stop().await {

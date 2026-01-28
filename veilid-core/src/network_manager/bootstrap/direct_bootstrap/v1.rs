@@ -13,7 +13,10 @@ impl NetworkManager {
     /// This is a proxy mechanism to the TXT bootstrap mechanism
     /// that is intended for supporting WS/WSS nodes that can not perform DNS TXT lookups,
     /// however this does work over straight UDP and TCP protocols as well.
-    #[instrument(level = "trace", target = "net", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn handle_boot_v1_request(&self, flow: Flow) -> EyreResult<NetworkResult<()>> {
         let bootstraps = self.config().network.routing_table.bootstrap.clone();
 

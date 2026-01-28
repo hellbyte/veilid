@@ -14,12 +14,10 @@ pub(crate) enum Destination {
     },
     /// Send to node for relay purposes
     Relay {
-        /// The relay to send to
-        relay: FilteredNodeRef,
+        /// The relay dial info to send to
+        relay_di: DialInfo,
         /// The final destination the relay should send to
         node: NodeRef,
-        /// Require safety route or not
-        safety_selection: SafetySelection,
     },
     /// Send to private route
     PrivateRoute {
@@ -34,25 +32,20 @@ pub(crate) enum Destination {
 #[derive(Debug, Clone)]
 pub(crate) struct UnsafeRoutingInfo {
     pub opt_node: Option<NodeRef>,
-    pub opt_relay: Option<NodeRef>,
     pub opt_routing_domain: Option<RoutingDomain>,
 }
 
 impl Destination {
-    pub fn direct(node: FilteredNodeRef) -> Self {
+    pub fn direct(node: FilteredNodeRef, opt_safety_selection: Option<SafetySelection>) -> Self {
         let sequencing = node.sequencing();
         Self::Direct {
             node,
-            safety_selection: SafetySelection::Unsafe(sequencing),
+            safety_selection: opt_safety_selection
+                .unwrap_or_else(|| SafetySelection::Unsafe(sequencing)),
         }
     }
-    pub fn relay(relay: FilteredNodeRef, node: NodeRef) -> Self {
-        let sequencing = relay.sequencing().max(node.sequencing());
-        Self::Relay {
-            relay,
-            node,
-            safety_selection: SafetySelection::Unsafe(sequencing),
-        }
+    pub fn relay(relay_di: DialInfo, node: NodeRef) -> Self {
+        Self::Relay { relay_di, node }
     }
     pub fn private_route(private_route: PrivateRoute, safety_selection: SafetySelection) -> Self {
         Self::PrivateRoute {
@@ -61,49 +54,20 @@ impl Destination {
         }
     }
 
-    pub fn with_safety(self, safety_selection: SafetySelection) -> Self {
-        match self {
-            Destination::Direct {
-                node,
-                safety_selection: _,
-            } => Self::Direct {
-                node,
-                safety_selection,
-            },
-            Destination::Relay {
-                relay,
-                node,
-                safety_selection: _,
-            } => Self::Relay {
-                relay,
-                node,
-                safety_selection,
-            },
-            Destination::PrivateRoute {
-                private_route,
-                safety_selection: _,
-            } => Self::PrivateRoute {
-                private_route,
-                safety_selection,
-            },
-        }
-    }
-
-    pub fn get_safety_selection(&self) -> &SafetySelection {
+    pub fn get_safety_selection(&self) -> SafetySelection {
         match self {
             Destination::Direct {
                 node: _,
                 safety_selection,
-            } => safety_selection,
-            Destination::Relay {
-                relay: _,
-                node: _,
-                safety_selection,
-            } => safety_selection,
+            } => safety_selection.clone(),
+            Destination::Relay { relay_di: _, node } => {
+                // Relayed dialinfo is always sent directly
+                SafetySelection::Unsafe(node.sequencing())
+            }
             Destination::PrivateRoute {
                 private_route: _,
                 safety_selection,
-            } => safety_selection,
+            } => safety_selection.clone(),
         }
     }
 
@@ -113,11 +77,7 @@ impl Destination {
                 node,
                 safety_selection: _,
             } => Some(node.node_ids()),
-            Destination::Relay {
-                relay: _,
-                node,
-                safety_selection: _,
-            } => Some(node.node_ids()),
+            Destination::Relay { relay_di: _, node } => Some(node.node_ids()),
             Destination::PrivateRoute {
                 private_route: _,
                 safety_selection: _,
@@ -135,11 +95,7 @@ impl Destination {
                     RPCError::protocol("no supported node id")
                 })?))
             }
-            Destination::Relay {
-                relay: _,
-                node,
-                safety_selection: _,
-            } => {
+            Destination::Relay { relay_di: _, node } => {
                 Ok(Target::NodeId(node.best_node_id().ok_or_else(|| {
                     RPCError::protocol("no supported node id")
                 })?))
@@ -174,7 +130,7 @@ impl Destination {
         // Get:
         // * The target node (possibly relayed)
         // * The routing domain we are sending to if we can determine it
-        let (opt_node, opt_relay, opt_routing_domain) = match self {
+        let (opt_node, opt_routing_domain) = match self {
             Destination::Direct {
                 node,
                 safety_selection: _,
@@ -185,65 +141,22 @@ impl Destination {
                     // Only a stale connection or no connection exists
                     veilid_log!(node warn "No routing domain for node: node={}", node);
                 };
-                (Some(node.unfiltered()), None, opt_routing_domain)
+                (Some(node.unfiltered()), opt_routing_domain)
             }
-            Destination::Relay {
-                relay,
-                node,
-                safety_selection: _,
-            } => {
-                // Outbound relays are defined as routing to and from PublicInternet only right now
+            Destination::Relay { relay_di, node } => {
+                let opt_routing_domain =
+                    routing_table.routing_domain_for_address(relay_di.address());
 
-                // Resolve the relay for this target's routing domain and see if it matches this relay
-                let mut opt_routing_domain = None;
-                for target_rd in node.routing_domain_set() {
-                    // Check out inbound/outbound relay to match routing domain
-                    for rdr in routing_table.relays(target_rd) {
-                        if relay.same_entry(&rdr.relay_node) {
-                            // Relay for this destination is one of our routing domain relays (our inbound or outbound)
-                            opt_routing_domain = Some(target_rd);
-                            break;
-                        }
-                    }
-                    if opt_routing_domain.is_some() {
-                        break;
-                    }
-                    // Check remote node's published relay to see if that who is relaying
-                    for relay_id in node
-                        .node_info(target_rd)
-                        .map(|ni| ni.relay_ids())
-                        .unwrap_or_default()
-                    {
-                        if relay.node_ids().contains(&relay_id) {
-                            // Relay for this destination is one of its published relays
-                            opt_routing_domain = Some(target_rd);
-                            break;
-                        }
-                    }
-                    if opt_routing_domain.is_some() {
-                        break;
-                    }
-                }
-                if opt_routing_domain.is_none() {
-                    // In the case of an unexpected relay, log it and don't pass any sender peer info into an unexpected relay
-                    veilid_log!(node debug "Unexpected relay: relay={}, node={}", relay, node);
-                };
-
-                (
-                    Some(node.clone()),
-                    Some(relay.unfiltered()),
-                    opt_routing_domain,
-                )
+                (Some(node.clone()), opt_routing_domain)
             }
             Destination::PrivateRoute {
                 private_route: _,
                 safety_selection: _,
-            } => (None, None, Some(RoutingDomain::PublicInternet)),
+            } => (None, Some(RoutingDomain::PublicInternet)),
         };
 
         Some(UnsafeRoutingInfo {
             opt_node,
-            opt_relay,
             opt_routing_domain,
         })
     }
@@ -262,11 +175,7 @@ impl Destination {
                     .ok_or_else(|| RPCError::internal("no public key in routing domain"))?;
                 Ok(public_key)
             }
-            Destination::Relay {
-                relay: _,
-                node,
-                safety_selection: _,
-            } => {
+            Destination::Relay { relay_di: _, node } => {
                 let routing_domain = node
                     .best_routing_domain()
                     .ok_or_else(|| RPCError::internal("no reachable routing domain"))?;
@@ -298,18 +207,8 @@ impl fmt::Display for Destination {
 
                 write!(f, "{}{}", node, sr)
             }
-            Destination::Relay {
-                relay,
-                node,
-                safety_selection,
-            } => {
-                let sr = if matches!(safety_selection, SafetySelection::Safe(_)) {
-                    "%SR"
-                } else {
-                    ""
-                };
-
-                write!(f, "{}@{}{}", node, relay, sr)
+            Destination::Relay { relay_di, node } => {
+                write!(f, "{}@{}", node, relay_di)
             }
             Destination::PrivateRoute {
                 private_route,
@@ -405,35 +304,12 @@ impl RPCProcessor {
                 }
             },
             Destination::Relay {
-                relay,
-                node: target,
-                safety_selection,
-            } => match safety_selection {
-                SafetySelection::Unsafe(_) => {
-                    // Sent via a relay with no safety route, can respond directly
-                    Ok(NetworkResult::value(RespondTo::Sender))
-                }
-                SafetySelection::Safe(safety_spec) => {
-                    // Sent via a relay but with a safety route, respond to private route
-                    let crypto_kind = target
-                        .best_node_id()
-                        .ok_or_else(|| RPCError::protocol("no supported node id"))?
-                        .kind();
-
-                    let mut avoid_nodes = relay.node_ids();
-                    avoid_nodes.add_all_from_slice(&target.node_ids());
-                    let allocated_route_key = network_result_try!(rss
-                        .select_single_route(crypto_kind, safety_spec, &avoid_nodes, false)
-                        .to_rpc_network_result()?);
-
-                    // Get the assembled route for response
-                    let private_route = network_result_try!(rss
-                        .assemble_single_private_route(&allocated_route_key, None)
-                        .to_rpc_network_result()?);
-
-                    Ok(NetworkResult::Value(RespondTo::PrivateRoute(private_route)))
-                }
-            },
+                relay_di: _,
+                node: _,
+            } => {
+                // Sent directly via a relay, must respond directly
+                Ok(NetworkResult::value(RespondTo::Sender))
+            }
             Destination::PrivateRoute {
                 private_route,
                 safety_selection,
@@ -540,7 +416,7 @@ impl RPCProcessor {
 
                 // Get the filtered noderef of the sender
                 let sender_noderef = detail.sender_noderef.clone();
-                NetworkResult::value(Destination::direct(sender_noderef))
+                NetworkResult::value(Destination::direct(sender_noderef, None))
             }
             RespondTo::PrivateRoute(pr) => {
                 match &request.header.detail {

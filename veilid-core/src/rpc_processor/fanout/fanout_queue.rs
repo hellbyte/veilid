@@ -205,7 +205,7 @@ impl fmt::Display for FanoutQueue<'_> {
             "nodes:\n{}",
             self.sorted_nodes
                 .iter()
-                .map(|x| format!("    {}: {}", x, self.nodes.get(x).unwrap().status))
+                .map(|x| format!("    {}: {}", x, self.nodes.get(x).unwrap_or_log().status))
                 .collect::<Vec<_>>()
                 .join("\n")
         )
@@ -287,7 +287,11 @@ impl<'a> FanoutQueue<'a> {
 
         // Touch all node status
         for node in &self.sorted_nodes {
-            self.nodes.get_mut(node).unwrap().status.touch(cur_ts);
+            self.nodes
+                .get_mut(node)
+                .unwrap_or_log()
+                .status
+                .touch(cur_ts);
         }
 
         veilid_log!(self debug
@@ -324,7 +328,7 @@ impl<'a> FanoutQueue<'a> {
             // unless we are unthrottled
             let mut throttle_unlock = false;
             if self.opt_throttle_duration.is_some() {
-                if (working_toward_consensus - slow_nodes.len()) >= self.consensus_count {
+                if working_toward_consensus >= (self.consensus_count + slow_nodes.len()) {
                     break;
                 } else if !slow_nodes.is_empty() {
                     throttle_unlock = true;
@@ -332,7 +336,7 @@ impl<'a> FanoutQueue<'a> {
             }
 
             // Get the queue entry and handle it appropriately
-            let node = self.nodes.get_mut(x).unwrap();
+            let node = self.nodes.get_mut(x).unwrap_or_log();
             match node.status.stage {
                 FanoutNodeStage::Queued => {
                     // Consensus counting stops at a queued node
@@ -341,8 +345,7 @@ impl<'a> FanoutQueue<'a> {
                     // Send node to a work request
                     while let Ok(work_request) = self.work_request_receiver.try_recv() {
                         if throttle_unlock {
-                            let slow_node = slow_nodes.pop().unwrap();
-                            veilid_log!(registry debug "{}: Throttle unlock due to slow node: {}", self.name, slow_node);
+                            veilid_log!(registry debug "{}: Throttle unlock due to {} slow nodes", self.name, slow_nodes.len());
                         }
                         let lane_name = work_request.lane_name();
                         let request_ts = work_request.request_ts();
@@ -379,11 +382,17 @@ impl<'a> FanoutQueue<'a> {
                     if counting_consensus {
                         working_toward_consensus += 1;
                     }
+
+                    // If this node was a slow node, remove it from the slow node list since we finished it
+                    slow_nodes.retain(|x| !x.same_entry(&node.node_ref));
                 }
                 FanoutNodeStage::Timeout
                 | FanoutNodeStage::Rejected
                 | FanoutNodeStage::Disqualified => {
                     // Does not count toward consensus or stop counting it
+
+                    // If this node was a slow node, remove it from the slow node list since we finished it
+                    slow_nodes.retain(|x| !x.same_entry(&node.node_ref));
                 }
             }
         }
@@ -391,8 +400,8 @@ impl<'a> FanoutQueue<'a> {
 
     /// Transition node InProgress -> Timeout
     pub fn timeout(&mut self, node_ref: NodeRef, cur_ts: Timestamp) {
-        let key = node_ref.node_ids().get(self.crypto_kind).unwrap();
-        let node = self.nodes.get_mut(&key).unwrap();
+        let key = node_ref.node_ids().get(self.crypto_kind).unwrap_or_log();
+        let node = self.nodes.get_mut(&key).unwrap_or_log();
         if !matches!(node.status.stage, FanoutNodeStage::InProgress) {
             unreachable!("should be in progress");
         }
@@ -401,8 +410,8 @@ impl<'a> FanoutQueue<'a> {
 
     /// Transition node InProgress -> Rejected
     pub fn rejected(&mut self, node_ref: NodeRef, cur_ts: Timestamp) {
-        let key = node_ref.node_ids().get(self.crypto_kind).unwrap();
-        let node = self.nodes.get_mut(&key).unwrap();
+        let key = node_ref.node_ids().get(self.crypto_kind).unwrap_or_log();
+        let node = self.nodes.get_mut(&key).unwrap_or_log();
         if !matches!(node.status.stage, FanoutNodeStage::InProgress) {
             unreachable!("should be in progress");
         }
@@ -412,8 +421,8 @@ impl<'a> FanoutQueue<'a> {
 
     /// Transition node InProgress -> Accepted
     pub fn accepted(&mut self, node_ref: NodeRef, cur_ts: Timestamp) {
-        let key = node_ref.node_ids().get(self.crypto_kind).unwrap();
-        let node = self.nodes.get_mut(&key).unwrap();
+        let key = node_ref.node_ids().get(self.crypto_kind).unwrap_or_log();
+        let node = self.nodes.get_mut(&key).unwrap_or_log();
         if !matches!(node.status.stage, FanoutNodeStage::InProgress) {
             unreachable!("should be in progress");
         }
@@ -422,8 +431,8 @@ impl<'a> FanoutQueue<'a> {
 
     /// Transition node InProgress -> Stale
     pub fn stale(&mut self, node_ref: NodeRef, cur_ts: Timestamp) {
-        let key = node_ref.node_ids().get(self.crypto_kind).unwrap();
-        let node = self.nodes.get_mut(&key).unwrap();
+        let key = node_ref.node_ids().get(self.crypto_kind).unwrap_or_log();
+        let node = self.nodes.get_mut(&key).unwrap_or_log();
         if !matches!(node.status.stage, FanoutNodeStage::InProgress) {
             unreachable!("should be in progress");
         }
@@ -432,8 +441,8 @@ impl<'a> FanoutQueue<'a> {
 
     /// Transition node InProgress -> Disqualified
     pub fn disqualified(&mut self, node_ref: NodeRef, cur_ts: Timestamp) {
-        let key = node_ref.node_ids().get(self.crypto_kind).unwrap();
-        let node = self.nodes.get_mut(&key).unwrap();
+        let key = node_ref.node_ids().get(self.crypto_kind).unwrap_or_log();
+        let node = self.nodes.get_mut(&key).unwrap_or_log();
         if !matches!(node.status.stage, FanoutNodeStage::InProgress) {
             unreachable!("should be in progress");
         }
@@ -476,7 +485,7 @@ impl<'a> FanoutQueue<'a> {
         let mut consecutive_rejections = 0usize;
         let mut rejected_consensus = false;
         for node_id in &self.sorted_nodes {
-            let node = self.nodes.get_mut(node_id).unwrap();
+            let node = self.nodes.get_mut(node_id).unwrap_or_log();
             if !rejected_consensus {
                 if matches!(node.status.stage, FanoutNodeStage::Rejected) {
                     consecutive_rejections += 1;

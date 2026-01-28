@@ -38,7 +38,7 @@ impl fmt::Display for OutboundWatchManager {
             keys.sort();
 
             for k in keys {
-                let v = self.outbound_watches.get(&k).unwrap();
+                let v = self.outbound_watches.get(&k).unwrap_or_log();
                 out += &format!("  {}:\n{}\n", k, indent_all_by(4, v.to_string()));
             }
         }
@@ -49,7 +49,7 @@ impl fmt::Display for OutboundWatchManager {
             keys.sort();
 
             for k in keys {
-                let v = self.per_node_states.get(&k).unwrap();
+                let v = self.per_node_states.get(&k).unwrap_or_log();
                 out += &format!("  {}:\n{}\n", k, indent_all_by(4, v.to_string()));
             }
         }
@@ -67,7 +67,7 @@ impl fmt::Display for OutboundWatchManager {
             keys.sort();
 
             for k in keys {
-                let v = self.needs_change_inspection.get(&k).unwrap();
+                let v = self.needs_change_inspection.get(&k).unwrap_or_log();
                 out += &format!("  {}: {}\n", k, v);
             }
         }
@@ -174,7 +174,7 @@ impl OutboundWatchManager {
             } else if !pns
                 .watch_node_ref
                 .as_ref()
-                .unwrap()
+                .unwrap_or_log()
                 .state(cur_ts)
                 .is_alive()
             {

@@ -32,7 +32,10 @@ impl RawTcpNetworkConnection {
         self.flow
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn close(&self) -> io::Result<NetworkResult<()>> {
         // Drop the stream, without calling close, which calls shutdown, which causes TIME_WAIT regardless of SO_LINGER settings
         drop(self.stream.lock().take());
@@ -40,7 +43,6 @@ impl RawTcpNetworkConnection {
         Ok(NetworkResult::value(()))
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
     async fn send_internal(
         stream: &mut AsyncPeekStream,
         message: Vec<u8>,
@@ -61,7 +63,7 @@ impl RawTcpNetworkConnection {
         stream.flush().await.into_network_result()
     }
 
-    #[instrument(level="trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len()))]
+    #[cfg_attr(feature = "instrument", instrument(level="trace", target="protocol", err, skip(self, message), fields(network_result, message.len = message.len())))]
     pub async fn send(&self, message: Vec<u8>) -> io::Result<NetworkResult<()>> {
         let Some(mut stream) = self.stream.lock().clone() else {
             bail_io_error_other!("already closed");
@@ -72,7 +74,6 @@ impl RawTcpNetworkConnection {
         Ok(out)
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
     async fn recv_internal(stream: &mut AsyncPeekStream) -> io::Result<NetworkResult<Vec<u8>>> {
         let mut header = [0u8; 4];
 
@@ -96,7 +97,10 @@ impl RawTcpNetworkConnection {
         Ok(NetworkResult::Value(out))
     }
 
-    #[instrument(level = "trace", target = "protocol", err, skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", err, skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn recv(&self) -> io::Result<NetworkResult<Vec<u8>>> {
         let Some(mut stream) = self.stream.lock().clone() else {
             bail_io_error_other!("already closed");
@@ -130,7 +134,10 @@ impl RawTcpProtocolHandler {
         }
     }
 
-    #[instrument(level = "trace", target = "protocol", ret, err, skip(self, ps))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", ret, err, skip(self, ps), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn on_accept_async(
         self,
         ps: AsyncPeekStream,
@@ -172,7 +179,10 @@ impl RawTcpProtocolHandler {
         Ok(Some(conn))
     }
 
-    #[instrument(level = "trace", target = "protocol", skip(registry), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "protocol", skip(registry), ret, err, fields(__VEILID_LOG_KEY = registry.log_key()))
+    )]
     pub async fn connect(
         registry: VeilidComponentRegistry,
         local_address: Option<SocketAddr>,

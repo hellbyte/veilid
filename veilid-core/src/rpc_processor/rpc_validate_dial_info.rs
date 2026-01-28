@@ -4,7 +4,7 @@ impl_veilid_log_facility!("rpc");
 
 impl RPCProcessor {
     // Can only be sent directly, not via relays or routes
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self), ret, err(level=Level::DEBUG)))]
     #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), expect(dead_code))]
     pub async fn rpc_call_validate_dial_info(
         &self,
@@ -42,7 +42,7 @@ impl RPCProcessor {
 
         // Send the validate_dial_info request
         // This can only be sent directly, as relays can not validate dial info
-        network_result_value_or_log!(self self.statement(Destination::direct(peer.default_filtered()), statement, None, None)
+        network_result_value_or_log!(self self.statement(Destination::direct(peer.default_filtered(), None), statement, None, None)
             .await? => [ format!(": peer={} statement={:?}", peer, statement) ] {
                 return Ok(false);
             }
@@ -54,11 +54,9 @@ impl RPCProcessor {
             .in_current_span()
             .await
         {
-            Err(_) => {
-                return Err(RPCError::try_again("not started up"));
-            }
+            Err(_) => Err(RPCError::try_again("not started up")),
             Ok(v) => {
-                let receipt_event = v.take_value().unwrap();
+                let receipt_event = v.take_value().unwrap_or_log();
                 match receipt_event {
                     ReceiptEvent::ReturnedPrivate { private_route: _ }
                     | ReceiptEvent::ReturnedInBand { inbound_noderef: _ }
@@ -84,7 +82,7 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    //#[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_validate_dial_info(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
         let detail = match msg.header.detail {
@@ -142,7 +140,7 @@ impl RPCProcessor {
                 );
             let will_validate_dial_info_filter = Box::new(
                 move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                    let entry = v.unwrap();
+                    let entry = v.unwrap_or_log();
                     entry.with(rti, move |_rti, e| {
                         e.node_info(routing_domain)
                             .map(|ni| {
@@ -186,7 +184,7 @@ impl RPCProcessor {
 
                 // Send the validate_dial_info request
                 // This can only be sent directly, as relays can not validate dial info
-                network_result_value_or_log!(self pin_future_closure!(self.statement(Destination::direct(peer.default_filtered()), statement, None, None))
+                network_result_value_or_log!(self pin_future_closure!(self.statement(Destination::direct(peer.default_filtered(), None), statement, None, None))
                     .await? => [ format!(": peer={} statement={:?}", peer, statement) ] {
                         continue;
                     }

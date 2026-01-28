@@ -217,7 +217,10 @@ impl<'a> FanoutCall<'a> {
         }
     }
 
-    #[instrument(level = "trace", target = "fanout", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "fanout", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn evaluate_done(&self, ctx: &mut FanoutContext) -> FanoutDoneDisposition {
         // If we already finished, just return
         if !matches!(ctx.done, FanoutDoneDisposition::NotDone) {
@@ -231,7 +234,7 @@ impl<'a> FanoutCall<'a> {
             let mut consensus_nodes: Vec<NodeRef> = vec![];
             let mut value_nodes: Vec<NodeRef> = vec![];
             for sn in sorted_nodes {
-                let node = nodes.get(sn).unwrap();
+                let node = nodes.get(sn).unwrap_or_log();
                 match node.status.stage() {
                     FanoutNodeStage::Queued | FanoutNodeStage::InProgress => {
                         // Still have a closer node to do before reaching consensus,
@@ -290,7 +293,10 @@ impl<'a> FanoutCall<'a> {
         done
     }
 
-    #[instrument(level = "trace", target = "fanout", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "fanout", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn fanout_processor(
         &self,
         lane_name: String,
@@ -406,7 +412,10 @@ impl<'a> FanoutCall<'a> {
         }
     }
 
-    #[instrument(level = "trace", target = "fanout", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "fanout", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn init_closest_nodes(
         &self,
         context: &mut FanoutContext,
@@ -423,7 +432,7 @@ impl<'a> FanoutCall<'a> {
                     if opt_entry.is_none() {
                         return false;
                     }
-                    let entry = opt_entry.unwrap();
+                    let entry = opt_entry.unwrap_or_log();
 
                     // Filter entries
                     entry.with(rti, |_rti, e| {
@@ -447,7 +456,7 @@ impl<'a> FanoutCall<'a> {
             let filters = VecDeque::from([filter]);
 
             let transform = |_rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>| {
-                NodeRef::new(self.routing_table.registry(), v.unwrap().clone())
+                NodeRef::new(self.routing_table.registry(), v.unwrap_or_log().clone())
             };
 
             self.routing_table
@@ -465,7 +474,10 @@ impl<'a> FanoutCall<'a> {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "fanout", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "fanout", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn run(
         &self,
         init_fanout_queue: Vec<NodeRef>,
@@ -598,11 +610,11 @@ impl<'a> FanoutCall<'a> {
                 // Print final queue
                 veilid_log!(self debug "{}: Finished FanoutQueue:\n{}", self.name, context_locked.fanout_queue);
 
-                return Ok(core::mem::take(&mut context_locked.result));
+                Ok(core::mem::take(&mut context_locked.result))
             }
             Ok(Err(e)) => {
                 // Fanout died with an error
-                return Err(e);
+                Err(e)
             }
             Err(_) => {
                 // Timeout, do one last evaluate with remaining nodes in timeout state
@@ -627,7 +639,7 @@ impl<'a> FanoutCall<'a> {
                 // We definitely weren't done, so this is just a plain timeout
                 let mut result = core::mem::take(&mut context_locked.result);
                 result.kind = FanoutResultKind::Timeout;
-                return Ok(result);
+                Ok(result)
             }
         }
     }

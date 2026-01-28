@@ -94,7 +94,7 @@ impl VeilidCrypto {
         })
     }
 
-    pub fn randomBytes(&self, len: u32) -> VeilidAPIResult<Box<[u8]>> {
+    pub fn randomBytes(&self, len: usize) -> VeilidAPIResult<Box<[u8]>> {
         self.with_crypto_system(|crypto_system| {
             let out = crypto_system.random_bytes(len);
             let out = out.into_boxed_slice();

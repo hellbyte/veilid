@@ -18,7 +18,7 @@ type PingValidatorFuture = PinBoxFutureStatic<Result<(), RPCError>>;
 
 impl RoutingTable {
     // Task routine for PublicInternet status pings
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err))]
     pub async fn ping_validator_public_internet_task_routine(
         &self,
         stop_token: StopToken,
@@ -27,8 +27,7 @@ impl RoutingTable {
     ) -> EyreResult<()> {
         let mut future_queue: VecDeque<PingValidatorFuture> = VecDeque::new();
 
-        self.ping_validator(cur_ts, RoutingDomain::PublicInternet, &mut future_queue)
-            .await?;
+        self.ping_validator(cur_ts, RoutingDomain::PublicInternet, &mut future_queue)?;
 
         self.process_ping_validation_queue("PublicInternet", stop_token, cur_ts, future_queue)
             .await;
@@ -37,7 +36,7 @@ impl RoutingTable {
     }
 
     // Task routine for LocalNetwork status pings
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err))]
     pub async fn ping_validator_local_network_task_routine(
         &self,
         stop_token: StopToken,
@@ -46,8 +45,7 @@ impl RoutingTable {
     ) -> EyreResult<()> {
         let mut future_queue: VecDeque<PingValidatorFuture> = VecDeque::new();
 
-        self.ping_validator(cur_ts, RoutingDomain::LocalNetwork, &mut future_queue)
-            .await?;
+        self.ping_validator(cur_ts, RoutingDomain::LocalNetwork, &mut future_queue)?;
 
         self.process_ping_validation_queue("LocalNetwork", stop_token, cur_ts, future_queue)
             .await;
@@ -56,7 +54,7 @@ impl RoutingTable {
     }
 
     // Task routine for PublicInternet relay keepalive pings
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err))]
     pub async fn ping_validator_public_internet_relay_task_routine(
         &self,
         stop_token: StopToken,
@@ -75,7 +73,7 @@ impl RoutingTable {
     }
 
     // Task routine for active watch keepalive pings
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err))]
     pub async fn ping_validator_active_watch_task_routine(
         &self,
         stop_token: StopToken,
@@ -84,8 +82,7 @@ impl RoutingTable {
     ) -> EyreResult<()> {
         let mut future_queue: VecDeque<PingValidatorFuture> = VecDeque::new();
 
-        self.active_watches_keepalive_public_internet(cur_ts, &mut future_queue)
-            .await?;
+        self.active_watches_keepalive_public_internet(cur_ts, &mut future_queue)?;
 
         self.process_ping_validation_queue("WatchKeepalive", stop_token, cur_ts, future_queue)
             .await;
@@ -96,7 +93,10 @@ impl RoutingTable {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // Ping the relay to keep it alive, over every protocol it is relaying for us
-    #[instrument(level = "trace", skip(self, futurequeue), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, futurequeue), err)
+    )]
     async fn relay_keepalive_public_internet(
         &self,
         cur_ts: Timestamp,
@@ -120,7 +120,7 @@ impl RoutingTable {
                         let rpc_processor = relay_ping.node_ref.rpc_processor();
                         veilid_log!(rpc_processor trace "--> PublicInternet Relay ping to {:?}", relay_ping.node_ref);
                         let _ = Box::pin(rpc_processor
-                            .rpc_call_status(Destination::direct(relay_ping.node_ref)))
+                            .rpc_call_status(Destination::direct(relay_ping.node_ref, None)))
                             .await?;
                         Ok(())
                     }
@@ -146,8 +146,11 @@ impl RoutingTable {
     }
 
     // Ping the active watch nodes to ensure they are still there
-    #[instrument(level = "trace", skip(self, futurequeue), err)]
-    async fn active_watches_keepalive_public_internet(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, futurequeue), err)
+    )]
+    fn active_watches_keepalive_public_internet(
         &self,
         cur_ts: Timestamp,
         futurequeue: &mut VecDeque<PingValidatorFuture>,
@@ -188,8 +191,11 @@ impl RoutingTable {
 
     // Ping each node in the routing table if they need to be pinged
     // to determine their reliability
-    #[instrument(level = "trace", skip(self, futurequeue), err)]
-    async fn ping_validator(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, futurequeue), err)
+    )]
+    fn ping_validator(
         &self,
         cur_ts: Timestamp,
         routing_domain: RoutingDomain,
@@ -207,8 +213,8 @@ impl RoutingTable {
                     #[cfg(feature = "verbose-tracing")]
                     veilid_log!(nr debug "--> {:?} Validator ping to {:?}", routing_domain, nr);
                     let rpc_processor = nr.rpc_processor();
-                    let _ =
-                        Box::pin(rpc_processor.rpc_call_status(Destination::direct(nr))).await?;
+                    let _ = Box::pin(rpc_processor.rpc_call_status(Destination::direct(nr, None)))
+                        .await?;
                     Ok(())
                 }
                 .boxed(),

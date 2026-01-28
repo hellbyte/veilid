@@ -2,7 +2,10 @@ use super::*;
 
 impl StorageManager {
     /// Close an opened local record
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn close_record(&self, record_key: RecordKey) -> VeilidAPIResult<()> {
         let Ok(_guard) = self.startup_lock.enter() else {
             apibail_not_initialized!();
@@ -26,7 +29,10 @@ impl StorageManager {
     }
 
     /// Close all opened records
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn close_all_records(&self) -> VeilidAPIResult<()> {
         let Ok(_guard) = self.startup_lock.enter() else {
             apibail_not_initialized!();

@@ -9,12 +9,12 @@ pub enum ContactMethod {
     Existing,
     /// Contact the node directly
     Direct(DialInfo),
-    /// Request via signal the node connect back directly (relay, target)
-    SignalReverse(NodeId, NodeId),
-    /// Request via signal the node negotiate a hole punch (relay, target)
-    SignalHolePunch(NodeId, NodeId),
+    /// Request via signal the node connect back directly
+    SignalReverse(DialInfo),
+    /// Request via signal the node negotiate a hole punch
+    SignalHolePunch(DialInfo),
     /// Must use an inbound relay to reach the node
-    InboundRelay(NodeId),
+    InboundRelay(DialInfo),
     /// Must use outbound relay to reach the node
     OutboundRelay(NodeId),
 }

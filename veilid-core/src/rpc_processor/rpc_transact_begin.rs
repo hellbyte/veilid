@@ -180,7 +180,7 @@ impl RPCProcessor {
         } else if let Some(descriptor) = opt_descriptor {
             DescriptorMode::Send(Arc::new(descriptor))
         } else if !want_descriptor {
-            DescriptorMode::Have(last_descriptor.unwrap())
+            DescriptorMode::Have(last_descriptor.unwrap_or_log())
         } else {
             return Ok(NetworkResult::invalid_message(
                 "wanted descriptor but did not get one",
@@ -218,7 +218,7 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, msg), fields(msg.operation.op_id), ret, err))]
     pub(super) async fn process_transact_begin_q(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ensure this never came over a private route, safety route is okay though
         if msg.header.is_private_routed() {

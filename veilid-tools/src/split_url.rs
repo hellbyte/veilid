@@ -73,14 +73,14 @@ fn hex_encode(c: u8) -> (char, char) {
     let c1 = c & 15;
     (
         if c0 < 10 {
-            char::from_u32((b'0' + c0) as u32).unwrap()
+            char::from_u32((b'0' + c0) as u32).unwrap_or_log()
         } else {
-            char::from_u32((b'A' + c0 - 10) as u32).unwrap()
+            char::from_u32((b'A' + c0 - 10) as u32).unwrap_or_log()
         },
         if c1 < 10 {
-            char::from_u32((b'0' + c1) as u32).unwrap()
+            char::from_u32((b'0' + c1) as u32).unwrap_or_log()
         } else {
-            char::from_u32((b'A' + c1 - 10) as u32).unwrap()
+            char::from_u32((b'A' + c1 - 10) as u32).unwrap_or_log()
         },
     )
 }
@@ -120,7 +120,7 @@ fn url_encode<S: AsRef<str>>(s: S, must_encode: impl Fn(u8) -> bool) -> String {
             out.push(c0);
             out.push(c1);
         } else {
-            out.push(char::from_u32(*b as u32).unwrap())
+            out.push(char::from_u32(*b as u32).unwrap_or_log())
         }
     }
     out

@@ -46,7 +46,8 @@ pub struct AddressCheck {
     // Used by InboundCapable to determine if we have changed our address or re-do our network class
     address_inconsistency_table: BTreeMap<AddressCheckCacheKey, usize>,
     // Used by OutboundOnly to determine if we should re-do our network class
-    address_consistency_table: BTreeMap<AddressCheckCacheKey, LruCache<IpAddr, SocketAddress>>,
+    address_consistency_table:
+        BTreeMap<AddressCheckCacheKey, hashlink::LruCache<IpAddr, SocketAddress>>,
 }
 
 impl fmt::Debug for AddressCheck {
@@ -330,7 +331,7 @@ impl AddressCheck {
                 act.insert(reporting_ipblock, socket_address);
             })
             .or_insert_with(|| {
-                let mut lruc = LruCache::new(ADDRESS_CHECK_CACHE_SIZE);
+                let mut lruc = hashlink::LruCache::new(ADDRESS_CHECK_CACHE_SIZE);
                 lruc.insert(reporting_ipblock, socket_address);
                 lruc
             });

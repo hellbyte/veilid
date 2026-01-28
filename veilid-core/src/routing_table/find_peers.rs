@@ -4,7 +4,10 @@ impl RoutingTable {
     /// Utility to find the closest nodes to a particular hash coordinate, preferring reliable nodes first,
     /// including possibly our own node and nodes further away from the key than our own,
     /// returning their peer info
-    #[instrument(level = "trace", target = "rtab", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_preferred_closest_peers(
         &self,
         routing_domain: RoutingDomain,
@@ -45,8 +48,10 @@ impl RoutingTable {
             filters,
             // transform
             |_rti, opt_entry| match opt_entry {
-                Some(entry) => entry.with_inner(|e| e.get_peer_info(routing_domain).unwrap()),
-                None => opt_published_peer_info.clone().unwrap(),
+                Some(entry) => {
+                    entry.with_inner(|e| e.get_peer_info(routing_domain).unwrap_or_log())
+                }
+                None => opt_published_peer_info.clone().unwrap_or_log(),
             },
         ) {
             Ok(v) => v,
@@ -65,7 +70,10 @@ impl RoutingTable {
     /// Utility to find nodes that are closer to a key than our own node,
     /// returning only reliable nodes, and returning their peer info
     /// Can filter based on a particular set of capabilities
-    #[instrument(level = "trace", target = "rtab", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn find_reliable_peers_closer_to_key(
         &self,
         routing_domain: RoutingDomain,
@@ -128,9 +136,9 @@ impl RoutingTable {
             filters,
             // transform
             |rti, entry| {
-                entry
-                    .unwrap()
-                    .with(rti, |_rti, e| e.get_peer_info(routing_domain).unwrap())
+                entry.unwrap_or_log().with(rti, |_rti, e| {
+                    e.get_peer_info(routing_domain).unwrap_or_log()
+                })
             },
         ) {
             Ok(v) => v,
@@ -166,7 +174,10 @@ impl RoutingTable {
     }
 
     /// Determine if set of peers is closer to key_near than key_far is to key_near
-    #[instrument(level = "trace", target = "rtab", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn verify_peers_closer(
         &self,
         hash_coordinate_far: HashCoordinate,

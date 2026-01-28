@@ -89,9 +89,13 @@ sealed class DHTSchema with _$DHTSchema {
   static const maxMemberCount = 256;
 
   @FreezedUnionValue('DFLT')
+  // This is not an exhaustive assert, use validate() to check a schema
+  @Assert('oCnt >= 0', 'value must not be negative')
   const factory DHTSchema.dflt({required int oCnt}) = DHTSchemaDFLT;
 
   @FreezedUnionValue('SMPL')
+  // This is not an exhaustive assert, use validate() to check a schema
+  @Assert('oCnt >= 0', 'value must not be negative')
   const factory DHTSchema.smpl({
     required int oCnt,
     required List<DHTSchemaMember> members,
@@ -105,7 +109,8 @@ const defaultDHTSchema = DHTSchema.dflt(oCnt: 1);
 
 @freezed
 sealed class DHTSchemaMember with _$DHTSchemaMember {
-  @Assert('mCnt > 0 && mCnt <= DHTSchema.maxMemberCount', 'value out of range')
+  // This is not an exhaustive assert, use validate() to check a schema
+  @Assert('mCnt >= 0', 'value must not be negative')
   const factory DHTSchemaMember({
     required BareMemberId mKey,
     required int mCnt,

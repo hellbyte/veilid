@@ -73,7 +73,6 @@ pub struct RPCDecodeContext {
     pub origin_routing_domain: RoutingDomain,
 }
 
-#[instrument(level = "trace", target = "rpc", skip_all, err)]
 pub fn canonical_message_builder_to_vec_packed<'a, T>(
     builder: capnp::message::Builder<T>,
 ) -> Result<Vec<u8>, RPCError>
@@ -106,7 +105,6 @@ where
     Ok(buffer)
 }
 
-#[instrument(level = "trace", target = "rpc", skip_all, err)]
 pub fn canonical_message_builder_to_write_packed<'a, T, W>(
     write: W,
     builder: capnp::message::Builder<T>,
@@ -135,7 +133,6 @@ where
     Ok(())
 }
 
-#[instrument(level = "trace", target = "rpc", skip_all, err)]
 pub fn canonical_message_builder_to_vec_unpacked<'a, T>(
     builder: capnp::message::Builder<T>,
 ) -> Result<Vec<u8>, RPCError>

@@ -5,9 +5,10 @@ pub(super) static GUARD_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Subkey lock management structure
 #[derive(Debug)]
-struct SubkeyLockInfo<S: LockPurpose> {
-    lock_table: WeakValueHashMap<ValueSubkey, Weak<AsyncMutex<()>>>,
-    purpose_table: HashMap<ValueSubkey, S>,
+struct RecordLockInner<R: LockPurpose, S: LockPurpose> {
+    subkey_lock_table: WeakValueHashMap<ValueSubkey, Weak<AsyncMutex<()>>>,
+    purpose_state: RecordLockPurposeState<R, S>,
+    peek_count: usize,
 }
 
 /// Record lock management structure
@@ -15,9 +16,7 @@ struct SubkeyLockInfo<S: LockPurpose> {
 pub(super) struct RecordLock<R: LockPurpose, S: LockPurpose> {
     record: OpaqueRecordKey,
     whole_record_lock: Arc<AsyncRwLock<()>>,
-    whole_record_lock_purpose: Mutex<Option<R>>,
-    subkey_lock_info: Mutex<SubkeyLockInfo<S>>,
-    peek_count: Mutex<usize>,
+    inner: Mutex<RecordLockInner<R, S>>,
     #[cfg(feature = "debug-locks")]
     active_guards: Arc<Mutex<HashMap<usize, backtrace::Backtrace>>>,
 }
@@ -27,12 +26,14 @@ impl<R: LockPurpose, S: LockPurpose> RecordLock<R, S> {
         Self {
             record,
             whole_record_lock: Arc::new(AsyncRwLock::new(())),
-            whole_record_lock_purpose: Mutex::new(None),
-            subkey_lock_info: Mutex::new(SubkeyLockInfo {
-                lock_table: WeakValueHashMap::new(),
-                purpose_table: HashMap::new(),
+            inner: Mutex::new(RecordLockInner {
+                subkey_lock_table: WeakValueHashMap::new(),
+                purpose_state: RecordLockPurposeState {
+                    whole_record_lock_purpose: None,
+                    subkey_lock_purpose: BTreeMap::new(),
+                },
+                peek_count: 0,
             }),
-            peek_count: Mutex::new(0),
             #[cfg(feature = "debug-locks")]
             active_guards: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -44,52 +45,39 @@ impl<R: LockPurpose, S: LockPurpose> RecordLock<R, S> {
     pub fn get_whole_record_lock(&self) -> Arc<AsyncRwLock<()>> {
         self.whole_record_lock.clone()
     }
-    pub fn purpose(&self) -> Option<R> {
-        self.whole_record_lock_purpose.lock().clone()
+    pub fn purpose_state(&self) -> RecordLockPurposeState<R, S> {
+        self.inner.lock().purpose_state.clone()
     }
     pub fn set_record_purpose(&self, purpose: R) {
-        *(self.whole_record_lock_purpose.lock()) = Some(purpose);
-        self.subkey_lock_info.lock().purpose_table.clear();
+        let mut inner = self.inner.lock();
+        inner.purpose_state.whole_record_lock_purpose = Some(purpose);
+        inner.purpose_state.subkey_lock_purpose.clear();
     }
     pub fn get_subkey_lock(&self, subkey: ValueSubkey) -> Arc<AsyncMutex<()>> {
-        let mut subkey_lock_info = self.subkey_lock_info.lock();
-        subkey_lock_info.lock_table.remove_expired();
-        subkey_lock_info
-            .lock_table
+        let mut inner = self.inner.lock();
+        inner.subkey_lock_table.remove_expired();
+        inner
+            .subkey_lock_table
             .entry(subkey)
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
     }
-    #[expect(dead_code)]
-    pub fn subkey_purpose(&self, subkey: ValueSubkey) -> Option<S> {
-        self.subkey_lock_info
-            .lock()
-            .purpose_table
-            .get(&subkey)
-            .cloned()
-    }
+
     pub fn set_subkey_purpose(&self, subkey: ValueSubkey, purpose: S) {
-        *(self.whole_record_lock_purpose.lock()) = None;
-        self.subkey_lock_info
-            .lock()
-            .purpose_table
+        let mut inner = self.inner.lock();
+        inner.purpose_state.whole_record_lock_purpose = None;
+        inner
+            .purpose_state
+            .subkey_lock_purpose
             .insert(subkey, purpose);
     }
-    pub fn get_subkey_purpose_map(&self) -> BTreeMap<S, ValueSubkeyRangeSet> {
-        let mut purpose_map = BTreeMap::<S, ValueSubkeyRangeSet>::new();
 
-        for (k, v) in self.subkey_lock_info.lock().purpose_table.iter() {
-            purpose_map.entry(v.clone()).or_default().insert(*k);
-        }
-
-        purpose_map
-    }
-
+    #[expect(dead_code)]
     pub fn get_peek_count(&self) -> usize {
-        *self.peek_count.lock()
+        self.inner.lock().peek_count
     }
 
     pub fn add_peek(&self) {
-        *(self.peek_count.lock()) += 1;
+        self.inner.lock().peek_count += 1;
     }
 
     #[cfg(feature = "debug-locks")]
@@ -98,14 +86,18 @@ impl<R: LockPurpose, S: LockPurpose> RecordLock<R, S> {
     }
 
     pub(super) fn drop_record_lock_guard(&self) {
-        *(self.whole_record_lock_purpose.lock()) = None;
+        self.inner.lock().purpose_state.whole_record_lock_purpose = None;
     }
 
     pub(super) fn drop_subkey_lock_guard(&self, subkey: ValueSubkey) {
-        self.subkey_lock_info.lock().purpose_table.remove(&subkey);
+        self.inner
+            .lock()
+            .purpose_state
+            .subkey_lock_purpose
+            .remove(&subkey);
     }
 
     pub(super) fn drop_peek_lock_guard(&self) {
-        *(self.peek_count.lock()) -= 1;
+        self.inner.lock().peek_count -= 1;
     }
 }

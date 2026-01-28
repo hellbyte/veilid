@@ -2,7 +2,10 @@ use super::*;
 
 impl StorageManager {
     /// Open an existing local record if it exists, and if it doesnt exist locally, try to pull it from the network and open it and return the opened descriptor
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn open_record(
         &self,
         record_key: RecordKey,
@@ -22,15 +25,12 @@ impl StorageManager {
             .await;
 
         // See if we have a local record already or not
-        if let Some(res) = self
-            .open_existing_record_locked(
-                &record_lock,
-                record_key.clone(),
-                writer.clone(),
-                safety_selection.clone(),
-            )
-            .await?
-        {
+        if let Some(res) = self.open_existing_record_locked(
+            &record_lock,
+            record_key.clone(),
+            writer.clone(),
+            safety_selection.clone(),
+        )? {
             // We had an existing record, so check the network to see if we should
             // update it with what we have here
             let set_consensus = self.config().network.dht.set_value_count as usize;
@@ -49,8 +49,14 @@ impl StorageManager {
             apibail_try_again!("offline, try again later");
         };
 
-        // No last descriptor, no last value
-        // Use the safety selection we opened the record with
+        // Inspecting only subkey 0 gets the descriptor for the record but
+        // minimizes the number of subkeys we wait for from the network in the event that
+        // the record has many subkeys that have not yet been written to
+        // This is a bit of a hack because in theory other subkeys besides 0 could have been
+        // written to, but subkey 0 is the most likely to have been written to first
+        // Also, we know subkey 0 must exist, and if we don't have a schema, the only other alternative
+        // is a ValueSubkeyRangeSet::full() which would be more like a transact_dht_record in terms of wait time
+        // No last descriptor, no last value. Use the safety selection we opened the record with.
         let result = self
             .outbound_inspect_value(
                 &opaque_record_key,
@@ -70,15 +76,12 @@ impl StorageManager {
         // Check again to see if we have a local record already or not
         // because waiting for the outbound_inspect_value action could result in the key being opened
         // via some parallel process
-        if let Some(res) = self
-            .open_existing_record_locked(
-                &record_lock,
-                record_key.clone(),
-                writer.clone(),
-                safety_selection.clone(),
-            )
-            .await?
-        {
+        if let Some(res) = self.open_existing_record_locked(
+            &record_lock,
+            record_key.clone(),
+            writer.clone(),
+            safety_selection.clone(),
+        )? {
             // Don't bother to rehydrate in this edge case
             // We already checked above and won't have anything better than what
             // is on the network in this case
@@ -98,8 +101,11 @@ impl StorageManager {
 
     ////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
-    pub(super) async fn open_existing_record_locked(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
+    pub(super) fn open_existing_record_locked(
         &self,
         record_lock: &StorageManagerRecordLockGuard,
         record_key: RecordKey,
@@ -122,7 +128,7 @@ impl StorageManager {
             r.safety_selection = safety_selection.clone();
 
             // Return record details
-            (descriptor.owner(), descriptor.schema().unwrap())
+            (descriptor.owner(), descriptor.schema().unwrap_or_log())
         };
         let (owner, schema) =
             match local_record_store.with_record_detail_mut(&opaque_record_key, cb)? {
@@ -179,7 +185,10 @@ impl StorageManager {
         Ok(Some(descriptor))
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub(super) async fn open_new_record_locked(
         &self,
         record_lock: &StorageManagerRecordLockGuard,

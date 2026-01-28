@@ -7,7 +7,10 @@ impl_veilid_log_facility!("net");
 
 impl NetworkManager {
     /// Bootstrap resolution from TXT into strings
-    #[instrument(level = "trace", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn resolve_bootstrap_v0(
         &self,
         hostname: String,
@@ -42,7 +45,8 @@ impl NetworkManager {
             unord.push(
                 async move {
                     // look up bootstrap node txt records
-                    let bsnirecords = match intf::txt_lookup(&bsname).await {
+                    let bsnirecords = match self.resolve_bootstrap_txt_strings(bsname.clone()).await
+                    {
                         Err(e) => {
                             veilid_log!(self warn
                                 "Network may be down. Bootstrap node txt lookup failed for {}: {}",
@@ -77,7 +81,10 @@ impl NetworkManager {
     }
 
     /// Parse v0 bootstrap record strings into BootstrapRecord structs
-    #[instrument(level = "trace", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn parse_bootstrap_v0(
         &self,
         record_strings: &[String],

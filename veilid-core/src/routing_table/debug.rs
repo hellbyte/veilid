@@ -313,7 +313,7 @@ impl RoutingTable {
             node_count,
             filters,
             |_rti, entry: Option<Arc<BucketEntry>>| {
-                NodeRef::new(self.registry(), entry.unwrap().clone())
+                NodeRef::new(self.registry(), entry.unwrap_or_log().clone())
             },
         );
         let mut out = String::new();

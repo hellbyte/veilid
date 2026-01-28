@@ -9,7 +9,7 @@ fi
 if [ ! -z "$(command -v apt)" ]; then
     # Install APT dependencies
     sudo apt update -y
-    sudo apt install -y openjdk-17-jdk-headless iproute2 curl build-essential cmake libssl-dev openssl file git pkg-config libdbus-1-dev libdbus-glib-1-dev libgirepository1.0-dev libcairo2-dev checkinstall unzip llvm python3-pip
+    sudo apt install -y openjdk-17-jdk-headless iproute2 curl build-essential cmake libssl-dev openssl file git pkg-config libdbus-1-dev libdbus-glib-1-dev libgirepository1.0-dev libcairo2-dev checkinstall unzip llvm python3-pip jq
 elif [ ! -z "$(command -v dnf)" ]; then
     # DNF (formerly yum)
     sudo dnf update -y
@@ -22,7 +22,7 @@ elif [ ! -z "$(command -v dnf)" ]; then
     # them in anyway
     #
     # Also Fedora doesn't come with pip
-    sudo dnf install -y java-17-openjdk-headless iproute curl cmake openssl-devel openssl git file pkg-config dbus-devel dbus-glib gobject-introspection-devel cairo-devel unzip llvm python3-pip gcc-c++
+    sudo dnf install -y java-17-openjdk-headless iproute curl cmake openssl-devel openssl git file pkg-config dbus-devel dbus-glib gobject-introspection-devel cairo-devel unzip llvm python3-pip gcc-c++ jq
     # build-essentials
     sudo dnf groupinstall -y 'Development Tools'
 fi
@@ -66,5 +66,12 @@ END
     *) echo invalid response ;;
     esac
 done
+
+# Install latest binaryen/wasm-opt
+BINARYEN_URL=$(curl -s https://api.github.com/repos/WebAssembly/binaryen/releases/latest | jq -r ".assets[].browser_download_url | select(match(\"$(arch)-linux.tar.gz$\"))")
+curl -L -o "/tmp/binaryen.tar.gz" "$download_url"
+mkdir /tmp/binaryen
+tar -C /tmp/binaryen -xvf /tmp/binaryen.tar.gz --strip-components=1
+cp /tmp/binaryen/bin/wasm-opt ~/.cargo/bin
 
 echo Complete! Exit and reopen the shell and continue with ./setup_linux.sh

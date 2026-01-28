@@ -744,8 +744,14 @@ impl BucketEntryInner {
         }
         self.envelope_support.push(envelope_version);
         self.envelope_support.sort_by(|a, b| {
-            let a_sort = VALID_ENVELOPE_VERSIONS.iter().position(|x| x == a).unwrap();
-            let b_sort = VALID_ENVELOPE_VERSIONS.iter().position(|x| x == b).unwrap();
+            let a_sort = VALID_ENVELOPE_VERSIONS
+                .iter()
+                .position(|x| x == a)
+                .unwrap_or_log();
+            let b_sort = VALID_ENVELOPE_VERSIONS
+                .iter()
+                .position(|x| x == b)
+                .unwrap_or_log();
             a_sort.cmp(&b_sort)
         });
     }
@@ -1024,8 +1030,11 @@ impl BucketEntryInner {
                         true
                     }
                     Some(latest_contact_time) => {
-                        let first_consecutive_seen_ts =
-                            self.peer_stats.rpc_stats.first_consecutive_seen_ts.unwrap();
+                        let first_consecutive_seen_ts = self
+                            .peer_stats
+                            .rpc_stats
+                            .first_consecutive_seen_ts
+                            .unwrap_or_log();
                         let start_of_reliable_time =
                             first_consecutive_seen_ts.later(TimestampDuration::new_secs(
                                 UNRELIABLE_PING_SPAN_SECS - UNRELIABLE_PING_INTERVAL_SECS,

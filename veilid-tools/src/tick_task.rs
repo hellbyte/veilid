@@ -64,7 +64,10 @@ impl<E: Send + fmt::Debug + 'static> TickTask<E> {
             + Sync
             + 'static,
     ) {
-        self.routine.set(Box::new(routine)).map_err(drop).unwrap();
+        self.routine
+            .set(Box::new(routine))
+            .map_err(drop)
+            .unwrap_or_log();
     }
 
     pub fn is_running(&self) -> bool {
@@ -133,7 +136,7 @@ impl<E: Send + fmt::Debug + 'static> TickTask<E> {
         let stop_token = stop_source.token();
         let make_singlefuture_closure = || {
             let running = self.running.clone();
-            let routine = self.routine.get().unwrap()(stop_token, last_timestamp_us, now);
+            let routine = self.routine.get().unwrap_or_log()(stop_token, last_timestamp_us, now);
 
             Box::pin(async move {
                 running.store(true, core::sync::atomic::Ordering::Release);

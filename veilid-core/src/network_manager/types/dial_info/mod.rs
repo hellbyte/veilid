@@ -44,7 +44,7 @@ impl fmt::Display for DialInfo {
             DialInfo::TCP(di) => write!(f, "tcp|{}", di.socket_address),
             DialInfo::WS(di) => {
                 let url = format!("ws://{}", di.request);
-                let split_url = SplitUrl::from_str(&url).unwrap();
+                let split_url = SplitUrl::from_str(&url).unwrap_or_log();
                 match split_url.host {
                     SplitUrlHost::Hostname(_) => {
                         write!(f, "ws|{}|{}", di.socket_address.ip_addr(), di.request)
@@ -61,7 +61,7 @@ impl fmt::Display for DialInfo {
             #[cfg(feature = "enable-protocol-wss")]
             DialInfo::WSS(di) => {
                 let url = format!("wss://{}", di.request);
-                let split_url = SplitUrl::from_str(&url).unwrap();
+                let split_url = SplitUrl::from_str(&url).unwrap_or_log();
                 match split_url.host {
                     SplitUrlHost::Hostname(_) => {
                         write!(f, "wss|{}|{}", di.socket_address.ip_addr(), di.request)

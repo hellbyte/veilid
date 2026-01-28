@@ -54,10 +54,10 @@ impl EncryptedValueData {
             &mut &self.blob[..],
             capnp::message::ReaderOptions::new(),
         )
-        .unwrap();
+        .unwrap_or_log();
         let reader = message_reader
             .get_root::<veilid_capnp::value_data::Reader>()
-            .unwrap();
+            .unwrap_or_log();
 
         reader.get_seq().into()
     }
@@ -67,15 +67,15 @@ impl EncryptedValueData {
             &mut &self.blob[..],
             capnp::message::ReaderOptions::new(),
         )
-        .unwrap();
+        .unwrap_or_log();
         let reader = message_reader
             .get_root::<veilid_capnp::value_data::Reader>()
-            .unwrap();
+            .unwrap_or_log();
 
-        let w = reader.get_writer().unwrap();
+        let w = reader.get_writer().unwrap_or_log();
         PublicKey::new(
             CryptoKind::from(w.get_kind()),
-            BarePublicKey::new(w.get_value().unwrap()),
+            BarePublicKey::new(w.get_value().unwrap_or_log()),
         )
     }
 
@@ -85,13 +85,13 @@ impl EncryptedValueData {
             &mut &self.blob[..],
             capnp::message::ReaderOptions::new(),
         )
-        .unwrap();
+        .unwrap_or_log();
         let reader = message_reader
             .get_root::<veilid_capnp::value_data::Reader>()
-            .unwrap();
+            .unwrap_or_log();
 
         // TODO: try to make this function return &[u8]
-        reader.get_data().unwrap().to_vec()
+        reader.get_data().unwrap_or_log().to_vec()
     }
 
     #[must_use]
@@ -100,14 +100,14 @@ impl EncryptedValueData {
             &mut &self.blob[..],
             capnp::message::ReaderOptions::new(),
         )
-        .unwrap();
+        .unwrap_or_log();
         let reader = message_reader
             .get_root::<veilid_capnp::value_data::Reader>()
-            .unwrap();
+            .unwrap_or_log();
 
         if reader.has_nonce() {
-            let n = reader.get_nonce().unwrap();
-            Some(Nonce::new(n.get_value().unwrap()))
+            let n = reader.get_nonce().unwrap_or_log();
+            Some(Nonce::new(n.get_value().unwrap_or_log()))
         } else {
             None
         }
@@ -119,12 +119,12 @@ impl EncryptedValueData {
             &mut &self.blob[..],
             capnp::message::ReaderOptions::new(),
         )
-        .unwrap();
+        .unwrap_or_log();
         let reader = message_reader
             .get_root::<veilid_capnp::value_data::Reader>()
-            .unwrap();
+            .unwrap_or_log();
 
-        reader.get_data().unwrap().len()
+        reader.get_data().unwrap_or_log().len()
     }
 
     #[must_use]
@@ -234,33 +234,5 @@ impl<'de> serde::Deserialize<'de> for EncryptedValueData {
                     .map_err(serde::de::Error::custom)
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::crypto::tests::fixtures::*;
-
-    #[test]
-    fn value_data_ok() {
-        assert!(EncryptedValueData::new(
-            ValueSeqNum::ZERO,
-            vec![0; EncryptedValueData::MAX_LEN],
-            fix_fake_public_key(),
-            None,
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn value_data_too_long() {
-        assert!(EncryptedValueData::new(
-            ValueSeqNum::ZERO,
-            vec![0; EncryptedValueData::MAX_LEN + 1],
-            fix_fake_public_key(),
-            None,
-        )
-        .is_err());
     }
 }

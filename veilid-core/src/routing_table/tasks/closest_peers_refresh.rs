@@ -10,7 +10,7 @@ impl RoutingTable {
     /// Ask our closest peers to give us more peers close to ourselves. This will
     /// assist with the DHT and other algorithms that utilize the distance metric.
     /// This only finds nodes in the PublicInternet domain.
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn closest_peers_refresh_task_routine(
         &self,
         stop_token: StopToken,
@@ -60,10 +60,10 @@ impl RoutingTable {
                     self_node_id.to_hash_coordinate(),
                     filters,
                     |_rti, entry: Option<Arc<BucketEntry>>| {
-                        NodeRef::new(self.registry(), entry.unwrap().clone())
+                        NodeRef::new(self.registry(), entry.unwrap_or_log().clone())
                     },
                 )
-                .unwrap();
+                .unwrap_or_log();
 
             for nr in noderefs {
                 unord.push(

@@ -47,7 +47,7 @@ impl TemplateState {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn set_disable_capabilities(&mut self, disable_capabilities: Vec<String>) {
         let disable_capabilities =
             imbl::Vector::from_iter(disable_capabilities.into_iter().map(Arc::new));
@@ -58,7 +58,7 @@ impl TemplateState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn set_networks_list(&mut self, networks: WeightedList<NetworkStateId>) {
         let locations_list = Some(TemplateLocationsList::Networks { networks });
 
@@ -69,7 +69,7 @@ impl TemplateState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn set_blueprints_list(&mut self, blueprints: WeightedList<BlueprintStateId>) {
         let locations_list = Some(TemplateLocationsList::Blueprints { blueprints });
 
@@ -80,7 +80,7 @@ impl TemplateState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn clear_locations_list(&mut self) {
         let locations_list = None;
 
@@ -91,7 +91,7 @@ impl TemplateState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn set_limit_machine_count(&mut self, limit_machine_count: Option<usize>) {
         // Update fields
         self.fields = Arc::new(TemplateStateFields {
@@ -100,7 +100,7 @@ impl TemplateState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn set_limit_machines_per_network(
         &mut self,
         limit_machines_per_network: Option<WeightedList<usize>>,
@@ -148,7 +148,10 @@ impl TemplateState {
         Ok(true)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "tracing",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn generate(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -206,7 +209,7 @@ impl TemplateState {
             gsm_inner
                 .machine_states_mut()
                 .release_id(machine_state_id)
-                .expect("must succeed");
+                .expect_or_log("must succeed");
             return Err(e);
         }
 
@@ -214,7 +217,7 @@ impl TemplateState {
         gsm_inner
             .machine_states_mut()
             .attach_state(machine_state)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         // Record the newly instantiated machine
         let machines = self.fields.machines.update(machine_state_id);
@@ -244,7 +247,7 @@ impl TemplateState {
         Ok(machine_state_id)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(self)))]
     pub fn on_machine_released(&mut self, machine_state_id: MachineStateId) {
         let machines = self.fields.machines.without(&machine_state_id);
         let mut machines_per_network = self.fields.machines_per_network.clone();

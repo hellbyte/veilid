@@ -62,6 +62,13 @@ macro_rules! impl_crypto_typed_group {
                     self.items.iter().find(|x| x.kind() == kind).cloned()
                 }
 
+                #[must_use]
+                pub fn contains_kind(&self,
+                    #[wasm_bindgen(unchecked_param_type = "CryptoKind")]
+                    kind: CryptoKind) -> bool {
+                    self.items.iter().any(|x| x.kind() == kind)
+                }
+
                 pub fn remove(&mut self,
                     #[wasm_bindgen(unchecked_param_type = "CryptoKind")]
                     kind: CryptoKind) -> Option<$name> {
@@ -86,6 +93,11 @@ macro_rules! impl_crypto_typed_group {
                 #[must_use]
                 pub fn get(&self, kind: CryptoKind) -> Option<$name> {
                     self.items.iter().find(|x| x.kind() == kind).cloned()
+                }
+
+                #[must_use]
+                pub fn contains_kind(&self, kind: CryptoKind) -> bool {
+                    self.items.iter().any(|x| x.kind() == kind)
                 }
 
                 pub fn remove(&mut self, kind: CryptoKind) -> Option<$name> {

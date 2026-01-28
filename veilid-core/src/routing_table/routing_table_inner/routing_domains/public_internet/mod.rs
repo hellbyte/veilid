@@ -96,7 +96,7 @@ impl PublicInternetRoutingDomainDetail {
         true
     }
 
-    #[instrument(level = "trace", target = "rtab", skip(self), fields(__VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rtab", skip(self), fields(__VEILID_LOG_KEY = self.log_key()), ret))]
     fn get_direct_contact_method(
         &self,
         ctx: &ContactMethodContext,
@@ -121,22 +121,19 @@ impl PublicInternetRoutingDomainDetail {
             }
 
             // Get best node id to contact relay with
-            let Some(node_b_relay_id) = node_b_relay.node_ids().get(ctx.best_ck) else {
+            if !node_b_relay.node_ids().contains_kind(ctx.best_ck) {
                 // No best relay id
                 return Some(ContactMethod::Unreachable);
             };
 
             // Can node A reach the inbound relay directly?
-            if self
-                .best_dial_info_detail_between_nodes(
-                    ctx.node_a,
-                    node_b_relay,
-                    ctx.dial_info_filter,
-                    ctx.sequencing,
-                    ctx.context_sort,
-                )
-                .is_some()
-            {
+            if let Some(node_b_relay_did) = self.best_dial_info_detail_between_nodes(
+                ctx.node_a,
+                node_b_relay,
+                ctx.dial_info_filter,
+                ctx.sequencing,
+                ctx.context_sort,
+            ) {
                 // Can node A receive anything inbound ever?
                 if ctx.node_a.has_dial_info() {
                     ///////// Reverse connection
@@ -154,8 +151,7 @@ impl PublicInternetRoutingDomainDetail {
                             // Can we receive a direct reverse connection?
                             if !reverse_did.class.requires_signal() {
                                 return Some(ContactMethod::SignalReverse(
-                                    node_b_relay_id,
-                                    ctx.node_b_id.clone(),
+                                    node_b_relay_did.dial_info,
                                 ));
                             }
                         }
@@ -188,8 +184,7 @@ impl PublicInternetRoutingDomainDetail {
                             {
                                 // The target and ourselves have a udp dialinfo that they can reach
                                 return Some(ContactMethod::SignalHolePunch(
-                                    node_b_relay_id,
-                                    ctx.node_b_id.clone(),
+                                    node_b_relay_did.dial_info,
                                 ));
                             }
                         }
@@ -197,19 +192,19 @@ impl PublicInternetRoutingDomainDetail {
                     // Otherwise we have to inbound relay
                 }
 
-                return Some(ContactMethod::InboundRelay(node_b_relay_id));
+                return Some(ContactMethod::InboundRelay(node_b_relay_did.dial_info));
             }
         }
         None
     }
 
-    #[instrument(level = "trace", target = "rtab", skip(self), fields(__VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rtab", skip(self), fields(__VEILID_LOG_KEY = self.log_key()), ret))]
     fn get_indirect_contact_method(
         &self,
         ctx: &ContactMethodContext,
         node_b_relay: &RelayInfo,
     ) -> Option<ContactMethod> {
-        // Note that relay_peer_info could be node_a, in which case a connection already exists
+        // Note that node_b_relay could be node_a, in which case a connection already exists
         // and we only get here if the connection had dropped, in which case node_b is unreachable until
         // it gets a new relay connection up
         if node_b_relay
@@ -220,22 +215,19 @@ impl PublicInternetRoutingDomainDetail {
         }
 
         // Get best node id to contact relay with
-        let Some(node_b_relay_id) = node_b_relay.node_ids().get(ctx.best_ck) else {
+        if !node_b_relay.node_ids().contains_kind(ctx.best_ck) {
             // No best relay id
             return Some(ContactMethod::Unreachable);
         };
 
         // Can we reach the inbound relay?
-        if self
-            .best_dial_info_detail_between_nodes(
-                ctx.node_a,
-                node_b_relay,
-                ctx.dial_info_filter,
-                ctx.sequencing,
-                ctx.context_sort,
-            )
-            .is_some()
-        {
+        if let Some(node_b_relay_did) = self.best_dial_info_detail_between_nodes(
+            ctx.node_a,
+            node_b_relay,
+            ctx.dial_info_filter,
+            ctx.sequencing,
+            ctx.context_sort,
+        ) {
             ///////// Reverse connection
 
             // Get the best match dial info for an reverse inbound connection from node B to node A
@@ -254,14 +246,11 @@ impl PublicInternetRoutingDomainDetail {
             {
                 // Can we receive a direct reverse connection?
                 if !reverse_did.class.requires_signal() {
-                    return Some(ContactMethod::SignalReverse(
-                        node_b_relay_id,
-                        ctx.node_b_id.clone(),
-                    ));
+                    return Some(ContactMethod::SignalReverse(node_b_relay_did.dial_info));
                 }
             }
 
-            return Some(ContactMethod::InboundRelay(node_b_relay_id));
+            return Some(ContactMethod::InboundRelay(node_b_relay_did.dial_info));
         }
 
         None
@@ -460,7 +449,7 @@ impl RoutingDomainDetail for PublicInternetRoutingDomainDetail {
         true
     }
 
-    #[instrument(level = "trace", target = "rtab", skip(self, rti, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rtab", skip(self, rti, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret))]
     fn get_contact_method(
         &self,
         rti: &RoutingTableInner,
@@ -486,8 +475,8 @@ impl RoutingDomainDetail for PublicInternetRoutingDomainDetail {
             return ContactMethod::Unreachable;
         };
 
-        //let node_a_id = peer_a.node_ids().get(best_ck).unwrap();
-        let node_b_id = peer_b.node_ids().get(best_ck).unwrap();
+        //let node_a_id = peer_a.node_ids().get(best_ck).unwrap_or_log();
+        let node_b_id = peer_b.node_ids().get(best_ck).unwrap_or_log();
 
         let ctx = ContactMethodContext {
             //rti,

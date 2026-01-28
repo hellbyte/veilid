@@ -10,6 +10,10 @@ mod load_action;
 mod record_data;
 mod record_index;
 
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests;
+
 use super::*;
 
 pub(super) use commit_action::*;
@@ -157,11 +161,15 @@ where
         self.record_index.finish_commit_action(commit_action)
     }
 
+    pub fn total_storage_space(&self) -> u64 {
+        self.record_index.total_storage_space()
+    }
+
     pub fn prepare_get_load_action(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
-    ) -> LoadActionResult {
+    ) -> VeilidAPIResult<LoadActionResult> {
         self.record_index
             .prepare_load_action(opaque_record_key.clone(), subkey, false)
     }
@@ -170,7 +178,7 @@ where
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
         subkey: ValueSubkey,
-    ) -> LoadActionResult {
+    ) -> VeilidAPIResult<LoadActionResult> {
         self.record_index
             .prepare_load_action(opaque_record_key.clone(), subkey, true)
     }
@@ -188,6 +196,13 @@ where
         F: FnOnce(&Record<D>) -> R,
     {
         self.record_index.peek_record(opaque_record_key, func)
+    }
+
+    pub fn peek_lru<F, R>(&self, func: F) -> Option<R>
+    where
+        F: FnOnce(&OpaqueRecordKey, &Record<D>) -> R,
+    {
+        self.record_index.peek_lru(func)
     }
 
     pub fn with_record<F, R>(
@@ -211,43 +226,6 @@ where
     {
         self.record_index
             .with_record_detail_mut(opaque_record_key, func)
-    }
-
-    pub fn reclaim_space(&mut self, space: u64) -> (Option<CommitAction<D>>, ReclaimedSpace) {
-        let mut total_reclaimed_space = ReclaimedSpace {
-            reclaimed: 0,
-            total: self.record_index.total_storage_space(),
-            dead_records: vec![],
-        };
-
-        while total_reclaimed_space.reclaimed < space {
-            let mut reclaimed_space = match self.record_index.delete_lru() {
-                Ok(v) => v,
-                Err(e) => {
-                    veilid_log!(self error "Error reclaiming space: {}", e);
-                    break;
-                }
-            };
-
-            if reclaimed_space.dead_records.is_empty() {
-                break;
-            }
-
-            for dead_record in &reclaimed_space.dead_records {
-                self.cleanup_record(dead_record);
-            }
-
-            total_reclaimed_space.reclaimed += reclaimed_space.reclaimed;
-            total_reclaimed_space.total = reclaimed_space.total;
-            total_reclaimed_space
-                .dead_records
-                .append(&mut reclaimed_space.dead_records);
-        }
-
-        (
-            self.record_index.prepare_commit_action(),
-            total_reclaimed_space,
-        )
     }
 
     ////////////////////////////////////////////////////////////

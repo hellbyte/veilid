@@ -1,9 +1,11 @@
 use std::sync::Arc;
 use veilid_core::VeilidUpdate::{AppMessage, Network};
-use veilid_core::{VeilidConfig, VeilidConfigProtectedStore, VeilidConfigTableStore, VeilidUpdate};
+use veilid_core::{
+    VeilidConfig, VeilidConfigProtectedStore, VeilidConfigTableStore, VeilidTracing, VeilidUpdate,
+};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a basic update callback to display Veilid's update events
     let update_callback = Arc::new(move |update: VeilidUpdate| {
         match update {
@@ -63,16 +65,19 @@ async fn main() {
         ..Default::default()
     };
 
+    // Create simple veilid logger using the default RUST_LOG environment variable
+    VeilidTracing::stderr().try_apply_default_env()?;
+
     // Startup Veilid node
-    let veilid = veilid_core::api_startup(update_callback, config)
-        .await
-        .unwrap();
+    let veilid = veilid_core::api_startup(update_callback, config).await?;
 
     // Attach to the network
-    veilid.attach().await.unwrap();
+    veilid.attach().await?;
 
     // Until CTRL+C is pressed, keep running
-    tokio::signal::ctrl_c().await.unwrap();
+    tokio::signal::ctrl_c().await?;
 
     veilid.shutdown().await;
+
+    Ok(())
 }

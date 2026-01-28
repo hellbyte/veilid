@@ -76,25 +76,31 @@ impl CryptoSystem for CryptoSystemVLD0 {
     }
 
     fn crypto(&self) -> VeilidComponentGuard<'_, Crypto> {
-        self.registry.lookup::<Crypto>().unwrap()
+        self.registry.lookup::<Crypto>().unwrap_or_log()
     }
 
     // Cached Operations
-    #[instrument(level = "trace", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key())))]
     fn cached_dh(&self, key: &PublicKey, secret: &SecretKey) -> VeilidAPIResult<SharedSecret> {
         self.crypto()
             .cached_dh_internal::<CryptoSystemVLD0>(self, key, secret)
     }
 
     // Generation
-    #[instrument(level = "trace", target = "crypto", skip_all)]
-    fn random_bytes(&self, len: u32) -> Vec<u8> {
-        let mut bytes = unsafe { unaligned_u8_vec_uninit(len as usize) };
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
+    fn random_bytes(&self, len: usize) -> Vec<u8> {
+        let mut bytes = unsafe { unaligned_u8_vec_uninit(len) };
         random_bytes(bytes.as_mut());
         bytes
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn hash_password(&self, password: &[u8], salt: &[u8]) -> VeilidAPIResult<String> {
         if salt.len() < Salt::MIN_LENGTH || salt.len() > Salt::MAX_LENGTH {
             apibail_generic!("invalid salt length");
@@ -112,7 +118,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
             .to_string();
         Ok(password_hash)
     }
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn verify_password(&self, password: &[u8], password_hash: &str) -> VeilidAPIResult<bool> {
         let parsed_hash = PasswordHash::new(password_hash).map_err(VeilidAPIError::generic)?;
         // Argon2 with default params (Argon2id v19)
@@ -121,7 +130,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(argon2.verify_password(password, &parsed_hash).is_ok())
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn derive_shared_secret(&self, password: &[u8], salt: &[u8]) -> VeilidAPIResult<SharedSecret> {
         if salt.len() < Salt::MIN_LENGTH || salt.len() > Salt::MAX_LENGTH {
             apibail_generic!("invalid salt length");
@@ -140,21 +152,30 @@ impl CryptoSystem for CryptoSystemVLD0 {
         ))
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn random_nonce(&self) -> Nonce {
         let mut nonce = [0u8; VLD0_NONCE_LENGTH];
         random_bytes(&mut nonce);
         Nonce::new(&nonce)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn random_shared_secret(&self) -> SharedSecret {
         let mut s = [0u8; VLD0_SHARED_SECRET_LENGTH];
         random_bytes(&mut s);
         SharedSecret::new(CRYPTO_KIND_VLD0, BareSharedSecret::new(&s))
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn compute_dh(&self, key: &PublicKey, secret: &SecretKey) -> VeilidAPIResult<SharedSecret> {
         let pk_xd = public_to_x25519_pk(key)?;
         let sk_xd = secret_to_x25519_sk(secret)?;
@@ -172,12 +193,18 @@ impl CryptoSystem for CryptoSystemVLD0 {
         ))
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn generate_keypair(&self) -> KeyPair {
         vld0_generate_keypair()
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn generate_hash(&self, data: &[u8]) -> HashDigest {
         HashDigest::new(
             CRYPTO_KIND_VLD0,
@@ -185,7 +212,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         )
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn generate_hash_reader(&self, reader: &mut dyn std::io::Read) -> VeilidAPIResult<PublicKey> {
         let mut hasher = blake3::Hasher::new();
         std::io::copy(reader, &mut hasher).map_err(VeilidAPIError::generic)?;
@@ -221,7 +251,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         VLD0_AEAD_OVERHEAD
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn validate_keypair(
         &self,
         public_key: &PublicKey,
@@ -240,7 +273,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(v)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn validate_hash(&self, data: &[u8], hash_digest: &HashDigest) -> VeilidAPIResult<bool> {
         self.check_hash_digest(hash_digest)?;
 
@@ -249,7 +285,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(bytes == hash_digest.ref_value().bytes())
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn validate_hash_reader(
         &self,
         reader: &mut dyn std::io::Read,
@@ -264,7 +303,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
     }
 
     // Authentication
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn sign(
         &self,
         public_key: &PublicKey,
@@ -293,7 +335,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
 
         Ok(sig)
     }
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn verify(
         &self,
         public_key: &PublicKey,
@@ -332,7 +377,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
     }
 
     // AEAD Encrypt/Decrypt
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn decrypt_in_place_aead(
         &self,
         body: &mut Vec<u8>,
@@ -358,7 +406,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
             .map_err(VeilidAPIError::generic)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn decrypt_aead(
         &self,
         body: &[u8],
@@ -376,7 +427,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(out)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn encrypt_in_place_aead(
         &self,
         body: &mut Vec<u8>,
@@ -404,7 +458,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
             .map_err(VeilidAPIError::generic)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn encrypt_aead(
         &self,
         body: &[u8],
@@ -423,7 +480,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
     }
 
     // NoAuth Encrypt/Decrypt
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn crypt_in_place_no_auth(
         &self,
         body: &mut [u8],
@@ -448,7 +508,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn crypt_b2b_no_auth(
         &self,
         in_buf: &[u8],
@@ -476,7 +539,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn crypt_no_auth_aligned_8(
         &self,
         in_buf: &[u8],
@@ -491,7 +557,10 @@ impl CryptoSystem for CryptoSystemVLD0 {
         Ok(out_buf)
     }
 
-    #[instrument(level = "trace", target = "crypto", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "crypto", skip_all, fields(__VEILID_LOG_KEY = self.registry.log_key()))
+    )]
     fn crypt_no_auth_unaligned(
         &self,
         in_buf: &[u8],

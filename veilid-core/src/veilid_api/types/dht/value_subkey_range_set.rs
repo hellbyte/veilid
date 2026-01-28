@@ -82,8 +82,8 @@ impl ValueSubkeyRangeSet {
     #[must_use]
     pub fn is_full(&self) -> bool {
         self.data.ranges_len() == 1
-            && self.data.first().unwrap() == u32::MIN
-            && self.data.last().unwrap() == u32::MAX
+            && self.data.first().unwrap_or_log() == u32::MIN
+            && self.data.last().unwrap_or_log() == u32::MAX
     }
 
     #[must_use]

@@ -28,11 +28,9 @@ rt-async-std = [
 rt-tokio = [
     "veilid-core/rt-tokio",
     "tokio",
-    "tokio-stream",
-    "tokio-util",
     "opentelemetry/rt-tokio",
 ]
-debug-load = ["dep:ctor", "dep:libc-print", "dep:android_log-sys", "dep:oslog"]
+debug-load = ["dep:ctor", "dep:libc-print", "dep:android_log-sys"]
 enable-protocol-wss = ["veilid-core/enable-protocol-wss"]
 footgun = ["veilid-core/footgun"]
 
@@ -44,9 +42,6 @@ parking_lot = "0.12.3"
 backtrace = "^0.3.71"
 serde_json = "1.0.140"
 serde = "1.0.218"
-futures-util = { version = "0.3.31", default-features = false, features = [
-    "alloc",
-] }
 cfg-if = "1.0.0"
 data-encoding = { version = "2.8.0" }
 tracing-flame = "0.2.0"
@@ -59,16 +54,13 @@ opentelemetry = { version = "0.20" }
 opentelemetry-otlp = { version = "0.13" }
 opentelemetry-semantic-conventions = "0.12"
 async-std = { version = "1.13.0", features = ["unstable"], optional = true }
-tokio = { version = "1.43.0", features = ["full"], optional = true }
-tokio-stream = { version = "0.1.17", features = ["net"], optional = true }
-tokio-util = { version = "0.7.13", features = ["compat"], optional = true }
+tokio = { version = "1.43.0", optional = true }
 allo-isolate = "0.1.26"
 ffi-support = "0.4.4"
 lazy_static = "1.5.0"
 hostname = "0.3.1"
 ctor = { version = "0.2.9", optional = true }
 libc-print = { version = "0.1.23", optional = true }
-
 
 # Dependencies for WASM builds only
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
@@ -81,7 +73,7 @@ android_log-sys = { version = "0.3.2", optional = true }
 
 # Dependencies for iOS builds only
 [target.'cfg(target_os = "ios")'.dependencies]
-oslog = { version = "0.2.0", default-features = false, optional = true }
+# None currently
 
 [lints]
 workspace = true

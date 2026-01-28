@@ -1,5 +1,7 @@
 use super::*;
 
+impl_veilid_log_facility!("rtab");
+
 type PermReturnType = (Vec<usize>, SequenceOrderingSet);
 type PermFunc<'t> = Box<dyn FnMut(&[usize]) -> Option<PermReturnType> + Send + 't>;
 
@@ -23,7 +25,6 @@ fn get_route_permutation_count(hop_count: usize) -> usize {
 /// get the route permutation at particular 'perm' index, starting at the 'start' index
 /// for a set of 'hop_count' nodes. the first node is always fixed, and the maximum
 /// number of permutations is given by get_route_permutation_count()
-#[instrument(level = "trace", target = "route", skip_all)]
 fn with_route_permutations(
     hop_count: usize,
     start: usize,
@@ -78,7 +79,7 @@ impl RouteSpecStore {
     /// Returns Err(VeilidAPIError::TryAgain) if no route could be allocated at this time
     /// Returns other errors on failure
     /// Returns Ok(route id string) on success
-    #[instrument(level = "trace", target="route", skip(self), ret, err(level=Level::TRACE))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="rtab::route", skip(self), ret, err(level=Level::TRACE), fields(__VEILID_LOG_KEY = self.log_key())))]
     #[allow(clippy::too_many_arguments)]
     pub fn allocate_route(
         &self,
@@ -104,7 +105,10 @@ impl RouteSpecStore {
     }
 
     /// Release an allocated route that is no longer in use
-    #[instrument(level = "trace", target = "route", skip(self), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) fn release_allocated_route(&self, id: RouteId) -> bool {
         let mut inner = self.inner.lock();
         let Some(rssd) = inner.content.remove_detail(&id) else {
@@ -121,7 +125,7 @@ impl RouteSpecStore {
         true
     }
 
-    #[instrument(level = "trace", target="route", skip(self, inner, rti), ret, err(level=Level::TRACE))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target="rtab::route", skip(self, inner, rti), ret, err(level=Level::TRACE), fields(__VEILID_LOG_KEY = self.log_key())))]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn allocate_route_inner(
         &self,
@@ -180,7 +184,7 @@ impl RouteSpecStore {
         );
         let pre_sort_filter = self.make_route_allocation_pre_sort_filter(safety_spec);
         let transform = |_rti: &RoutingTableInner, entry: Option<Arc<BucketEntry>>| -> NodeRef {
-            NodeRef::new(self.registry(), entry.unwrap())
+            NodeRef::new(self.registry(), entry.unwrap_or_log())
         };
 
         // Pull the whole routing table in sorted order
@@ -231,11 +235,17 @@ impl RouteSpecStore {
         let mut route_set = BTreeMap::<PublicKey, RouteSpecDetail>::new();
         let crypto = self.crypto();
         for crypto_kind in crypto_kinds.iter().copied() {
-            let vcrypto = crypto.get(crypto_kind).unwrap();
+            let vcrypto = crypto.get(crypto_kind).unwrap_or_log();
             let keypair = vcrypto.generate_keypair();
             let hops: Vec<NodeId> = route_nodes
                 .iter()
-                .map(|v| nodes[*v].locked(rti).node_ids().get(crypto_kind).unwrap())
+                .map(|v| {
+                    nodes[*v]
+                        .locked(rti)
+                        .node_ids()
+                        .get(crypto_kind)
+                        .unwrap_or_log()
+                })
                 .collect();
 
             route_set.insert(
@@ -287,6 +297,8 @@ impl RouteSpecStore {
         #[cfg(feature = "geolocation")]
         let country_code_denylist = self.config().network.privacy.country_code_denylist.clone();
 
+        // #[cfg(feature = "geolocation")]
+        // let registry = self.registry();
         Box::new(
             move |rti: &RoutingTableInner,
                   entry: Option<Arc<BucketEntry>>,
@@ -343,45 +355,48 @@ impl RouteSpecStore {
 
                         // Since denylist is used, consider nodes with unknown countries to be automatically excluded
                         let Some(node_country_code) = geolocation_info.country_code() else {
-                            veilid_log!(self
-                                debug "allocate_route_inner: skipping node {:?} from unknown country",
-                                e.best_node_id()
-                            );
+                            // veilid_log!(registry
+                            //     debug "allocate_route_inner: skipping node {:?} from unknown country",
+                            //     e.best_node_id()
+                            // );
                             return false;
                         };
                         // The same thing applies to relays used by the node
                         // They must all be from a known country
-                        let relay_country_codes: Option<Vec<CountryCode>> = geolocation_info.relay_country_codes().iter().cloned().collect();
+                        let relay_country_codes: Option<Vec<CountryCode>> = geolocation_info
+                            .relay_country_codes()
+                            .iter()
+                            .cloned()
+                            .collect();
                         let Some(relay_country_codes) = relay_country_codes else {
-                            veilid_log!(self
-                                debug "allocate_route_inner: skipping node {:?} using relay from unknown country",
-                                e.best_node_id()
-                            );
+                            // veilid_log!(registry
+                            //     debug "allocate_route_inner: skipping node {:?} using relay from unknown country",
+                            //     e.best_node_id()
+                            // );
                             return false;
                         };
 
                         // Ensure that node is not excluded
-                        if country_code_denylist.contains(&node_country_code)
-                        {
-                            veilid_log!(self
-                                debug "allocate_route_inner: skipping node {:?} from excluded country {}",
-                                e.best_node_id(),
-                                node_country_code
-                            );
+                        if country_code_denylist.contains(&node_country_code) {
+                            // veilid_log!(registry
+                            //     debug "allocate_route_inner: skipping node {:?} from excluded country {}",
+                            //     e.best_node_id(),
+                            //     node_country_code
+                            // );
                             return false;
                         }
 
                         // Ensure that node relays are not excluded
-                        if let Some(cc) = relay_country_codes
+                        if let Some(_cc) = relay_country_codes
                             .iter()
                             .filter(|cc| country_code_denylist.contains(cc))
                             .next()
                         {
-                            veilid_log!(self
-                                debug "allocate_route_inner: skipping node {:?} using relay from excluded country {}",
-                                e.best_node_id(),
-                                cc
-                            );
+                            // veilid_log!(registry
+                            //     debug "allocate_route_inner: skipping node {:?} using relay from excluded country {}",
+                            //     e.best_node_id(),
+                            //     cc
+                            // );
                             return false;
                         }
                     }
@@ -389,14 +404,20 @@ impl RouteSpecStore {
                     // Filter out nodes that have our same public IP address
                     // Use whole ipv6 address so we don't filter out nodes in the same network
                     // These will be deprioritized in the sort later, though.
-                    if published_peer_info.node_info().is_on_same_ipblock(their_ni, 128) {
+                    if published_peer_info
+                        .node_info()
+                        .is_on_same_ipblock(their_ni, 128)
+                    {
                         return false;
                     }
 
                     // Relay check
                     for their_relay_info in their_ni.relay_info_list() {
                         // Exclude nodes whose relays we have chosen to avoid
-                        if their_relay_info.node_ids().contains_any_from_slice(avoid_nodes) {
+                        if their_relay_info
+                            .node_ids()
+                            .contains_any_from_slice(avoid_nodes)
+                        {
                             return false;
                         }
                     }
@@ -422,14 +443,20 @@ impl RouteSpecStore {
                   _cur_ts: Timestamp|
                   -> cmp::Ordering {
                 // Our own node is filtered out, so it is safe to unwrap here
-                let entry1 = entry1.as_ref().unwrap().clone();
-                let entry2 = entry2.as_ref().unwrap().clone();
+                let entry1 = entry1.as_ref().unwrap_or_log().clone();
+                let entry2 = entry2.as_ref().unwrap_or_log().clone();
                 let entry1_node_ids = entry1.with_inner(|e| e.node_ids());
                 let entry2_node_ids = entry2.with_inner(|e| e.node_ids());
-                let entry1_node_info = entry1
-                    .with_inner(|e| e.node_info(RoutingDomain::PublicInternet).cloned().unwrap());
-                let entry2_node_info = entry2
-                    .with_inner(|e| e.node_info(RoutingDomain::PublicInternet).cloned().unwrap());
+                let entry1_node_info = entry1.with_inner(|e| {
+                    e.node_info(RoutingDomain::PublicInternet)
+                        .cloned()
+                        .unwrap_or_log()
+                });
+                let entry2_node_info = entry2.with_inner(|e| {
+                    e.node_info(RoutingDomain::PublicInternet)
+                        .cloned()
+                        .unwrap_or_log()
+                });
 
                 // deprioritize nodes that we have already used as end points
                 let e1_used_end = inner.cache.get_used_end_node_count(&entry1_node_ids);
@@ -514,8 +541,8 @@ impl RouteSpecStore {
                 // Remove the slowest 20% of the entries from consideration
                 let mut sorted_entries = all_entries.clone();
                 sorted_entries.sort_by(|entry1, entry2| {
-                    let entry1 = entry1.as_ref().unwrap().clone();
-                    let entry2 = entry2.as_ref().unwrap().clone();
+                    let entry1 = entry1.as_ref().unwrap_or_log().clone();
+                    let entry2 = entry2.as_ref().unwrap_or_log().clone();
 
                     entry1.with_inner(|e1| {
                         entry2.with_inner(|e2| BucketEntryInner::cmp_fastest(e1, e2, |ls| ls.tm90))
@@ -529,13 +556,13 @@ impl RouteSpecStore {
                 // Make set of nodes to keep
                 let keepers = sorted_entries
                     .iter()
-                    .map(|e| e.as_ref().unwrap().clone().hash_atom())
+                    .map(|e| e.as_ref().unwrap_or_log().clone().hash_atom())
                     .collect::<HashSet<_>>();
 
                 // Retain only entries from the keepers set
                 // This preserves the order of the entries while removing the slow ones
                 all_entries.retain(|x| {
-                    let atom = x.as_ref().unwrap().clone().hash_atom();
+                    let atom = x.as_ref().unwrap_or_log().clone().hash_atom();
                     keepers.contains(&atom)
                 })
             },
@@ -578,7 +605,7 @@ impl RouteSpecStore {
             .map(|nr| {
                 nr.locked(rti)
                     .get_peer_info(RoutingDomain::PublicInternet)
-                    .unwrap()
+                    .unwrap_or_log()
             })
             .collect();
 
@@ -593,7 +620,7 @@ impl RouteSpecStore {
             // Ensure the route doesn't contain both a node and its relay
             let mut seen_nodes: HashSet<NodeId> = HashSet::new();
             for n in permutation {
-                let node = nodes.get(*n).unwrap();
+                let node = nodes.get(*n).unwrap_or_log();
                 for nid in node.locked(rti).node_ids().iter() {
                     if !seen_nodes.insert(nid.clone()) {
                         // Already seen this node, should not be in the route twice
@@ -619,7 +646,7 @@ impl RouteSpecStore {
                 let mut previous_node = published_peer_info.clone();
                 let mut reachable = true;
                 for n in permutation {
-                    let current_node = nodes_pi.get(*n).cloned().unwrap();
+                    let current_node = nodes_pi.get(*n).cloned().unwrap_or_log();
                     let cm = rti.get_contact_method(
                         RoutingDomain::PublicInternet,
                         previous_node.clone(),
@@ -658,7 +685,7 @@ impl RouteSpecStore {
                 let mut next_node = published_peer_info.clone();
                 let mut reachable = true;
                 for n in permutation.iter().rev() {
-                    let current_node = nodes_pi.get(*n).cloned().unwrap();
+                    let current_node = nodes_pi.get(*n).cloned().unwrap_or_log();
                     let cm = rti.get_contact_method(
                         RoutingDomain::PublicInternet,
                         next_node.clone(),
@@ -710,7 +737,7 @@ impl RouteSpecStore {
         let mut best_kind: Option<CryptoKind> = None;
         for tk in route_set_keys.iter() {
             if best_kind.is_none()
-                || compare_crypto_kind(&tk.kind(), best_kind.as_ref().unwrap())
+                || compare_crypto_kind(&tk.kind(), best_kind.as_ref().unwrap_or_log())
                     == cmp::Ordering::Less
             {
                 best_kind = Some(tk.kind());
@@ -720,7 +747,7 @@ impl RouteSpecStore {
         let Some(best_kind) = best_kind else {
             apibail_internal!("no compatible crypto kinds in route");
         };
-        let vcrypto = crypto.get(best_kind).unwrap();
+        let vcrypto = crypto.get(best_kind).unwrap_or_log();
 
         Ok(RouteId::new(
             vcrypto.kind(),

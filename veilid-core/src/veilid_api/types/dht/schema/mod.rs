@@ -108,7 +108,7 @@ impl DHTSchema {
 
 impl Default for DHTSchema {
     fn default() -> Self {
-        Self::dflt(1).unwrap()
+        Self::dflt(1).unwrap_or_log()
     }
 }
 
@@ -118,7 +118,7 @@ impl TryFrom<&[u8]> for DHTSchema {
         if b.len() < 4 {
             apibail_generic!("invalid size");
         }
-        let fcc: [u8; 4] = b[0..4].try_into().unwrap();
+        let fcc: [u8; 4] = b[0..4].try_into().unwrap_or_log();
         let schema = match fcc {
             DHTSchemaDFLT::FCC => DHTSchema::DFLT(DHTSchemaDFLT::try_from(b)?),
             DHTSchemaSMPL::FCC => DHTSchema::SMPL(DHTSchemaSMPL::try_from(b)?),

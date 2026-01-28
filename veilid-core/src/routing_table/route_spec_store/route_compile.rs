@@ -5,8 +5,10 @@ impl RouteSpecStore {
     /// Returns Err(VeilidAPIError::TryAgain) if no allocation could happen at this time (not an error)
     /// Returns other Err() if the parameters are wrong
     /// Returns Ok(compiled route) on success
-
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn compile_safety_route(
         &self,
         safety_selection: SafetySelection,
@@ -118,7 +120,7 @@ impl RouteSpecStore {
         let optimize = safety_rssd.get_stats().last_known_valid_ts.is_some();
 
         // Get the first hop noderef of the safety route
-        let first_hop = safety_rssd.hop_node_ref(0).unwrap();
+        let first_hop = safety_rssd.hop_node_ref(0).unwrap_or_log();
 
         // Ensure sequencing requirement is set on first hop
         let mut first_hop = first_hop.default_filtered_with_sequencing(safety_spec.sequencing);
@@ -170,7 +172,7 @@ impl RouteSpecStore {
             let mut nonce = vcrypto.random_nonce();
             // Forward order (safety route), but inside-out
             for h in (1..safety_rssd.hop_node_refs().len()).rev() {
-                let hop_node_ref = safety_rssd.hop_node_ref(h).unwrap();
+                let hop_node_ref = safety_rssd.hop_node_ref(h).unwrap_or_log();
                 let Some(hop_node_id) = hop_node_ref.locked(rti).node_ids().get(crypto_kind) else {
                     apibail_invalid_argument!(
                         "no hop node id for route hop",
@@ -244,7 +246,7 @@ impl RouteSpecStore {
             }
 
             // Encode first RouteHopData
-            let hop_node_ref = safety_rssd.hop_node_ref(0).unwrap();
+            let hop_node_ref = safety_rssd.hop_node_ref(0).unwrap_or_log();
             let Some(hop_public_key) = hop_node_ref
                 .locked(rti)
                 .public_keys(RoutingDomain::PublicInternet)

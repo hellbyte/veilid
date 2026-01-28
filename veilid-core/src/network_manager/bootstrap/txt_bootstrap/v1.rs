@@ -6,7 +6,10 @@ impl_veilid_log_facility!("net");
 
 impl NetworkManager {
     /// Parse v1 bootstrap record strings into BootstrapRecord structs
-    #[instrument(level = "trace", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn parse_bootstrap_v1(
         &self,
         record_strings: &[String],

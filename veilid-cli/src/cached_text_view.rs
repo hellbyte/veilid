@@ -1,3 +1,5 @@
+use super::*;
+
 use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -159,7 +161,7 @@ impl TextContent {
     where
         F: FnOnce(&mut TextContentInner) -> O,
     {
-        let mut content = self.content.lock().unwrap();
+        let mut content = self.content.lock().unwrap_or_log();
 
         let out = f(&mut content);
 
@@ -189,7 +191,7 @@ impl TextContentInner {
         let arc_ref: ArcRef<Mutex<TextContentInner>> = ArcRef::new(Arc::clone(content));
 
         let _handle =
-            OwningHandle::new_with_fn(arc_ref, |mutex| unsafe { (*mutex).lock().unwrap() });
+            OwningHandle::new_with_fn(arc_ref, |mutex| unsafe { (*mutex).lock().unwrap_or_log() });
 
         let data = Arc::clone(&_handle.content_value);
 
@@ -418,7 +420,7 @@ impl CachedTextView {
     fn compute_rows(&mut self, size: Vec2) {
         let size = if self.wrap { size } else { Vec2::max_value() };
 
-        let mut content = self.content.content.lock().unwrap();
+        let mut content = self.content.content.lock().unwrap_or_log();
         if content.is_cache_valid(size) {
             return;
         }
@@ -460,7 +462,7 @@ impl View for CachedTextView {
         let offset = self.align.v.get_offset(h, printer.size.y);
         let printer = &printer.offset((0, offset));
 
-        let content = self.content.content.lock().unwrap();
+        let content = self.content.content.lock().unwrap_or_log();
 
         printer.with_style(self.style, |printer| {
             for (y, row) in rows
@@ -492,12 +494,12 @@ impl View for CachedTextView {
         let my_size = Vec2::new(self.width.unwrap_or(0), num_rows);
 
         // Build a fresh cache.
-        let mut content = self.content.content.lock().unwrap();
+        let mut content = self.content.content.lock().unwrap_or_log();
         content.size_cache = Some(SizeCache::build(my_size, size));
     }
 
     fn needs_relayout(&self) -> bool {
-        let content = self.content.content.lock().unwrap();
+        let content = self.content.content.lock().unwrap_or_log();
         content.size_cache.is_none()
     }
 
@@ -542,7 +544,7 @@ impl<K, V> TinyCache<K, V> {
         let v = f();
         self.clean();
         self.data.push((0, key, v));
-        &self.data.last().as_ref().unwrap().2
+        &self.data.last().as_ref().unwrap_or_log().2
     }
 
     fn clean(&mut self) {

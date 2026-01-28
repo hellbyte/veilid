@@ -202,7 +202,8 @@ impl ClientApiConnection {
         });
 
         // Send and receive until we're done or a stop is requested
-        while let Ok(Some(())) = unord.next().timeout_at(stop_token.clone()).await {}
+        // If any of the futures exit for any reason, we're done
+        let _ = unord.next().timeout_at(stop_token.clone()).await;
 
         // // Drop the server and disconnector too (if we still have it)
         let mut inner = self.inner.lock();
@@ -302,7 +303,7 @@ impl ClientApiConnection {
 
         // Wait for the reply
         let Ok(r) = reply_rx.recv_async().await else {
-            // Cancelled
+            // No reply
             return None;
         };
 
@@ -315,7 +316,7 @@ impl ClientApiConnection {
         let mut req = json::JsonValue::new_object();
         req["op"] = "Attach".into();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());
@@ -328,7 +329,7 @@ impl ClientApiConnection {
         let mut req = json::JsonValue::new_object();
         req["op"] = "Detach".into();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());
@@ -341,9 +342,9 @@ impl ClientApiConnection {
         let mut req = json::JsonValue::new_object();
         req["op"] = "Control".into();
         req["args"] = json::JsonValue::new_array();
-        req["args"].push("Shutdown").unwrap();
+        req["args"].push("Shutdown").unwrap_or_log();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());
@@ -351,34 +352,48 @@ impl ClientApiConnection {
         Ok(())
     }
 
+    // pub async fn server_check_alive(&self) -> bool {
+    //     trace!("ClientApiConnection::server_check_alive");
+    //     let mut req = json::JsonValue::new_object();
+    //     req["op"] = "Control".into();
+    //     req["args"] = json::JsonValue::new_array();
+    //     let Some(resp) = self.perform_request(req).await else {
+    //         return false;
+    //     };
+    //     if resp.has_key("error") {
+    //         return true;
+    //     }
+    //     false
+    // }
+
     pub async fn server_debug(&self, what: String) -> Result<String, String> {
         trace!("ClientApiConnection::server_debug");
         let mut req = json::JsonValue::new_object();
         req["op"] = "Debug".into();
         req["command"] = what.into();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());
         }
-        Ok(resp["value"].to_string())
+        Ok(resp["value"].to_string().trim().to_string())
     }
 
     pub async fn server_change_log_level(
         &self,
         layer: String,
-        log_level: String,
+        directives: String,
     ) -> Result<(), String> {
         trace!("ClientApiConnection::change_log_level");
         let mut req = json::JsonValue::new_object();
         req["op"] = "Control".into();
         req["args"] = json::JsonValue::new_array();
-        req["args"].push("ChangeLogLevel").unwrap();
-        req["args"].push(layer).unwrap();
-        req["args"].push(log_level).unwrap();
+        req["args"].push("ChangeLogLevel").unwrap_or_log();
+        req["args"].push(layer).unwrap_or_log();
+        req["args"].push(directives).unwrap_or_log();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());
@@ -395,11 +410,11 @@ impl ClientApiConnection {
         let mut req = json::JsonValue::new_object();
         req["op"] = "Control".into();
         req["args"] = json::JsonValue::new_array();
-        req["args"].push("ChangeLogIgnore").unwrap();
-        req["args"].push(layer).unwrap();
-        req["args"].push(log_ignore).unwrap();
+        req["args"].push("ChangeLogIgnore").unwrap_or_log();
+        req["args"].push(layer).unwrap_or_log();
+        req["args"].push(log_ignore).unwrap_or_log();
         let Some(resp) = self.perform_request(req).await else {
-            return Err("Cancelled".to_owned());
+            return Err("Not connected".to_owned());
         };
         if resp.has_key("error") {
             return Err(resp["error"].to_string());

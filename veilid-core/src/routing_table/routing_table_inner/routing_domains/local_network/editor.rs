@@ -13,6 +13,12 @@ pub struct RoutingDomainEditorLocalNetwork<'a> {
     changes: Vec<RoutingDomainChangeLocalNetwork>,
 }
 
+impl VeilidComponentRegistryAccessor for RoutingDomainEditorLocalNetwork<'_> {
+    fn registry(&self) -> VeilidComponentRegistry {
+        self.routing_table.registry()
+    }
+}
+
 impl<'a> RoutingDomainEditorLocalNetwork<'a> {
     pub(in crate::routing_table) fn new(routing_table: &'a RoutingTable) -> Self {
         Self {
@@ -31,7 +37,7 @@ impl<'a> RoutingDomainEditorLocalNetwork<'a> {
 }
 
 impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn clear_dial_info_details(
         &mut self,
         address_type: Option<AddressType>,
@@ -46,14 +52,14 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
 
         self
     }
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn set_relays(&mut self, relays: Vec<RoutingDomainRelay>) -> &mut Self {
         self.changes.push(RoutingDomainChangeLocalNetwork::Common(
             RoutingDomainChangeCommon::SetRelays { relays },
         ));
         self
     }
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn set_relay_state(
         &mut self,
         relay: RoutingDomainRelay,
@@ -65,7 +71,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
         self
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn add_dial_info(&mut self, dial_info: DialInfo, class: DialInfoClass) -> &mut Self {
         self.changes.push(RoutingDomainChangeLocalNetwork::Common(
             RoutingDomainChangeCommon::AddDialInfo {
@@ -77,7 +83,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
         ));
         self
     }
-    // #[instrument(level = "debug", skip_all)]
+    // #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all), fields(__VEILID_LOG_KEY = self.log_key()))]
     // fn retain_dial_info<F: Fn(&DialInfo, DialInfoClass) -> bool>(
     //     &mut self,
     //     closure: F,
@@ -95,7 +101,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
     //     Ok(self)
     // }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn setup_network(
         &mut self,
         outbound_protocols: ProtocolTypeSet,
@@ -116,7 +122,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
         self
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn commit(&mut self, pause_tasks: bool) -> PinBoxFuture<'_, bool> {
         Box::pin(async move {
             // No locking if we have nothing to do
@@ -259,7 +265,7 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
         })
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn publish(&mut self) {
         self.routing_table
             .inner
@@ -267,7 +273,15 @@ impl RoutingDomainEditorCommonTrait for RoutingDomainEditorLocalNetwork<'_> {
             .publish_peer_info(RoutingDomain::LocalNetwork);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
+    fn unpublish(&mut self) {
+        self.routing_table
+            .inner
+            .write()
+            .unpublish_peer_info(RoutingDomain::LocalNetwork);
+    }
+
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     fn shutdown(&mut self) -> PinBoxFuture<'_, ()> {
         Box::pin(async move {
             self.clear_dial_info_details(None, None)

@@ -11,7 +11,7 @@ impl VirtualGateway {
     // Public Interface
 
     pub async fn find() -> VirtualNetworkResult<Option<Self>> {
-        let machine = default_machine().unwrap();
+        let machine = default_machine().unwrap_or_log();
         Self::find_with_machine(machine).await
     }
 

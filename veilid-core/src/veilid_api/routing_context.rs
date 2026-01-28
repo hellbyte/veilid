@@ -33,7 +33,6 @@ pub(crate) struct RoutingContextUnlockedInner {
 /// By default routing contexts have 'safety routing' enabled which offers sender privacy.
 /// privacy. To disable this and send RPC operations straight from the node use [RoutingContext::with_safety()] with a [SafetySelection::Unsafe] parameter.
 /// To enable receiver privacy, you should send to a private route RouteId that you have imported, rather than directly to a NodeId.
-///
 #[derive(Clone)]
 #[must_use]
 pub struct RoutingContext {
@@ -85,7 +84,7 @@ impl RoutingContext {
     /// * Sequencing default is to prefer ordered before unordered message delivery.
     ///
     /// To customize the safety selection in use, use [RoutingContext::with_safety()].
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub fn with_default_safety(self) -> VeilidAPIResult<Self> {
         let this = self.clone();
         record_duration(|| {
@@ -105,7 +104,7 @@ impl RoutingContext {
     }
 
     /// Use a custom [SafetySelection]. Can be used to disable safety via [SafetySelection::Unsafe].
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub fn with_safety(self, safety_selection: SafetySelection) -> VeilidAPIResult<Self> {
         let this = self.clone();
         record_duration(|| {
@@ -138,7 +137,7 @@ impl RoutingContext {
     }
 
     /// Use a specified [Sequencing] preference, with or without privacy.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub fn with_sequencing(self, sequencing: Sequencing) -> Self {
         record_duration(|| {
             veilid_log!(self debug
@@ -179,7 +178,7 @@ impl RoutingContext {
         self.api.clone()
     }
 
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     async fn get_destination(&self, target: Target) -> VeilidAPIResult<rpc_processor::Destination> {
         record_duration_fut(async {
             veilid_log!(self debug
@@ -216,9 +215,9 @@ impl RoutingContext {
     }
 
     ////////////////////////////////////////////////////////////////
-    /// App-level Messaging
+    // App-level Messaging
 
-    #[instrument(target = "veilid_api", level = "debug", skip(message), fields(duration, __VEILID_LOG_KEY = self.log_key(), message_len = message.len(), ret.len))]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", skip(message), fields(duration, __VEILID_LOG_KEY = self.log_key(), message_len = message.len(), ret.len)))]
     async fn internal_app_call(
         &self,
         target: Target,
@@ -288,7 +287,7 @@ impl RoutingContext {
         }
     }
 
-    #[instrument(target = "veilid_api", level = "debug", skip(message), fields(duration, __VEILID_LOG_KEY = self.log_key(), message_len = message.len()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", skip(message), fields(duration, __VEILID_LOG_KEY = self.log_key(), message_len = message.len()), ret))]
     async fn internal_app_message(&self, target: Target, message: Vec<u8>) -> VeilidAPIResult<()> {
         record_duration_fut(async {
             veilid_log!(self debug
@@ -356,10 +355,10 @@ impl RoutingContext {
     /// * 'kind' - specify a cryptosystem kind to use
     /// * 'schema' - the schema to use when creating the DHT record
     /// * 'owner' - optionally specify an owner keypair to use. If you leave this as None then a random one will be generated. If specified, the crypto kind of the owner must match that of the `kind` parameter
-    /// Returns the newly allocated DHT record's key if successful.
     ///
+    /// Returns the newly allocated DHT record's key if successful.
     /// Note: if you pass in an owner keypair this call is a deterministic! This means that if you try to create a new record for a given owner and schema that already exists it *will* fail.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn create_dht_record(
         &self,
         kind: CryptoKind,
@@ -397,7 +396,7 @@ impl RoutingContext {
     /// safety selection.
     ///
     /// Returns the DHT record descriptor for the opened record if successful.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn open_dht_record(
         &self,
         record_key: RecordKey,
@@ -429,7 +428,7 @@ impl RoutingContext {
     /// Closes a DHT record at a specific key that was opened with create_dht_record or open_dht_record.
     ///
     /// Closing a record allows you to re-open it with a different routing context.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn close_dht_record(&self, record_key: RecordKey) -> VeilidAPIResult<()> {
         record_duration_fut(async {
             veilid_log!(self debug
@@ -452,7 +451,7 @@ impl RoutingContext {
     /// If the record is opened, it must be closed before it is deleted.
     /// Deleting a record does not delete it from the network, but will remove the storage of the record
     /// locally, and will prevent its value from being refreshed on the network by this node.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn delete_dht_record(&self, record_key: RecordKey) -> VeilidAPIResult<()> {
         record_duration_fut(async {
             veilid_log!(self debug
@@ -472,11 +471,11 @@ impl RoutingContext {
 
     /// Gets the latest value of a subkey.
     ///
-    /// May pull the latest value from the network, but by setting 'force_refresh' you can force a network data refresh.
+    /// May pull the latest value from the network, but by setting 'force_refresh' you can force a network data refresh. Can only be used on opened records.
     ///
     /// Returns `None` if the value subkey has not yet been set.
     /// Returns `Some(data)` if the value subkey has valid data.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn get_dht_value(
         &self,
         record_key: RecordKey,
@@ -504,7 +503,7 @@ impl RoutingContext {
     ///
     /// Returns `None` if the value was successfully set.
     /// Returns `Some(data)` if the value set was older than the one available on the network.
-    #[instrument(target = "veilid_api", level = "debug", skip(data), fields(duration, __VEILID_LOG_KEY = self.log_key(), data = print_data(&data, Some(64))), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", skip(data), fields(duration, __VEILID_LOG_KEY = self.log_key(), data = print_data(&data, Some(64))), ret))]
     pub async fn set_dht_value(
         &self,
         record_key: RecordKey,
@@ -529,7 +528,7 @@ impl RoutingContext {
     /// Add or update a watch to a DHT value that informs the user via an VeilidUpdate::ValueChange callback when the record has subkeys change.
     /// One remote node will be selected to perform the watch and it will offer an expiration time based on a suggestion, and make an attempt to
     /// continue to report changes via the callback. Nodes that agree to doing watches will be put on our 'ping' list to ensure they are still around
-    /// otherwise the watch will be cancelled and will have to be re-watched.
+    /// otherwise the watch will be cancelled and will have to be re-watched.  Can only be used on opened records.
     ///
     /// There is only one watch permitted per record. If a change to a watch is desired, the previous one will be overwritten.
     /// * `key` is the record key to watch. it must first be opened for reading or writing.
@@ -551,7 +550,7 @@ impl RoutingContext {
     /// * If a member (either the owner or a SMPL schema member) has opened the key for writing (even if no writing is performed) then the watch will be signed and guaranteed network.dht.member_watch_limit per writer.
     ///
     /// Members can be specified via the SMPL schema and do not need to allocate writable subkeys in order to offer a member watch capability.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn watch_dht_values(
         &self,
         record_key: RecordKey,
@@ -579,16 +578,17 @@ impl RoutingContext {
     /// Cancels a watch early.
     ///
     /// This is a convenience function that cancels watching all subkeys in a range. The subkeys specified here
-    /// are subtracted from the currently-watched subkey range.
+    /// are subtracted from the currently-watched subkey range.  Can only be used on opened records.
     /// * `subkeys`:
     ///   - None: specifies watching the entire range of subkeys.
     ///   - Some(range): is the the range of subkeys to watch. The range must not exceed 512 discrete non-overlapping or adjacent subranges. If no range is specified, this is equivalent to watching the entire range of subkeys.
+    ///
     /// Only the subkey range is changed, the expiration and count remain the same.
     /// If no subkeys remain, the watch is entirely cancelled and will receive no more updates.
     ///
     /// Returns Ok(true) if a watch is active for this record.
     /// Returns Ok(false) if the entire watch has been cancelled.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn cancel_dht_watch(
         &self,
         record_key: RecordKey,
@@ -611,46 +611,46 @@ impl RoutingContext {
 
     /// Inspects a DHT record for subkey state.
     /// This is useful for checking if you should push new subkeys to the network, or retrieve the current state of a record from the network
-    /// to see what needs updating locally.
+    /// to see what needs updating locally. Can only be used on opened records.
     ///
     /// * `key` is the record key to inspect. it must first be opened for reading or writing.
     /// * `subkeys`:
     ///   - None: specifies inspecting the entire range of subkeys.
     ///   - Some(range): is the the range of subkeys to inspect. The range must not exceed 512 discrete non-overlapping or adjacent subranges.
-    ///                  If no range is specified, this is equivalent to watching the entire range of subkeys.
-    /// * `scope` is what kind of range the inspection has:
+    ///     If no range is specified, this is equivalent to watching the entire range of subkeys.
     ///
-    ///   - DHTReportScope::Local
+    /// * `scope` is what kind of range the inspection has:
+    ///   - DHTReportScope::Local`
     ///     Results will be only for a locally stored record.
     ///     Useful for seeing what subkeys you have locally and which ones have not been retrieved.
     ///
-    ///   - DHTReportScope::SyncGet
+    ///   - `DHTReportScope::SyncGet`
     ///     Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters.
     ///     Provides an independent view of both the local sequence numbers and the network sequence numbers for nodes that
     ///     would be reached as if the local copy did not exist locally.
     ///     Useful for determining if the current local copy should be updated from the network.
     ///
-    ///   - DHTReportScope::SyncSet
+    ///   - `DHTReportScope::SyncSet`
     ///     Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters.
     ///     Provides an independent view of both the local sequence numbers and the network sequence numbers for nodes that
     ///     would be reached as if the local copy did not exist locally.
     ///     Useful for determining if the unchanged local copy should be pushed to the network.
     ///
-    ///   - DHTReportScope::UpdateGet
+    ///   - `DHTReportScope::UpdateGet`
     ///     Return the local sequence numbers and the network sequence numbers with GetValue fanout parameters.
     ///     Provides an view of both the local sequence numbers and the network sequence numbers for nodes that
     ///     would be reached as if a GetValue operation were being performed, including accepting newer values from the network.
     ///     Useful for determining which subkeys would change with a GetValue operation.
     ///
-    ///   - DHTReportScope::UpdateSet
+    ///   - `DHTReportScope::UpdateSet`
     ///     Return the local sequence numbers and the network sequence numbers with SetValue fanout parameters.
     ///     Provides an view of both the local sequence numbers and the network sequence numbers for nodes that
     ///     would be reached as if a SetValue operation were being performed, including accepting newer values from the network.
     ///     This simulates a SetValue with the initial sequence number incremented by 1, like a real SetValue would when updating.
     ///     Useful for determine which subkeys would change with an SetValue operation.
     ///
-    /// Returns a DHTRecordReport with the subkey ranges that were returned that overlapped the schema, and sequence numbers for each of the subkeys in the range.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    /// Returns `Ok(DHTRecordReport)` with the subkey ranges that were returned that overlapped the schema, and sequence numbers for each of the subkeys in the range.
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn inspect_dht_record(
         &self,
         record_key: RecordKey,
@@ -673,16 +673,16 @@ impl RoutingContext {
     }
 
     ///////////////////////////////////
-    /// Block Store
+    // Block Store
 
     #[cfg(feature = "unstable-blockstore")]
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret))]
     pub async fn find_block(&self, _block_id: BlockId) -> VeilidAPIResult<Vec<u8>> {
         panic!("unimplemented");
     }
 
     #[cfg(feature = "unstable-blockstore")]
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret,)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), ret,))]
     pub async fn supply_block(&self, _block_id: BlockId) -> VeilidAPIResult<bool> {
         panic!("unimplemented");
     }

@@ -172,7 +172,6 @@ impl DiscoveryContext {
     // Utilities
 
     // This pulls the already-detected local interface dial info from the routing table
-    #[instrument(level = "trace", skip(routing_table), ret)]
     fn get_local_addresses(
         routing_table: &RoutingTable,
         protocol_type: ProtocolType,
@@ -196,7 +195,7 @@ impl DiscoveryContext {
 
     // Ask for a public address check from a particular noderef
     // This is done over the normal port using RPC
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn request_public_address(&self, node_ref: FilteredNodeRef) -> Option<SocketAddress> {
         let rpc = self.rpc_processor();
 
@@ -205,7 +204,7 @@ impl DiscoveryContext {
         // filtered down to the protocol/address type we are checking the public address for
         node_ref.clear_last_flows();
 
-        let res = network_result_value_or_log!(self match Box::pin(rpc.rpc_call_status(Destination::direct(node_ref.clone()))).await {
+        let res = network_result_value_or_log!(self match Box::pin(rpc.rpc_call_status(Destination::direct(node_ref.clone(), None))).await {
                 Ok(v) => v,
                 Err(e) => {
                     veilid_log!(self error
@@ -229,7 +228,7 @@ impl DiscoveryContext {
 
     // find fast peers with a particular address type, and ask them to tell us what our external address is
     // This is done over the normal port using RPC
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn discover_external_addresses(&self) -> bool {
         let node_count = EXTERNAL_INFO_NODE_COUNT;
         let routing_domain = RoutingDomain::PublicInternet;
@@ -247,7 +246,7 @@ impl DiscoveryContext {
             RoutingTable::make_inbound_dial_info_entry_filter(routing_domain, dial_info_filter);
         let disallow_relays_filter = Box::new(
             move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                let v = v.unwrap();
+                let v = v.unwrap_or_log();
                 v.with(rti, |_rti, e| {
                     if let Some(n) = e.node_info(routing_domain) {
                         n.relay_ids().is_empty()
@@ -259,7 +258,7 @@ impl DiscoveryContext {
         ) as RoutingTableEntryFilter;
         let will_validate_dial_info_filter = Box::new(
             move |rti: &RoutingTableInner, v: Option<Arc<BucketEntry>>, _cur_ts: Timestamp| {
-                let entry = v.unwrap();
+                let entry = v.unwrap_or_log();
                 entry.with(rti, move |_rti, e| {
                     e.node_info(routing_domain)
                         .map(|ni| {
@@ -414,7 +413,7 @@ impl DiscoveryContext {
         true
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn validate_dial_info(
         &self,
         node_ref: NodeRef,
@@ -438,7 +437,7 @@ impl DiscoveryContext {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     async fn try_upnp_port_mapping(&self) -> Option<DialInfo> {
         let protocol_type = self.config.protocol_type;
         let address_type = self.config.address_type;
@@ -483,7 +482,7 @@ impl DiscoveryContext {
     // Per-protocol discovery routines
 
     // If we know we are not behind NAT, check our firewall status
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn protocol_process_mapped_dial_info(
         &self,
         all_possibilities: &mut DialInfoClassAllPossibilities,
@@ -535,7 +534,7 @@ impl DiscoveryContext {
     }
 
     // If we know we are not behind NAT, check our firewall status
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn protocol_process_no_nat(
         &self,
         all_possibilities: &mut DialInfoClassAllPossibilities,
@@ -602,7 +601,7 @@ impl DiscoveryContext {
     }
 
     // If we know we are behind NAT check what kind
-    #[instrument(level = "trace", skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn protocol_process_nat(
         &self,
         all_possibilities: &mut DialInfoClassAllPossibilities,
@@ -652,7 +651,7 @@ impl DiscoveryContext {
             if ei.address.port() == local_port && local_port_matching_external_info.is_none() {
                 local_port_matching_external_info = Some(ei.clone());
             }
-            if best_ei_address.unwrap() == ei.address && best_external_info.is_none() {
+            if best_ei_address.unwrap_or_log() == ei.address && best_external_info.is_none() {
                 best_external_info = Some(ei.clone());
             }
             external_address_types |= ei.address.address_type();
@@ -748,7 +747,7 @@ impl DiscoveryContext {
         all_possibilities.add(&possibilities);
 
         let c_this = self.clone();
-        let c_external_1 = external_info.first().cloned().unwrap();
+        let c_external_1 = external_info.first().cloned().unwrap_or_log();
 
         // If this is the same as an existing upnp mapping, skip it, since
         // we are already validating that
@@ -801,8 +800,8 @@ impl DiscoveryContext {
             all_possibilities.add(&possibilities);
 
             let c_this = self.clone();
-            let c_external_1 = external_info.first().cloned().unwrap();
-            let c_external_2 = external_info.get(1).cloned().unwrap();
+            let c_external_1 = external_info.first().cloned().unwrap_or_log();
+            let c_external_2 = external_info.get(1).cloned().unwrap_or_log();
             let do_restricted_cone_fut: PinBoxFutureStatic<DetectionResultKind> =
                 Box::pin(async move {
                     let mut retry_count = retry_count;
@@ -866,7 +865,7 @@ impl DiscoveryContext {
     /// Run a discovery for a particular context
     /// Returns None if no detection was possible
     /// Returns Some(DetectionResult) with the best detection result for this context
-    #[instrument(level = "trace", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn discover(self) -> Option<DetectionResult> {
         // Do this right away because it's fast and every detection is going to need it
         // Get our external addresses from a bunch of fast nodes

@@ -61,7 +61,10 @@ pub(crate) enum InboundInspectValueResult {
 
 impl StorageManager {
     /// Inspect an opened DHT record for its subkey sequence numbers
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn inspect_record(
         &self,
         record_key: RecordKey,
@@ -108,25 +111,20 @@ impl StorageManager {
             let inner = self.inner.lock();
 
             // Get actively-being-written subkeys
-            let active_subkey_writes = match self
+            let purpose_state = self
                 .record_lock_table
-                .get_record_lock_kind(&opaque_record_key)
-            {
-                RecordLockKind::Unlocked => ValueSubkeyRangeSet::new(),
-                RecordLockKind::RecordLocked { purpose: _ } => ValueSubkeyRangeSet::new(),
-                RecordLockKind::SubkeyLocked {
-                    purpose_map,
-                    peek_count: _,
-                } => {
-                    let set_range = purpose_map
-                        .get(&StorageManagerSubkeyLockPurpose::Set)
-                        .cloned()
-                        .unwrap_or_default();
-                    let transact_set_range = purpose_map
-                        .get(&StorageManagerSubkeyLockPurpose::TransactSet)
-                        .cloned()
-                        .unwrap_or_default();
-                    set_range.union(&transact_set_range)
+                .get_record_lock_purpose_state(&opaque_record_key);
+
+            let mut active_subkey_writes = ValueSubkeyRangeSet::new();
+            if purpose_state.whole_record_lock_purpose.is_none() {
+                for (subkey, purpose) in purpose_state.subkey_lock_purpose.into_iter() {
+                    if matches!(
+                        purpose,
+                        StorageManagerSubkeyLockPurpose::Set
+                            | StorageManagerSubkeyLockPurpose::TransactSet
+                    ) {
+                        active_subkey_writes.insert(subkey);
+                    }
                 }
             };
 
@@ -225,7 +223,10 @@ impl StorageManager {
 
     /// Perform a 'inspect value' query on the network
     /// Performs the work without a transaction
-    #[instrument(level = "trace", target = "dht", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn outbound_inspect_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -311,7 +312,7 @@ impl StorageManager {
                         let iva = match
                             rpc_processor
                                 .rpc_call_inspect_value(
-                                    Destination::direct(next_node.routing_domain_filtered(routing_domain)).with_safety(safety_selection),
+                                    Destination::direct(next_node.routing_domain_filtered(routing_domain), Some(safety_selection)),
                                     opaque_record_key.clone(),
                                     subkeys.clone(),
                                     descriptor_mode,
@@ -506,7 +507,7 @@ impl StorageManager {
         }
 
         if subkey_fanout_results.len() == 1 {
-            veilid_log!(self debug "InspectValue Fanout: {:#}\n{:#}", fanout_result, subkey_fanout_results.first().unwrap());
+            veilid_log!(self debug "InspectValue Fanout: {:#}\n{:#}", fanout_result, subkey_fanout_results.first().unwrap_or_log());
         } else {
             veilid_log!(self debug "InspectValue Fanout: {:#}:\n{}", fanout_result, debug_fanout_results(&subkey_fanout_results));
         }
@@ -542,7 +543,10 @@ impl StorageManager {
     }
 
     /// Handle a received 'Inspect Value' query
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn inbound_inspect_value(
         &self,
         opaque_record_key: &OpaqueRecordKey,

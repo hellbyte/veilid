@@ -2,7 +2,10 @@ use super::*;
 
 // Don't trace these functions with events as they are used in the transfer of API logs, which will recurse!
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn deserialize_json<'a, T: de::Deserialize<'a> + Debug>(arg: &'a str) -> VeilidAPIResult<T> {
     serde_json::from_str(arg).map_err(|e| VeilidAPIError::ParseError {
         message: e.to_string(),
@@ -14,7 +17,10 @@ pub fn deserialize_json<'a, T: de::Deserialize<'a> + Debug>(arg: &'a str) -> Vei
     })
 }
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn deserialize_json_bytes<'a, T: de::Deserialize<'a> + Debug>(
     arg: &'a [u8],
 ) -> VeilidAPIResult<T> {
@@ -28,7 +34,10 @@ pub fn deserialize_json_bytes<'a, T: de::Deserialize<'a> + Debug>(
     })
 }
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn deserialize_opt_json<T: de::DeserializeOwned + Debug>(
     arg: Option<String>,
 ) -> VeilidAPIResult<T> {
@@ -42,7 +51,10 @@ pub fn deserialize_opt_json<T: de::DeserializeOwned + Debug>(
     deserialize_json(arg)
 }
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn deserialize_opt_json_bytes<T: de::DeserializeOwned + Debug>(
     arg: Option<Vec<u8>>,
 ) -> VeilidAPIResult<T> {
@@ -56,7 +68,10 @@ pub fn deserialize_opt_json_bytes<T: de::DeserializeOwned + Debug>(
     deserialize_json_bytes(arg.as_slice())
 }
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn serialize_json<T: Serialize + Debug>(val: T) -> String {
     match serde_json::to_string(&val) {
         Ok(v) => v,
@@ -66,7 +81,10 @@ pub fn serialize_json<T: Serialize + Debug>(val: T) -> String {
     }
 }
 
-#[instrument(level = "trace", target = "json", skip_all)]
+#[cfg_attr(
+    feature = "instrument",
+    instrument(level = "trace", target = "json", skip_all)
+)]
 pub fn serialize_json_bytes<T: Serialize + Debug>(val: T) -> Vec<u8> {
     match serde_json::to_vec(&val) {
         Ok(v) => v,
@@ -82,9 +100,13 @@ pub fn serialize_json_bytes<T: Serialize + Debug>(val: T) -> Vec<u8> {
 pub mod as_human_base64 {
     use data_encoding::BASE64URL_NOPAD;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    #[cfg(feature = "instrument")]
     use tracing::instrument;
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
         if s.is_human_readable() {
             let base64 = BASE64URL_NOPAD.encode(v);
@@ -94,7 +116,10 @@ pub mod as_human_base64 {
         }
     }
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         if d.is_human_readable() {
             let base64 = String::deserialize(d)?;
@@ -110,9 +135,13 @@ pub mod as_human_base64 {
 pub mod as_human_opt_base64 {
     use data_encoding::BASE64URL_NOPAD;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    #[cfg(feature = "instrument")]
     use tracing::instrument;
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
         if s.is_human_readable() {
             let base64 = v.as_ref().map(|x| BASE64URL_NOPAD.encode(x));
@@ -122,7 +151,10 @@ pub mod as_human_opt_base64 {
         }
     }
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
         if d.is_human_readable() {
             let base64 = Option::<String>::deserialize(d)?;
@@ -144,9 +176,13 @@ pub mod as_human_string {
     use std::str::FromStr;
 
     use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    #[cfg(feature = "instrument")]
     use tracing::instrument;
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn serialize<T, S>(value: &T, s: S) -> Result<S::Ok, S::Error>
     where
         T: Display + Serialize,
@@ -159,7 +195,10 @@ pub mod as_human_string {
         }
     }
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn deserialize<'de, T, D>(d: D) -> Result<T, D::Error>
     where
         T: FromStr + Deserialize<'de>,
@@ -179,9 +218,13 @@ pub mod as_human_opt_string {
     use std::str::FromStr;
 
     use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    #[cfg(feature = "instrument")]
     use tracing::instrument;
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn serialize<T, S>(value: &Option<T>, s: S) -> Result<S::Ok, S::Error>
     where
         T: Display + Serialize,
@@ -197,7 +240,10 @@ pub mod as_human_opt_string {
         }
     }
 
-    #[instrument(level = "trace", target = "json", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "json", skip_all)
+    )]
     pub fn deserialize<'de, T, D>(d: D) -> Result<Option<T>, D::Error>
     where
         T: FromStr + Deserialize<'de>,

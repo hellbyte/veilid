@@ -2,8 +2,8 @@ use super::*;
 
 impl RoutingTable {
     // Compute transfer statistics to determine how 'fast' a node is
-    #[instrument(level = "trace", skip(self), err)]
-    pub async fn rolling_transfers_task_routine(
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    pub fn rolling_transfers_task_routine(
         &self,
         _stop_token: StopToken,
         last_ts: Timestamp,
@@ -33,8 +33,8 @@ impl RoutingTable {
     }
 
     // Update state statistics in PeerStats
-    #[instrument(level = "trace", skip(self), err)]
-    pub async fn update_state_stats_task_routine(
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    pub fn update_state_stats_task_routine(
         &self,
         _stop_token: StopToken,
         _last_ts: Timestamp,
@@ -54,8 +54,8 @@ impl RoutingTable {
     }
 
     // Update rolling answers in PeerStats
-    #[instrument(level = "trace", skip(self), err)]
-    pub async fn rolling_answers_task_routine(
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    pub fn rolling_answers_task_routine(
         &self,
         _stop_token: StopToken,
         _last_ts: Timestamp,

@@ -6,7 +6,7 @@ use stop_token::future::FutureExt as StopTokenFutureExt;
 type InboundProtocolMap = HashMap<(AddressType, LowLevelProtocolType, u16), Vec<ProtocolType>>;
 
 impl Network {
-    #[instrument(parent = None, level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn update_dial_info_task_routine(
         &self,
         stop_token: StopToken,
@@ -34,7 +34,10 @@ impl Network {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, editor))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, editor), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn process_detected_dial_info(
         &self,
         editor: &mut RoutingDomainEditorPublicInternet,
@@ -49,7 +52,10 @@ impl Network {
         }
     }
 
-    #[instrument(level = "trace", skip(self, editor))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", skip(self, editor), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn update_with_detection_result(
         &self,
         editor: &mut RoutingDomainEditorPublicInternet,
@@ -84,7 +90,7 @@ impl Network {
         }
     }
 
-    #[instrument(level = "trace", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn do_public_dial_info_check(
         &self,
         stop_token: StopToken,
@@ -147,7 +153,7 @@ impl Network {
         let mut unord = FuturesUnordered::new();
         let mut context_configs = HashSet::new();
         for ((address_type, _llpt, port), protocols) in inbound_protocol_map.clone() {
-            let protocol_type = *protocols.first().unwrap();
+            let protocol_type = *protocols.first().unwrap_or_log();
             let dcc = DiscoveryContextConfig {
                 protocol_type,
                 address_type,
@@ -251,13 +257,13 @@ impl Network {
                 addr,
                 format!("ws://{}/{}", addr, self.config().network.protocol.ws.path),
             )
-            .unwrap(),
+            .unwrap_or_log(),
             #[cfg(feature = "enable-protocol-wss")]
             ProtocolType::WSS => DialInfo::try_wss(
                 addr,
                 format!("wss://{}/{}", addr, self.config().network.protocol.wss.path),
             )
-            .unwrap(),
+            .unwrap_or_log(),
         }
     }
 }

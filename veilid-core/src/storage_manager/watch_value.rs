@@ -81,7 +81,10 @@ impl OutboundWatchValueResult {
 
 impl StorageManager {
     /// Create, update or cancel an outbound watch to a DHT value
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn watch_values(
         &self,
         record_key: RecordKey,
@@ -104,7 +107,10 @@ impl StorageManager {
         self.watch_values_inner(&mut inner, record_key, subkeys, expiration, count)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     pub async fn cancel_watch_values(
         &self,
         record_key: RecordKey,
@@ -200,12 +206,10 @@ impl StorageManager {
                     }
 
                     node_set.insert(node_ref.entry().hash_atom());
-                    out.push(
-                        Destination::direct(
-                            node_ref.routing_domain_filtered(RoutingDomain::PublicInternet),
-                        )
-                        .with_safety(current.params().safety_selection.clone()),
-                    )
+                    out.push(Destination::direct(
+                        node_ref.routing_domain_filtered(RoutingDomain::PublicInternet),
+                        Some(current.params().safety_selection.clone()),
+                    ))
                 }
             }
         }
@@ -215,7 +219,10 @@ impl StorageManager {
 
     ////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     fn watch_values_inner(
         &self,
         inner: &mut StorageManagerInner,
@@ -293,7 +300,10 @@ impl StorageManager {
     }
 
     /// Perform a 'watch value cancel' on the network without fanout
-    #[instrument(target = "watch", level = "debug", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(target = "watch", level = "debug", skip_all, err)
+    )]
     pub(super) async fn outbound_watch_value_cancel(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -309,14 +319,16 @@ impl StorageManager {
         let watcher = opt_watcher.unwrap_or_else(|| {
             self.anonymous_signing_keys
                 .get(opaque_record_key.kind())
-                .unwrap()
+                .unwrap_or_log()
         });
 
         let wva = VeilidAPIError::from_network_result(
             self.rpc_processor()
                 .rpc_call_watch_value(
-                    Destination::direct(watch_node.routing_domain_filtered(routing_domain))
-                        .with_safety(safety_selection),
+                    Destination::direct(
+                        watch_node.routing_domain_filtered(routing_domain),
+                        Some(safety_selection),
+                    ),
                     opaque_record_key,
                     ValueSubkeyRangeSet::new(),
                     Timestamp::default(),
@@ -338,7 +350,10 @@ impl StorageManager {
 
     /// Perform a 'watch value change' on the network without fanout
     #[allow(clippy::too_many_arguments)]
-    #[instrument(target = "watch", level = "debug", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(target = "watch", level = "debug", skip_all, err)
+    )]
     pub(super) async fn outbound_watch_value_change(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -357,13 +372,15 @@ impl StorageManager {
         let watcher = params.opt_watcher.unwrap_or_else(|| {
             self.anonymous_signing_keys
                 .get(opaque_record_key.kind())
-                .unwrap()
+                .unwrap_or_log()
         });
 
         let wva = VeilidAPIError::from_network_result(
             pin_future!(self.rpc_processor().rpc_call_watch_value(
-                Destination::direct(watch_node.routing_domain_filtered(routing_domain))
-                    .with_safety(params.safety_selection),
+                Destination::direct(
+                    watch_node.routing_domain_filtered(routing_domain),
+                    Some(params.safety_selection)
+                ),
                 opaque_record_key,
                 params.subkeys,
                 params.expiration,
@@ -406,7 +423,10 @@ impl StorageManager {
     /// Perform a 'watch value' query on the network using fanout
     ///
     #[allow(clippy::too_many_arguments)]
-    #[instrument(target = "watch", level = "debug", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(target = "watch", level = "debug", skip_all, err)
+    )]
     pub(super) async fn outbound_watch_value(
         &self,
         record_key: RecordKey,
@@ -425,10 +445,11 @@ impl StorageManager {
 
         // Get the appropriate watcher key, if anonymous use a static anonymous watch key
         // which lives for the duration of the app's runtime
-        let watcher = params
-            .opt_watcher
-            .clone()
-            .unwrap_or_else(|| self.anonymous_signing_keys.get(record_key.kind()).unwrap());
+        let watcher = params.opt_watcher.clone().unwrap_or_else(|| {
+            self.anonymous_signing_keys
+                .get(record_key.kind())
+                .unwrap_or_log()
+        });
 
         // Get the nodes we know are caching this value to seed the fanout
         let init_fanout_queue = self
@@ -461,7 +482,7 @@ impl StorageManager {
                     let params = params.clone();
 
                     // See if we have an existing watch id for this node
-                    let node_id = next_node.node_ids().get(record_key.kind()).unwrap();
+                    let node_id = next_node.node_ids().get(record_key.kind()).unwrap_or_log();
                     let pnk = PerNodeKey {
                         record_key: record_key.clone(),
                         node_id,
@@ -474,7 +495,7 @@ impl StorageManager {
                         let wva = match
                             rpc_processor
                                 .rpc_call_watch_value(
-                                    Destination::direct(next_node.routing_domain_filtered(routing_domain)).with_safety(params.safety_selection),
+                                    Destination::direct(next_node.routing_domain_filtered(routing_domain), Some(params.safety_selection)),
                                     record_key.opaque(),
                                     params.subkeys,
                                     params.expiration,
@@ -706,7 +727,7 @@ impl StorageManager {
                     opaque_record_key,
                     pns.opt_watcher,
                     pns.safety_selection,
-                    pns.watch_node_ref.unwrap(),
+                    pns.watch_node_ref.unwrap_or_log(),
                     pns.watch_id,
                 ))
                 .await;
@@ -833,7 +854,7 @@ impl StorageManager {
                 self.outbound_watch_value_change(
                     opaque_record_key,
                     params,
-                    pns.watch_node_ref.unwrap(),
+                    pns.watch_node_ref.unwrap_or_log(),
                     pns.watch_id,
                 )
                 .await
@@ -913,7 +934,7 @@ impl StorageManager {
                                 .per_node_states
                                 .get(pnk)
                                 .cloned()
-                                .unwrap(),
+                                .unwrap_or_log(),
                         )
                     })
                     .collect();
@@ -1018,7 +1039,7 @@ impl StorageManager {
 
         // Handle accepted
         for accepted_watch in owvresult.accepted {
-            let node_id = accepted_watch.node_ref.node_ids().get(kind).unwrap();
+            let node_id = accepted_watch.node_ref.node_ids().get(kind).unwrap_or_log();
             let pnk = PerNodeKey {
                 record_key: record_key.clone(),
                 node_id,
@@ -1058,7 +1079,7 @@ impl StorageManager {
         }
         // Eliminate rejected
         for rejected_node_ref in owvresult.rejected {
-            let node_id = rejected_node_ref.node_ids().get(kind).unwrap();
+            let node_id = rejected_node_ref.node_ids().get(kind).unwrap_or_log();
             let pnk = PerNodeKey {
                 record_key: record_key.clone(),
                 node_id,
@@ -1068,7 +1089,7 @@ impl StorageManager {
         }
         // Drop unanswered but leave in per node state
         for ignored_node_ref in owvresult.ignored {
-            let node_id = ignored_node_ref.node_ids().get(kind).unwrap();
+            let node_id = ignored_node_ref.node_ids().get(kind).unwrap_or_log();
             let pnk = PerNodeKey {
                 record_key: record_key.clone(),
                 node_id,
@@ -1197,7 +1218,7 @@ impl StorageManager {
                 // Get changed first changed subkey until we find one to report
                 let mut n = 0;
                 while !newer_online_subkeys.is_empty() {
-                    let first_changed_subkey = newer_online_subkeys.first().unwrap();
+                    let first_changed_subkey = newer_online_subkeys.first().unwrap_or_log();
 
                     let value = match this
                         .get_value(record_key.clone(), first_changed_subkey, true)
@@ -1276,7 +1297,10 @@ impl StorageManager {
 
     /// Handle a received 'Watch Value' query
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "trace", target = "dht", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all)
+    )]
     pub async fn inbound_watch_value(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -1446,7 +1470,7 @@ impl StorageManager {
         // Set the local value
         self.handle_set_single_local_value_with_single_record_lock(
             &record_lock,
-            reportable_subkeys.first().unwrap(),
+            reportable_subkeys.first().unwrap_or_log(),
             value.clone(),
         )
         .await?;
@@ -1497,7 +1521,10 @@ impl StorageManager {
     }
 
     /// Handle a received 'Value Changed' statement
-    #[instrument(level = "debug", target = "watch", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", target = "watch", skip_all)
+    )]
     pub async fn inbound_value_changed(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -1572,13 +1599,13 @@ impl StorageManager {
         if let Some(value) = opt_value.clone() {
             // Safe to unwrap here because if we have reportable subkeys, there must be
             // a first reportable subkey, and if not, the value is set to None
-            let first_subkey = reportable_subkeys.first().unwrap();
+            let first_subkey = reportable_subkeys.first().unwrap_or_log();
 
             let last_get_result = self
                 .handle_get_single_local_value(&opaque_record_key, first_subkey, true)
                 .await?;
 
-            let descriptor = last_get_result.opt_descriptor.unwrap();
+            let descriptor = last_get_result.opt_descriptor.unwrap_or_log();
             let schema = descriptor.schema()?;
 
             // Validate with schema
@@ -1607,7 +1634,7 @@ impl StorageManager {
                     opt_value = None;
 
                     // Shrink up the subkey range because we're removing the first value from the things we'd possibly report on
-                    reportable_subkeys.pop_first().unwrap();
+                    reportable_subkeys.pop_first().unwrap_or_log();
                     if reportable_subkeys.is_empty() {
                         // If there's nothing left to report, just return no
                         return Ok(NetworkResult::value(()));
@@ -1646,7 +1673,10 @@ impl StorageManager {
     /// Check all watches for changes
     /// Used when we come back online from being offline and may have
     /// missed some ValueChanged notifications
-    #[instrument(level = "trace", target = "watch", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "watch", skip_all)
+    )]
     pub fn change_inspect_all_watches(&self) {
         let mut inner = self.inner.lock();
 

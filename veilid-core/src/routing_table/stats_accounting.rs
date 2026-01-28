@@ -170,7 +170,7 @@ impl AnswerStatsAccounting {
         if self.rolling_answer_spans.is_empty() {
             self.rolling_answer_spans.push_back(AnswerSpan::new(cur_ts));
         }
-        self.rolling_answer_spans.front_mut().unwrap()
+        self.rolling_answer_spans.front_mut().unwrap_or_log()
     }
 
     fn make_stats(&self, cur_ts: Timestamp) -> AnswerStats {

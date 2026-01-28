@@ -32,7 +32,7 @@ typedef _FreeStringDart = void Function(Pointer<Utf8>);
 // fn initialize_veilid_core(platform_config: FfiStr)
 typedef _InitializeVeilidCoreDart = void Function(Pointer<Utf8>);
 // fn change_log_level(layer: FfiStr, log_level: FfiStr)
-typedef _ChangeLogLevelDart = void Function(Pointer<Utf8>, Pointer<Utf8>);
+typedef _ChangeLogLevelDart = int Function(Pointer<Utf8>, Pointer<Utf8>);
 // fn change_log_ignore(layer: FfiStr, log_ignore: FfiStr)
 typedef _ChangeLogIgnoreDart = void Function(Pointer<Utf8>, Pointer<Utf8>);
 // fn startup_veilid_core(port: i64, config: FfiStr)
@@ -1836,7 +1836,7 @@ class VeilidFFI extends Veilid {
           >('initialize_veilid_core'),
       _changeLogLevel = dylib
           .lookupFunction<
-            Void Function(Pointer<Utf8>, Pointer<Utf8>),
+            Int32 Function(Pointer<Utf8>, Pointer<Utf8>),
             _ChangeLogLevelDart
           >('change_log_level'),
       _changeLogIgnore = dylib
@@ -2377,13 +2377,19 @@ class VeilidFFI extends Veilid {
   }
 
   @override
-  void changeLogLevel(String layer, VeilidConfigLogLevel logLevel) {
-    final nativeLogLevel = jsonEncode(logLevel).toNativeUtf8();
+  void changeLogLevel(String layer, String directives) {
+    final nativeDirectives = directives.toNativeUtf8();
     final nativeLayer = layer.toNativeUtf8();
-    _changeLogLevel(nativeLayer, nativeLogLevel);
+    final out = _changeLogLevel(nativeLayer, nativeDirectives);
     malloc
       ..free(nativeLayer)
-      ..free(nativeLogLevel);
+      ..free(nativeDirectives);
+    if (out == 1) {
+      throw VeilidAPIExceptionParseError('Invalid layer', layer);
+    }
+    if (out == 2) {
+      throw VeilidAPIExceptionParseError('Invalid directives', directives);
+    }
   }
 
   @override

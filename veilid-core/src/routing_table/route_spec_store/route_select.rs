@@ -3,7 +3,10 @@ use super::*;
 impl RouteSpecStore {
     /// Get a single allocated route that matches a particular safety spec
     /// Returns the public key associated with a single allocated route
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn select_single_route(
         &self,
         crypto_kind: CryptoKind,
@@ -27,7 +30,10 @@ impl RouteSpecStore {
         )
     }
 
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(clippy::too_many_arguments)]
     pub(super) fn select_single_route_inner(
         &self,
@@ -110,10 +116,10 @@ impl RouteSpecStore {
         let sr_pubkey = inner
             .content
             .get_detail(&sr_route_id)
-            .unwrap()
+            .unwrap_or_log()
             .get_route_set_keys()
             .get(crypto_kind)
-            .unwrap();
+            .unwrap_or_log();
 
         Ok(sr_pubkey)
     }
@@ -121,7 +127,10 @@ impl RouteSpecStore {
     /// Find first matching unpublished route that fits into the selection criteria
     /// Don't pick any routes that have failed and haven't been tested yet
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = inner.cache.log_key()))
+    )]
     fn first_available_route_inner(
         inner: &RouteSpecStoreInner,
         crypto_kind: CryptoKind,

@@ -5,23 +5,23 @@
 compile_error!("async-std compilation for windows is currently unsupported");
 
 mod client_api;
+mod logs;
 mod server;
 mod settings;
 mod tools;
 #[cfg(unix)]
 mod unix;
-mod veilid_logs;
 #[cfg(windows)]
 mod windows;
 
 use crate::settings::*;
 
 use clap::{Args, Parser};
+use logs::*;
 use server::*;
 use settings::LogLevel;
 use tools::*;
 use veilid_core::{PublicKeyGroup, SecretKeyGroup};
-use veilid_logs::*;
 
 #[derive(Args, Debug, Clone)]
 #[group(multiple = false)]
@@ -513,7 +513,7 @@ fn main() -> EyreResult<()> {
         // run the server to set the node id and quit
         return block_on(async {
             // Init combined console/file logger
-            let veilid_logs = VeilidLogs::setup(settings.clone())?;
+            let veilid_logs = Logs::setup(settings.clone())?;
 
             run_veilid_server(settings, server_mode, veilid_logs).await
         })
@@ -562,7 +562,7 @@ fn main() -> EyreResult<()> {
     // Run the server loop
     block_on(async {
         // Init combined console/file logger
-        let veilid_logs = VeilidLogs::setup(settings.clone())?;
+        let veilid_logs = Logs::setup(settings.clone())?;
 
         cfg_if! {
             if #[cfg(windows)] {

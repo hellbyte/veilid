@@ -27,7 +27,10 @@ struct WorkItemResult {
 
 impl StorageManager {
     // Write a single offline subkey
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     async fn write_single_offline_subkey(
         &self,
         stop_token: StopToken,
@@ -59,15 +62,13 @@ impl StorageManager {
             return Ok(OfflineSubkeyWriteResult::Dropped);
         };
         veilid_log!(self debug "Offline subkey write: {}:{} len={}", opaque_record_key, subkey, value.value_data().data().len());
-        let osvres = self
-            .outbound_set_value(
-                &opaque_record_key,
-                subkey,
-                safety_selection,
-                value.clone(),
-                descriptor,
-            )
-            .await;
+        let osvres = self.outbound_set_value(
+            &opaque_record_key,
+            subkey,
+            safety_selection,
+            value.clone(),
+            descriptor,
+        );
         match osvres {
             Ok(res_rx) => {
                 while let Ok(Ok(res)) = res_rx.recv_async().timeout_at(stop_token.clone()).await {
@@ -98,17 +99,20 @@ impl StorageManager {
                     }
                 }
                 veilid_log!(self debug "writing offline subkey did not complete {}:{}", opaque_record_key, subkey);
-                return Ok(OfflineSubkeyWriteResult::Cancelled);
+                Ok(OfflineSubkeyWriteResult::Cancelled)
             }
             Err(e) => {
                 veilid_log!(self debug "failed to write offline subkey: {}:{} {}", opaque_record_key, subkey, e);
-                return Ok(OfflineSubkeyWriteResult::Cancelled);
+                Ok(OfflineSubkeyWriteResult::Cancelled)
             }
         }
     }
 
     // Write a set of subkeys of the same key
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     async fn process_work_item(
         &self,
         stop_token: StopToken,
@@ -171,8 +175,11 @@ impl StorageManager {
     }
 
     // Process all results
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    async fn process_single_result(&self, result: WorkItemResult) {
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
+    fn process_single_result(&self, result: WorkItemResult) {
         let consensus_width = self.config().network.dht.consensus_width as usize;
 
         // Debug print the result
@@ -235,7 +242,7 @@ impl StorageManager {
     }
 
     // Best-effort write subkeys to the network that were written offline
-    //#[instrument(level = "trace", target = "stor", skip_all, err)]
+    //#[cfg_attr(feature = "instrument", instrument(level = "trace", target = "stor", skip_all, err))]
     pub(super) async fn offline_subkey_writes_task_routine(
         &self,
         stop_token: StopToken,
@@ -267,7 +274,7 @@ impl StorageManager {
                             return;
                         }
                     };
-                    self.process_single_result(result).await;
+                    self.process_single_result(result);
                 }
             })
         };

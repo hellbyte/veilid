@@ -2,7 +2,10 @@ use super::*;
 
 impl StorageManager {
     /// Delete a local record
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn delete_record(&self, record_key: RecordKey) -> VeilidAPIResult<()> {
         let Ok(_guard) = self.startup_lock.enter() else {
             apibail_not_initialized!();
@@ -28,11 +31,14 @@ impl StorageManager {
         let record_locks: StorageManagerRecordsLockGuard = record_lock.into();
 
         // Clean up the record from the storage manager
-        self.cleanup_records_locked(&record_locks).await
+        self.cleanup_records_locked(&record_locks)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
-    pub(super) async fn cleanup_records_locked(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
+    pub(super) fn cleanup_records_locked(
         &self,
         records_lock: &StorageManagerRecordsLockGuard,
     ) -> VeilidAPIResult<()> {

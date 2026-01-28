@@ -120,14 +120,18 @@ impl CursiveUI {
     // Private functions
     fn command_processor(s: &mut Cursive) -> CommandProcessor {
         let inner = Self::inner(s);
-        inner.cmdproc.as_ref().unwrap().clone()
+        inner.cmdproc.as_ref().unwrap_or_log().clone()
     }
 
     fn inner(s: &mut Cursive) -> MutexGuard<'_, CursiveUIInner> {
-        s.user_data::<Arc<Mutex<CursiveUIInner>>>().unwrap().lock()
+        s.user_data::<Arc<Mutex<CursiveUIInner>>>()
+            .unwrap_or_log()
+            .lock()
     }
     fn inner_mut(s: &mut Cursive) -> MutexGuard<'_, CursiveUIInner> {
-        s.user_data::<Arc<Mutex<CursiveUIInner>>>().unwrap().lock()
+        s.user_data::<Arc<Mutex<CursiveUIInner>>>()
+            .unwrap_or_log()
+            .lock()
     }
 
     fn setup_colors(siv: &mut CursiveRunnable, inner: &mut CursiveUIInner, settings: &Settings) {
@@ -137,47 +141,48 @@ impl CursiveUI {
         theme.borders = BorderStyle::from(&settings.interface.theme.borders);
         theme.palette.set_color(
             "background",
-            Color::parse(settings.interface.theme.colors.background.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.background.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "shadow",
-            Color::parse(settings.interface.theme.colors.shadow.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.shadow.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "view",
-            Color::parse(settings.interface.theme.colors.view.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.view.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "primary",
-            Color::parse(settings.interface.theme.colors.primary.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.primary.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "secondary",
-            Color::parse(settings.interface.theme.colors.secondary.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.secondary.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "tertiary",
-            Color::parse(settings.interface.theme.colors.tertiary.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.tertiary.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "title_primary",
-            Color::parse(settings.interface.theme.colors.title_primary.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.title_primary.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "title_secondary",
-            Color::parse(settings.interface.theme.colors.title_secondary.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.title_secondary.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "highlight",
-            Color::parse(settings.interface.theme.colors.highlight.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.highlight.as_str()).unwrap_or_log(),
         );
         theme.palette.set_color(
             "highlight_inactive",
-            Color::parse(settings.interface.theme.colors.highlight_inactive.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.highlight_inactive.as_str())
+                .unwrap_or_log(),
         );
         theme.palette.set_color(
             "highlight_text",
-            Color::parse(settings.interface.theme.colors.highlight_text.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.colors.highlight_text.as_str()).unwrap_or_log(),
         );
         siv.set_theme(theme);
 
@@ -185,23 +190,23 @@ impl CursiveUI {
         let mut colors = HashMap::<Level, cursive::theme::Color>::new();
         colors.insert(
             Level::Trace,
-            Color::parse(settings.interface.theme.log_colors.trace.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.log_colors.trace.as_str()).unwrap_or_log(),
         );
         colors.insert(
             Level::Debug,
-            Color::parse(settings.interface.theme.log_colors.debug.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.log_colors.debug.as_str()).unwrap_or_log(),
         );
         colors.insert(
             Level::Info,
-            Color::parse(settings.interface.theme.log_colors.info.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.log_colors.info.as_str()).unwrap_or_log(),
         );
         colors.insert(
             Level::Warn,
-            Color::parse(settings.interface.theme.log_colors.warn.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.log_colors.warn.as_str()).unwrap_or_log(),
         );
         colors.insert(
             Level::Error,
-            Color::parse(settings.interface.theme.log_colors.error.as_str()).unwrap(),
+            Color::parse(settings.interface.theme.log_colors.error.as_str()).unwrap_or_log(),
         );
         inner.log_colors = colors;
     }
@@ -252,46 +257,46 @@ impl CursiveUI {
     // Selectors
 
     // fn main_layout(s: &mut Cursive) -> ViewRef<LinearLayout> {
-    //     s.find_name("main-layout").unwrap()
+    //     s.find_name("main-layout").unwrap_or_log()
     // }
     fn node_events_panel(s: &mut Cursive) -> ViewRef<NodeEventsPanel> {
-        s.find_name("node-events-panel").unwrap()
+        s.find_name("node-events-panel").unwrap_or_log()
     }
     fn node_events_view(s: &mut Cursive) -> ViewRef<CachedTextView> {
-        s.find_name("node-events-view").unwrap()
+        s.find_name("node-events-view").unwrap_or_log()
     }
     fn node_events_scroll_view(s: &mut Cursive) -> ViewRef<ScrollView<NamedView<CachedTextView>>> {
-        s.find_name("node-events-scroll-view").unwrap()
+        s.find_name("node-events-scroll-view").unwrap_or_log()
     }
     fn command_line(s: &mut Cursive) -> ViewRef<EditView> {
-        s.find_name("command-line").unwrap()
+        s.find_name("command-line").unwrap_or_log()
     }
     fn button_attach(s: &mut Cursive) -> ViewRef<Button> {
-        s.find_name("button-attach").unwrap()
+        s.find_name("button-attach").unwrap_or_log()
     }
     fn status_bar(s: &mut Cursive) -> ViewRef<TextView> {
-        s.find_name("status-bar").unwrap()
+        s.find_name("status-bar").unwrap_or_log()
     }
     fn peers(s: &mut Cursive) -> ViewRef<PeersTableView> {
-        s.find_name("peers").unwrap()
+        s.find_name("peers").unwrap_or_log()
     }
     fn ipc_path(s: &mut Cursive) -> ViewRef<EditView> {
-        s.find_name("ipc-path").unwrap()
+        s.find_name("ipc-path").unwrap_or_log()
     }
     fn ipc_path_radio(s: &mut Cursive) -> ViewRef<RadioButton<u32>> {
-        s.find_name("ipc-path-radio").unwrap()
+        s.find_name("ipc-path-radio").unwrap_or_log()
     }
     fn connecting_text(s: &mut Cursive) -> ViewRef<TextView> {
-        s.find_name("connecting-text").unwrap()
+        s.find_name("connecting-text").unwrap_or_log()
     }
     fn network_address(s: &mut Cursive) -> ViewRef<EditView> {
-        s.find_name("network-address").unwrap()
+        s.find_name("network-address").unwrap_or_log()
     }
     fn network_address_radio(s: &mut Cursive) -> ViewRef<RadioButton<u32>> {
-        s.find_name("network-address-radio").unwrap()
+        s.find_name("network-address-radio").unwrap_or_log()
     }
     fn connection_dialog(s: &mut Cursive) -> ViewRef<Dialog> {
-        s.find_name("connection-dialog").unwrap()
+        s.find_name("connection-dialog").unwrap_or_log()
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -447,7 +452,10 @@ impl CursiveUI {
         match Self::run_command(s, text) {
             Ok(_) => {}
             Err(e) => {
-                let color = *Self::inner_mut(s).log_colors.get(&Level::Error).unwrap();
+                let color = *Self::inner_mut(s)
+                    .log_colors
+                    .get(&Level::Error)
+                    .unwrap_or_log();
                 CursiveUI::push_ansi_lines(
                     s,
                     color.into(),
@@ -587,7 +595,10 @@ impl CursiveUI {
             .is_ok()
             && std::io::stdout().flush().is_ok()
         {
-            let color = *Self::inner_mut(s).log_colors.get(&Level::Info).unwrap();
+            let color = *Self::inner_mut(s)
+                .log_colors
+                .get(&Level::Info)
+                .unwrap_or_log();
             CursiveUI::push_ansi_lines(
                 s,
                 color.into(),
@@ -604,7 +615,10 @@ impl CursiveUI {
         if let Ok(mut clipboard) = arboard::Clipboard::new() {
             // X11/Wayland/other system copy
             if clipboard.set_text(text.as_ref()).is_ok() {
-                let color = *Self::inner_mut(s).log_colors.get(&Level::Info).unwrap();
+                let color = *Self::inner_mut(s)
+                    .log_colors
+                    .get(&Level::Info)
+                    .unwrap_or_log();
                 CursiveUI::push_ansi_lines(
                     s,
                     color.into(),
@@ -615,7 +629,10 @@ impl CursiveUI {
                     ),
                 );
             } else {
-                let color = *Self::inner_mut(s).log_colors.get(&Level::Warn).unwrap();
+                let color = *Self::inner_mut(s)
+                    .log_colors
+                    .get(&Level::Warn)
+                    .unwrap_or_log();
                 CursiveUI::push_ansi_lines(
                     s,
                     color.into(),
@@ -675,14 +692,14 @@ impl CursiveUI {
                     || inner
                         .connection_dialog_state
                         .as_ref()
-                        .unwrap()
+                        .unwrap_or_log()
                         .is_connected()
                 {
                     show = true;
                 } else if inner
                     .connection_dialog_state
                     .as_ref()
-                    .unwrap()
+                    .unwrap_or_log()
                     .is_retrying()
                 {
                     hide = true;
@@ -694,7 +711,7 @@ impl CursiveUI {
                     && !inner
                         .connection_dialog_state
                         .as_ref()
-                        .unwrap()
+                        .unwrap_or_log()
                         .is_connected()
                 {
                     hide = true;
@@ -705,14 +722,14 @@ impl CursiveUI {
                     || inner
                         .connection_dialog_state
                         .as_ref()
-                        .unwrap()
+                        .unwrap_or_log()
                         .is_connected()
                 {
                     show = true;
                 } else if inner
                     .connection_dialog_state
                     .as_ref()
-                    .unwrap()
+                    .unwrap_or_log()
                     .is_disconnected()
                 {
                     hide = true;
@@ -1090,7 +1107,7 @@ impl CursiveUI {
         // Instantiate the cursive runnable
         let runnable = CursiveRunnable::new(
             || -> Result<Box<dyn cursive::backend::Backend>, Box<DumbError>> {
-                let backend = cursive::backends::crossterm::Backend::init().unwrap();
+                let backend = cursive::backends::crossterm::Backend::init().unwrap_or_log();
                 let buffered_backend = cursive_buffered_backend::BufferedBackend::new(backend);
                 Ok(Box::new(buffered_backend))
             },
@@ -1148,13 +1165,13 @@ impl CursiveUI {
         // attempt at using Mux. Mux has bugs, like resizing problems.
         // let mut mux = Mux::new();
         // let node_node_events_view = mux
-        //     .add_below(node_events_view, mux.root().build().unwrap())
-        //     .unwrap();
+        //     .add_below(node_events_view, mux.root().build().unwrap_or_log())
+        //     .unwrap_or_log();
         // let node_peers_table_view = mux
         //     .add_below(peers_table_view, node_node_events_view)
-        //     .unwrap();
+        //     .unwrap_or_log();
         // mux.set_container_split_ratio(node_peers_table_view, 0.75)
-        //     .unwrap();
+        //     .unwrap_or_log();
         // let mut mainlayout = LinearLayout::vertical();
         // mainlayout.add_child(mux);
 
@@ -1357,7 +1374,7 @@ impl UISender for CursiveUISender {
     fn add_node_event(&self, log_color: Level, event: &str) {
         let color = {
             let inner = self.inner.lock();
-            *inner.log_colors.get(&log_color).unwrap()
+            *inner.log_colors.get(&log_color).unwrap_or_log()
         };
 
         let _ = self.push_styled_lines(
@@ -1372,7 +1389,7 @@ impl UISender for CursiveUISender {
     fn add_log_event(&self, log_color: Level, event: &str) {
         let color = {
             let inner = self.inner.lock();
-            *inner.log_colors.get(&log_color).unwrap()
+            *inner.log_colors.get(&log_color).unwrap_or_log()
         };
 
         let _ = self.push_styled_lines(
@@ -1408,9 +1425,9 @@ impl CursiveUISender {
 }
 impl LogWriter for CursiveUISender {
     fn write(&self, _now: &mut DeferredNow, record: &Record) -> std::io::Result<()> {
-        let color = *self.colors.get(&record.level()).unwrap();
+        let color = *self.colors.get(&record.level()).unwrap_or_log();
 
-        let args = format!("{}", &record.args());
+        let args = format!("[veilid-cli] {}", &record.args());
 
         let mut line = StyledString::new();
         let mut indent = 0;

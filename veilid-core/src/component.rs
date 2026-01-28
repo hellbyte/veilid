@@ -16,6 +16,7 @@ pub(crate) trait VeilidComponent:
     AsAnyArcSendSync + VeilidComponentRegistryAccessor + core::fmt::Debug
 {
     fn name(&self) -> &'static str;
+    fn log_facilities(&self) -> VeilidComponentLogFacilities;
     fn init(&self) -> PinBoxFuture<'_, EyreResult<()>>;
     fn post_init(&self) -> PinBoxFuture<'_, EyreResult<()>>;
     fn pre_terminate(&self) -> PinBoxFuture<'_, ()>;
@@ -34,7 +35,7 @@ pub(crate) trait VeilidComponentRegistryAccessor {
     fn event_bus(&self) -> EventBus {
         self.registry().event_bus.clone()
     }
-    fn log_key(&self) -> &'static str {
+    fn log_key(&self) -> VeilidLogKey {
         self.registry().log_key()
     }
 }
@@ -59,6 +60,7 @@ where
 struct VeilidComponentRegistryInner {
     type_map: HashMap<core::any::TypeId, Arc<dyn VeilidComponent + Send + Sync>>,
     init_order: Vec<core::any::TypeId>,
+    #[cfg(any(test, feature = "test-util"))]
     mock: bool,
 }
 
@@ -84,6 +86,7 @@ impl VeilidComponentRegistry {
             inner: Arc::new(Mutex::new(VeilidComponentRegistryInner {
                 type_map: HashMap::new(),
                 init_order: Vec::new(),
+                #[cfg(any(test, feature = "test-util"))]
                 mock: false,
             })),
             startup_options,
@@ -95,10 +98,16 @@ impl VeilidComponentRegistry {
         }
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn enable_mock(&self) {
         let mut inner = self.inner.lock();
         inner.mock = true;
     }
+    // #[cfg(any(test, feature = "test-util"))]
+    // pub fn is_mock(&self) -> bool {
+    //     let inner = self.inner.lock();
+    //     inner.mock
+    // }
 
     #[expect(dead_code)]
     pub fn namespace(&self) -> &'static str {
@@ -110,7 +119,7 @@ impl VeilidComponentRegistry {
         self.program_name
     }
 
-    pub fn log_key(&self) -> &'static str {
+    pub fn log_key(&self) -> VeilidLogKey {
         self.log_key
     }
 
@@ -124,6 +133,7 @@ impl VeilidComponentRegistry {
         let component = Arc::new(component_constructor(self.clone()));
         let component_type_id = core::any::TypeId::of::<T>();
 
+        // Add to type map and initialization order
         let mut inner = self.inner.lock();
         assert!(
             inner
@@ -147,6 +157,7 @@ impl VeilidComponentRegistry {
         let component = Arc::new(component_constructor(self.clone(), context));
         let component_type_id = core::any::TypeId::of::<T>();
 
+        // Add to type map and initialization order
         let mut inner = self.inner.lock();
         assert!(
             inner
@@ -159,12 +170,20 @@ impl VeilidComponentRegistry {
     }
 
     pub async fn init(&self) -> EyreResult<()> {
-        let Some(mut _init_guard) = asyncmutex_try_lock!(self.init_lock) else {
+        let Some(mut _init_guard) = self.init_lock.try_lock() else {
             bail!("init should only happen one at a time");
         };
         if *_init_guard {
             bail!("already initialized");
         }
+
+        VeilidLayerFilter::init_veilid_component_log_facilities(
+            self.log_key(),
+            self.get_init_order()
+                .into_iter()
+                .map(|x| x.log_facilities())
+                .collect(),
+        )?;
 
         // Event bus starts up early
         self.event_bus.startup()?;
@@ -186,7 +205,7 @@ impl VeilidComponentRegistry {
     }
 
     pub async fn post_init(&self) -> EyreResult<()> {
-        let Some(mut _init_guard) = asyncmutex_try_lock!(self.init_lock) else {
+        let Some(mut _init_guard) = self.init_lock.try_lock() else {
             bail!("init should only happen one at a time");
         };
         if !*_init_guard {
@@ -206,7 +225,7 @@ impl VeilidComponentRegistry {
     }
 
     pub async fn pre_terminate(&self) {
-        let Some(mut _init_guard) = asyncmutex_try_lock!(self.init_lock) else {
+        let Some(mut _init_guard) = self.init_lock.try_lock() else {
             panic!("terminate should only happen one at a time");
         };
         if !*_init_guard {
@@ -218,7 +237,7 @@ impl VeilidComponentRegistry {
     }
 
     pub async fn terminate(&self) {
-        let Some(mut _init_guard) = asyncmutex_try_lock!(self.init_lock) else {
+        let Some(mut _init_guard) = self.init_lock.try_lock() else {
             panic!("terminate should only happen one at a time");
         };
         if !*_init_guard {
@@ -231,6 +250,12 @@ impl VeilidComponentRegistry {
 
         // Event bus shuts down last
         self.event_bus.shutdown().await;
+
+        // Remoave all registered component log facilities from VeilidLayerFilter for this log key
+        if let Err(e) = VeilidLayerFilter::terminate_veilid_component_log_facilities(self.log_key())
+        {
+            eprintln!("Error terminating log facilities: {}", e);
+        }
 
         *_init_guard = false;
     }
@@ -262,7 +287,7 @@ impl VeilidComponentRegistry {
         inner
             .init_order
             .iter()
-            .map(|id| inner.type_map.get(id).unwrap().clone())
+            .map(|id| inner.type_map.get(id).unwrap_or_log().clone())
             .collect::<Vec<_>>()
     }
 
@@ -277,7 +302,7 @@ impl VeilidComponentRegistry {
         let component = component_dyn
             .as_any_arc_send_sync()
             .downcast::<T>()
-            .unwrap();
+            .unwrap_or_log();
         Some(VeilidComponentGuard {
             component,
             _phantom: core::marker::PhantomData {},
@@ -316,6 +341,10 @@ macro_rules! impl_veilid_component {
                 stringify!($component_name)
             }
 
+            fn log_facilities(&self) -> VeilidComponentLogFacilities {
+                <$component_name>::log_facilities_impl(self)
+            }
+
             fn init(&self) -> PinBoxFuture<'_, EyreResult<()>> {
                 Box::pin(async { self.init_async().await })
             }
@@ -348,7 +377,7 @@ macro_rules! impl_setup_task {
         $this.$task_name.set_routine(move |s, l, t| {
             let registry = registry.clone();
             Box::pin(async move {
-                let this = registry.lookup::<$this_type>().unwrap();
+                let this = registry.lookup::<$this_type>().unwrap_or_log();
                 this.$task_routine(s, Timestamp::new(l), Timestamp::new(t))
             })
         });
@@ -363,7 +392,7 @@ macro_rules! impl_setup_task_async {
         $this.$task_name.set_routine(move |s, l, t| {
             let registry = registry.clone();
             Box::pin(async move {
-                let this = registry.lookup::<$this_type>().unwrap();
+                let this = registry.lookup::<$this_type>().unwrap_or_log();
                 this.$task_routine(s, Timestamp::new(l), Timestamp::new(t))
                     .await
             })
@@ -382,7 +411,7 @@ macro_rules! impl_subscribe_event_bus {
         $this.event_bus().subscribe(move |evt| {
             let registry = registry.clone();
             Box::pin(async move {
-                let this = registry.lookup::<$this_type>().unwrap();
+                let this = registry.lookup::<$this_type>().unwrap_or_log();
                 this.$event_handler(evt);
             })
         })
@@ -397,7 +426,7 @@ macro_rules! impl_subscribe_event_bus_async {
         $this.event_bus().subscribe(move |evt| {
             let registry = registry.clone();
             Box::pin(async move {
-                let this = registry.lookup::<$this_type>().unwrap();
+                let this = registry.lookup::<$this_type>().unwrap_or_log();
                 this.$event_handler(evt).await;
             })
         })

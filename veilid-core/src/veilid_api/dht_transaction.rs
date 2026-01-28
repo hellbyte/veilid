@@ -56,7 +56,7 @@ impl DHTTransaction {
 
     /// Commit the transaction
     /// All write operations are performed atomically
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret))]
     pub async fn commit(self) -> VeilidAPIResult<()> {
         record_duration_fut(async {
             let storage_manager = self.api.core_context()?.storage_manager();
@@ -82,7 +82,7 @@ impl DHTTransaction {
 
     /// Rollback the transaction
     /// No write operations are performed,
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret))]
     pub async fn rollback(self) -> VeilidAPIResult<()> {
         record_duration_fut(async {
             let storage_manager = self.api.core_context()?.storage_manager();
@@ -114,8 +114,7 @@ impl DHTTransaction {
     ///
     /// Returns `None` if the value was successfully set.
     /// Returns `Some(data)` if the value set was older than the one available on the network.
-
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle, data = print_data(&data, Some(64))), skip(self, data), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle, data = print_data(&data, Some(64))), skip(self, data), ret))]
     pub async fn set(
         &self,
         record_key: RecordKey,
@@ -159,8 +158,7 @@ impl DHTTransaction {
     ///
     /// Returns `None` if the value subkey has not yet been set.
     /// Returns `Some(data)` if the value subkey has valid data.
-
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key()), skip(self), ret))]
     pub async fn get(
         &self,
         record_key: RecordKey,
@@ -195,7 +193,7 @@ impl DHTTransaction {
     /// For information on arguments, see [RoutingContext::inspect_dht_record]
     ///
     /// Returns a DHTRecordReport with the subkey ranges that were returned that overlapped the schema, and sequence numbers for each of the subkeys in the range.
-    #[instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret)]
+    #[cfg_attr(feature = "instrument", instrument(target = "veilid_api", level = "debug", fields(duration, __VEILID_LOG_KEY = self.log_key(), transaction_handle), skip(self), ret))]
     pub async fn inspect(
         &self,
         record_key: RecordKey,
@@ -220,13 +218,12 @@ impl DHTTransaction {
             storage_manager.check_record_key(&record_key)?;
 
             let storage_manager = self.api.core_context()?.storage_manager();
-            Box::pin(storage_manager.transaction_inspect(
+            storage_manager.transaction_inspect(
                 transaction_handle,
                 record_key,
                 subkeys,
                 scope,
-            ))
-            .await
+            )
         }).await.inspect_err(log_veilid_api_error!(self))
     }
 }

@@ -1,4 +1,5 @@
 @echo off
-cargo test -- --nocapture
-cargo test --no-default-features --features=default-async-std -- --nocapture
+set RUST_LOG=#common=debug
+cargo nextest run
+cargo nextest run --no-default-features --features=default-async-std 
 

@@ -68,7 +68,7 @@ fn flags_to_address_flags(flags: u32) -> AddressFlags {
 pub struct PlatformSupportNetlink {
     connection_jh: Option<MustJoinHandle<()>>,
     handle: Option<Handle>,
-    default_route_interfaces: BTreeSet<u32>,
+    gateways: BTreeMap<u32, BTreeSet<IpAddr>>,
 }
 
 impl PlatformSupportNetlink {
@@ -76,17 +76,17 @@ impl PlatformSupportNetlink {
         PlatformSupportNetlink {
             connection_jh: None,
             handle: None,
-            default_route_interfaces: BTreeSet::new(),
+            gateways: BTreeMap::new(),
         }
     }
 
     // Figure out which interfaces have default routes
     async fn refresh_default_route_interfaces(&mut self) {
-        self.default_route_interfaces.clear();
+        self.gateways.clear();
         let mut routesv4 = self
             .handle
             .as_ref()
-            .unwrap()
+            .unwrap_or_log()
             .route()
             .get(IpVersion::V4)
             .execute();
@@ -94,14 +94,19 @@ impl PlatformSupportNetlink {
             if let Some(index) = routev4.output_interface() {
                 //info!("*** ipv4 route: {:#?}", routev4);
                 if routev4.header.destination_prefix_length == 0 {
-                    self.default_route_interfaces.insert(index);
+                    if let Some(gateway_ipaddr) = routev4.gateway() {
+                        self.gateways
+                            .entry(index)
+                            .or_default()
+                            .insert(gateway_ipaddr);
+                    }
                 }
             }
         }
         let mut routesv6 = self
             .handle
             .as_ref()
-            .unwrap()
+            .unwrap_or_log()
             .route()
             .get(IpVersion::V6)
             .execute();
@@ -109,13 +114,18 @@ impl PlatformSupportNetlink {
             if let Some(index) = routev6.output_interface() {
                 //info!("*** ipv6 route: {:#?}", routev6);
                 if routev6.header.destination_prefix_length == 0 {
-                    self.default_route_interfaces.insert(index);
+                    if let Some(gateway_ipaddr) = routev6.gateway() {
+                        self.gateways
+                            .entry(index)
+                            .or_default()
+                            .insert(gateway_ipaddr);
+                    }
                 }
             }
         }
     }
 
-    fn get_interface_flags(&self, index: u32, ifname: &str) -> io::Result<InterfaceFlags> {
+    fn get_interface_flags(&self, ifname: &str) -> io::Result<InterfaceFlags> {
         let mut req = ifreq::from_name(ifname)?;
 
         let sock = unsafe { socket(AF_INET as i32, SOCK_DGRAM, 0) };
@@ -141,7 +151,6 @@ impl PlatformSupportNetlink {
             is_loopback: (flags & IFF_LOOPBACK) != 0,
             is_running: (flags & IFF_RUNNING) != 0,
             is_point_to_point: (flags & IFF_POINTOPOINT) != 0,
-            has_default_route: self.default_route_interfaces.contains(&index),
         })
     }
 
@@ -253,7 +262,13 @@ impl PlatformSupportNetlink {
 
         // Ask for all the addresses we have
         let mut names = BTreeMap::<u32, String>::new();
-        let mut addresses = self.handle.as_ref().unwrap().address().get().execute();
+        let mut addresses = self
+            .handle
+            .as_ref()
+            .unwrap_or_log()
+            .address()
+            .get()
+            .execute();
         while let Some(msg) = addresses.try_next().await.map_err(|e| io_error_other!(e))? {
             // Have we seen this interface index yet?
             // Get the name from the index, cached, if we can
@@ -279,10 +294,17 @@ impl PlatformSupportNetlink {
             // Map the name to a NetworkInterface
             if !interfaces.contains_key(&ifname) {
                 // If we have no NetworkInterface yet, make one
-                let flags = self.get_interface_flags(msg.header.index, &ifname)?;
-                interfaces.insert(ifname.clone(), NetworkInterface::new(ifname.clone(), flags));
+                let flags = self.get_interface_flags(&ifname)?;
+                let mut net_intf = NetworkInterface::new(ifname.clone(), flags);
+                // Add gateways if we have them
+                if let Some(gateways) = self.gateways.get(&msg.header.index) {
+                    for gateway in gateways {
+                        net_intf.add_gateway(*gateway);
+                    }
+                }
+                interfaces.insert(ifname.clone(), net_intf);
             }
-            let intf = interfaces.get_mut(&ifname).unwrap();
+            let intf = interfaces.get_mut(&ifname).unwrap_or_log();
 
             // Process the address
             let intf_addr = match msg.header.family as u16 {
@@ -328,7 +350,7 @@ impl PlatformSupportNetlink {
 
         // Clean up connection
         drop(self.handle.take());
-        self.connection_jh.take().unwrap().abort().await;
+        self.connection_jh.take().unwrap_or_log().abort().await;
 
         out
     }

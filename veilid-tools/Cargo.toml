@@ -24,6 +24,8 @@ path = "src/bin/virtual_router/main.rs"
 required-features = ["virtual-router-bin"]
 
 [features]
+
+# Choice of executor
 default = ["rt-tokio"]
 rt-tokio = [
     "tokio",
@@ -33,6 +35,7 @@ rt-tokio = [
     "async_executors/tokio_tp",
     "async_executors/tokio_io",
     "async_executors/tokio_timer",
+    "hickory-resolver/tokio",
 ]
 rt-async-std = [
     "async-std",
@@ -45,12 +48,11 @@ rt-wasm-bindgen = [
     "ws_stream_wasm",
 ]
 
-veilid_tools_android_tests = ["dep:paranoid-android"]
-veilid_tools_ios_tests = ["dep:tracing", "dep:oslog", "dep:tracing-oslog"]
+# Enable tracing instead of log
 tracing = ["dep:tracing", "dep:tracing-subscriber", "tokio/tracing"]
-debug-locks = []
 
-virtual-network = []
+# Reserved for use by future components
+virtual-network = ["dep:postcard"]
 virtual-network-server = [
     "dep:async-tungstenite",
     "dep:indent",
@@ -68,6 +70,21 @@ virtual-router-bin = [
     "dep:bugsalot",
 ]
 
+# Testing
+test-util = []
+veilid_tools_android_tests = ["dep:paranoid-android", "test-util"]
+veilid_tools_ios_tests = [
+    "dep:tracing",
+    "dep:oslog",
+    "dep:tracing-oslog",
+    "test-util",
+]
+debug-locks = []
+debug-locks-detect = [] # This does not work yet, do not enable
+log-location-quiet = []
+panic-quiet = []
+
+
 [dependencies]
 tracing = { version = "0.1.41", features = [
     "log",
@@ -78,10 +95,8 @@ tracing-subscriber = { version = "0.3.19", features = [
     "time",
 ], optional = true }
 log = { version = "0.4.26" }
-eyre = "0.6.12"
-static_assertions = "1.1.0"
 serde = { version = "1.0.218", features = ["derive", "rc"] }
-postcard = { version = "1.1.1", features = ["use-std"] }
+postcard = { version = "1.1.1", features = ["use-std"], optional = true }
 cfg-if = "1.0.0"
 thiserror = "1.0.69"
 futures-util = { version = "0.3.31", default-features = false, features = [
@@ -93,12 +108,12 @@ async-lock = "3.4.0"
 once_cell = "1.20.3"
 stop-token = { version = "0.7.0", default-features = false }
 rand = "0.8.5"
-rand_core = "0.6.4"
 backtrace = "^0.3.71"
 fn_name = "0.1.0"
 range-set-blaze = "0.1.16"
 flume = { version = "0.11.1", features = ["async"] }
 imbl = { version = "3.0.0", features = ["serde"] }
+indent = "0.1.1"
 
 # Dependencies for native builds only
 # Linux, Windows, Mac, iOS, Android
@@ -121,8 +136,17 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 indent = { version = "0.1.1", optional = true }
 libc = "0.2.170"
 nix = { version = "0.27.1", features = ["user"] }
+hickory-resolver = { version = "0.25.2", default-features = false, features = [
+    "system-config",
+] }
 socket2 = { version = "0.5.8", features = ["all"] }
-tokio = { version = "1.43.0", features = ["full"], optional = true }
+tokio = { version = "1.43.0", features = [
+    "rt-multi-thread",
+    "net",
+    "time",
+    "sync",
+    "parking_lot",
+], optional = true }
 tokio-util = { version = "0.7.13", features = ["compat"], optional = true }
 tokio-stream = { version = "0.1.17", features = ["net"], optional = true }
 
@@ -137,12 +161,7 @@ rand_chacha = { version = "0.3.1", optional = true }
 # Dependencies for WASM builds only
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 js-sys = "0.3.83"
-wasm-bindgen = "0.2.106"
-wasm-bindgen-futures = "0.4.56"
-wasm-bindgen-derive = "0.3.0"
-
 async_executors = { version = "0.7.0", default-features = false }
-getrandom = { version = "0.2", features = ["js"] }
 ws_stream_wasm = { version = "0.7.4", optional = true }
 send_wrapper = { version = "0.6.0", features = ["futures"] }
 
@@ -155,21 +174,27 @@ netlink-packet-route = { version = "=0.17.1" }
 # Dependencies for Android
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21.1"
-jni-sys = "0.3.0"
-ndk = { version = "0.7.0" }
-ndk-glue = { version = "0.7.0", features = ["logger"] }
-lazy_static = "1.5.0"
 paranoid-android = { version = "0.2.2", optional = true }
 android_logger = "0.13.3"
 
 # Dependencies for Windows
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3.9", features = ["iptypes", "iphlpapi", "winerror"] }
+winapi = { version = "0.3.9", features = [
+    "iptypes",
+    "iphlpapi",
+    "winerror",
+    "errhandlingapi",
+] }
+windows = { version = "0.51.1", features = [
+    "Win32_NetworkManagement_Dns",
+    "Win32_Foundation",
+] }
+# windows-permissions = "0.2.4"
 
 # Dependencies for iOS
 [target.'cfg(target_os = "ios")'.dependencies]
 oslog = { version = "0.2.0", optional = true }
-tracing-oslog = { version = "0.1.2", optional = true }
+tracing-oslog = { version = "0.3.0", optional = true }
 
 # Dependenices for all Unix (Linux, Android, MacOS, iOS)
 [target.'cfg(unix)'.dependencies]
@@ -178,25 +203,15 @@ ifstructs = "0.1.1"
 ### DEV DEPENDENCIES
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
-simplelog = { version = "0.12.2", features = ["test"] }
-serial_test = "2.0.0"
+env_logger = "0.11.8"
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
-serial_test = { version = "2.0.0", default-features = false, features = [
-    "async",
-] }
 console_error_panic_hook = "0.1.7"
 wasm-bindgen-test = "0.3.56"
 wasm-logger = "0.2.0"
-veilid-tracing-wasm = "^0"
+veilid-tracing-wasm = "=0.1.0"
 
 ### BUILD OPTIONS
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O"]
-
-[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
-dwarf-debug-info = true
 
 [package.metadata.ios]
 build_targets = [

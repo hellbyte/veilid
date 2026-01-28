@@ -19,3 +19,38 @@ pub const CONNECTIVITY_CAPABILITIES: &[VeilidCapability] = &[
     VEILID_CAPABILITY_ROUTE,
     VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
 ];
+
+cfg_if! {
+    if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
+        pub const PUBLIC_INTERNET_CAPABILITIES: &[VeilidCapability] = &[
+            VEILID_CAPABILITY_ROUTE,
+            #[cfg(feature = "unstable-tunnels")]
+            VEILID_CAPABILITY_TUNNEL,
+            VEILID_CAPABILITY_SIGNAL,
+            VEILID_CAPABILITY_DHT,
+            VEILID_CAPABILITY_APPMESSAGE,
+            #[cfg(feature = "unstable-blockstore")]
+            VEILID_CAPABILITY_BLOCKSTORE,
+        ];
+
+        pub const LOCAL_NETWORK_CAPABILITIES: &[VeilidCapability] = &[VEILID_CAPABILITY_APPMESSAGE];
+    } else {
+        pub const PUBLIC_INTERNET_CAPABILITIES: &[VeilidCapability] = &[
+            VEILID_CAPABILITY_ROUTE,
+            #[cfg(feature = "unstable-tunnels")]
+            VEILID_CAPABILITY_TUNNEL,
+            VEILID_CAPABILITY_SIGNAL,
+            VEILID_CAPABILITY_RELAY,
+            VEILID_CAPABILITY_VALIDATE_DIAL_INFO,
+            VEILID_CAPABILITY_DHT,
+            VEILID_CAPABILITY_APPMESSAGE,
+            #[cfg(feature = "unstable-blockstore")]
+            VEILID_CAPABILITY_BLOCKSTORE,
+        ];
+
+        pub const LOCAL_NETWORK_CAPABILITIES: &[VeilidCapability] =
+            &[VEILID_CAPABILITY_RELAY, VEILID_CAPABILITY_APPMESSAGE];
+    }
+}
+
+pub const MAX_CAPABILITIES: usize = 64;

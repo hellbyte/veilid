@@ -20,15 +20,15 @@ mod schema;
 mod set_value;
 mod storage_manager_locks;
 mod tasks;
-#[doc(hidden)]
-pub mod tests;
 mod transaction;
 mod transaction_begin;
 mod transaction_command;
 mod types;
 mod watch_value;
 
-use crate::attachment_manager::TickEvent;
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests_storage_manager;
 
 use super::*;
 
@@ -241,7 +241,7 @@ impl StorageManager {
         // Generate keys to use for signing anonymous watch and transaction operations
         let mut anonymous_signing_keys = KeyPairGroup::new();
         for ck in VALID_CRYPTO_KINDS {
-            let vcrypto = crypto.get(ck).unwrap();
+            let vcrypto = crypto.get(ck).unwrap_or_log();
             let kp = vcrypto.generate_keypair();
             anonymous_signing_keys.add(kp);
         }
@@ -296,7 +296,7 @@ impl StorageManager {
         this
     }
 
-    fn local_limits_from_config(c: Arc<VeilidConfig>) -> RecordStoreLimits {
+    pub(crate) fn local_limits_from_config(c: Arc<VeilidConfig>) -> RecordStoreLimits {
         RecordStoreLimits {
             subkey_cache_size: c.network.dht.local_subkey_cache_size as usize,
             max_subkey_size: MAX_SUBKEY_SIZE,
@@ -319,7 +319,7 @@ impl StorageManager {
         }
     }
 
-    fn remote_limits_from_config(c: Arc<VeilidConfig>) -> RecordStoreLimits {
+    pub(crate) fn remote_limits_from_config(c: Arc<VeilidConfig>) -> RecordStoreLimits {
         RecordStoreLimits {
             subkey_cache_size: c.network.dht.remote_subkey_cache_size as usize,
             max_subkey_size: MAX_SUBKEY_SIZE,
@@ -343,7 +343,19 @@ impl StorageManager {
         }
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new()
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("stor", ["#common"]).unwrap(),
+            )
+            .with_facility(VeilidComponentLogFacility::try_new("stor::record_index").unwrap())
+            .with_facility(VeilidComponentLogFacility::try_new_with_tags("dht", ["#dht"]).unwrap())
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("watch", ["#dht"]).unwrap(),
+            )
+    }
+
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     async fn init_async(&self) -> EyreResult<()> {
         let guard = self.startup_lock.startup()?;
 
@@ -377,7 +389,11 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
+    #[allow(clippy::unused_async)]
     async fn post_init_async(&self) -> EyreResult<()> {
         // Register event handlers
         let peer_info_change_subscription =
@@ -401,7 +417,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "tstore", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "tstore", skip_all)
+    )]
     async fn pre_terminate_async(&self) {
         // Stop background operations
         {
@@ -418,7 +437,7 @@ impl StorageManager {
         self.cancel_tasks().await;
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all))]
     async fn terminate_async(&self) {
         veilid_log!(self debug "starting storage manager shutdown");
 
@@ -427,7 +446,7 @@ impl StorageManager {
             .startup_lock
             .shutdown()
             .await
-            .expect("should be started up");
+            .expect_or_log("should be started up");
 
         // Stop deferred result processor
         self.background_operation_processor.terminate().await;
@@ -442,10 +461,14 @@ impl StorageManager {
 
         // Final flush on record stores
         if let Some(local_record_store) = opt_local_record_store {
-            local_record_store.flush().await;
+            if let Err(e) = local_record_store.flush().await {
+                veilid_log!(self error "Error flushing local record store during storage manager shutdown: {}", e);
+            }
         }
         if let Some(remote_record_store) = opt_remote_record_store {
-            remote_record_store.flush().await;
+            if let Err(e) = remote_record_store.flush().await {
+                veilid_log!(self error "Error flushing remote record store during storage manager shutdown: {}", e);
+            }
         }
 
         // Save metadata
@@ -612,7 +635,10 @@ impl StorageManager {
     }
 
     // Send a value change up through the callback
-    #[instrument(level = "trace", target = "stor", skip(self, value))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self, value))
+    )]
     fn update_callback_value_change(
         &self,
         record_key: RecordKey,
@@ -629,7 +655,10 @@ impl StorageManager {
         })));
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     fn check_fanout_finished_without_consensus(
         &self,
         opaque_record_key: &OpaqueRecordKey,
@@ -674,7 +703,10 @@ impl StorageManager {
 
     ////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     fn process_fanout_results<I: IntoIterator<Item = (ValueSubkeyRangeSet, FanoutResult)>>(
         &self,
         opaque_record_key: OpaqueRecordKey,
@@ -733,7 +765,10 @@ impl StorageManager {
         Ok(existed)
     }
 
-    #[instrument(level = "trace", target = "stor", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all)
+    )]
     fn process_deferred_results<T: Send + 'static>(
         &self,
         receiver: flume::Receiver<T>,

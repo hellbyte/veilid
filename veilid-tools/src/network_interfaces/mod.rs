@@ -206,7 +206,6 @@ pub struct InterfaceFlags {
     pub is_loopback: bool,
     pub is_running: bool,
     pub is_point_to_point: bool,
-    pub has_default_route: bool,
 }
 
 /// Some of the flags associated with an address.
@@ -367,22 +366,23 @@ impl InterfaceAddress {
 pub struct NetworkInterface {
     pub name: String,
     pub flags: InterfaceFlags,
+    pub gateways: Vec<IpAddr>,
     pub addrs: Vec<InterfaceAddress>,
 }
 
 impl fmt::Debug for NetworkInterface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NetworkInterface")
-            .field("name", &self.name)
+        let alt = f.alternate();
+        let mut ds = f.debug_struct("NetworkInterface");
+        ds.field("name", &self.name)
             .field("flags", &self.flags)
-            .field("addrs", &self.addrs)
-            .finish()?;
-        if f.alternate() {
-            writeln!(f)?;
-            writeln!(f, "// primary_ipv4: {:?}", self.primary_ipv4())?;
-            writeln!(f, "// primary_ipv6: {:?}", self.primary_ipv6())?;
+            .field("gateways", &self.gateways)
+            .field("addrs", &self.addrs);
+        if alt {
+            ds.field("// primary_ipv4", &self.primary_ipv4());
+            ds.field("// primary_ipv6", &self.primary_ipv6());
         }
-        Ok(())
+        ds.finish()
     }
 }
 impl NetworkInterface {
@@ -391,6 +391,7 @@ impl NetworkInterface {
         Self {
             name,
             flags,
+            gateways: Vec::new(),
             addrs: Vec::new(),
         }
     }
@@ -413,9 +414,26 @@ impl NetworkInterface {
         self.flags.is_running
     }
 
+    pub fn add_address(&mut self, addr: InterfaceAddress) {
+        self.addrs.push(addr);
+        self.addrs.sort();
+        self.addrs.dedup();
+    }
+
     #[must_use]
-    pub fn has_default_route(&self) -> bool {
-        self.flags.has_default_route
+    pub fn addresses(&self) -> &[InterfaceAddress] {
+        &self.addrs
+    }
+
+    pub fn add_gateway(&mut self, gateway: IpAddr) {
+        self.gateways.push(gateway);
+        self.gateways.sort();
+        self.gateways.dedup();
+    }
+
+    #[must_use]
+    pub fn gateways(&self) -> &[IpAddr] {
+        &self.gateways
     }
 
     #[must_use]
@@ -441,10 +459,16 @@ impl NetworkInterface {
     }
 }
 
+#[derive(Clone, Default, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub struct NetworkInterfaceAddressState {
+    pub gateway_addresses: Vec<IpAddr>,
+    pub interface_addresses: Vec<IfAddr>,
+}
+
 pub struct NetworkInterfacesInner {
     valid: bool,
     interfaces: BTreeMap<String, NetworkInterface>,
-    interface_address_cache: Arc<Vec<IfAddr>>,
+    interface_address_state_cache: Arc<NetworkInterfaceAddressState>,
 }
 
 #[derive(Clone)]
@@ -463,8 +487,8 @@ impl fmt::Debug for NetworkInterfaces {
             writeln!(f)?;
             writeln!(
                 f,
-                "// stable_addresses: {:?}",
-                inner.interface_address_cache
+                "// interface_address_state_cache: {:?}",
+                inner.interface_address_state_cache
             )?;
         }
         Ok(())
@@ -484,7 +508,7 @@ impl NetworkInterfaces {
             inner: Arc::new(Mutex::new(NetworkInterfacesInner {
                 valid: false,
                 interfaces: BTreeMap::new(),
-                interface_address_cache: Arc::new(Vec::new()),
+                interface_address_state_cache: Arc::new(NetworkInterfaceAddressState::default()),
             })),
         }
     }
@@ -498,7 +522,7 @@ impl NetworkInterfaces {
         let mut inner = self.inner.lock();
 
         inner.interfaces.clear();
-        inner.interface_address_cache = Arc::new(Vec::new());
+        inner.interface_address_state_cache = Arc::new(NetworkInterfaceAddressState::default());
         inner.valid = false;
     }
     // returns false if refresh had no changes, true if changes were present
@@ -518,13 +542,13 @@ impl NetworkInterfaces {
 
         if last_interfaces != inner.interfaces {
             // get last address cache
-            let old_interface_addresses = inner.interface_address_cache.clone();
+            let old_interface_address_state = inner.interface_address_state_cache.clone();
 
             // redo the address cache
-            Self::cache_interface_addresses(&mut inner);
+            Self::cache_interface_address_state(&mut inner);
 
             // See if our best addresses have changed
-            if old_interface_addresses != inner.interface_address_cache {
+            if old_interface_address_state != inner.interface_address_state_cache {
                 return Ok(true);
             }
         }
@@ -539,45 +563,32 @@ impl NetworkInterfaces {
     }
 
     #[must_use]
-    pub fn interface_addresses(&self) -> Arc<Vec<IfAddr>> {
+    pub fn interface_address_state(&self) -> Arc<NetworkInterfaceAddressState> {
         let inner = self.inner.lock();
-        inner.interface_address_cache.clone()
+        inner.interface_address_state_cache.clone()
     }
 
     /////////////////////////////////////////////
 
-    fn cache_interface_addresses(inner: &mut NetworkInterfacesInner) {
+    fn cache_interface_address_state(inner: &mut NetworkInterfacesInner) {
         // Reduce interfaces to their best routable ip addresses
         let mut intf_addrs = Vec::new();
+        let mut gateway_addresses = Vec::new();
         for intf in inner.interfaces.values() {
-            if !intf.is_running() ||
-            // || !intf.has_default_route()
-            intf.is_loopback()
-            // || intf.is_point_to_point() // xxx: iOS cellular is 'point-to-point'
-            {
+            if !intf.is_running() || intf.is_loopback() {
                 continue;
             }
 
-            for addr in &intf.addrs {
+            for addr in intf.addresses() {
                 if addr.is_temporary() {
                     continue;
                 }
-
-                intf_addrs.push(addr);
+                intf_addrs.push(addr.clone());
             }
 
-            // if let Some(pipv4) = intf.primary_ipv4() {
-            //     // Skip temporary addresses because they're going to change
-            //     if !pipv4.is_temporary() {
-            //         intf_addrs.push(pipv4);
-            //     }
-            // }
-            // if let Some(pipv6) = intf.primary_ipv6() {
-            //     // Skip temporary addresses because they're going to change
-            //     if !pipv6.is_temporary() {
-            //         intf_addrs.push(pipv6);
-            //     }
-            // }
+            for gateway in intf.gateways() {
+                gateway_addresses.push(*gateway);
+            }
         }
 
         // Sort one more time to get the best interface addresses overall
@@ -589,7 +600,13 @@ impl NetworkInterfaces {
         interface_addresses.sort();
         interface_addresses.dedup();
 
+        gateway_addresses.sort();
+        gateway_addresses.dedup();
+
         // Now export just the addresses
-        inner.interface_address_cache = Arc::new(interface_addresses);
+        inner.interface_address_state_cache = Arc::new(NetworkInterfaceAddressState {
+            gateway_addresses,
+            interface_addresses,
+        });
     }
 }

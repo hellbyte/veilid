@@ -90,7 +90,11 @@ where
     async fn measure_debug(self, limit: TimestampDuration, callback: D) -> T {
         let start = Timestamp::now_non_decreasing();
 
-        let res = select(Box::pin(self), Box::pin(sleep(limit.millis_u32().unwrap()))).await;
+        let res = select(
+            Box::pin(self),
+            Box::pin(sleep(limit.millis_u32().unwrap_or_log())),
+        )
+        .await;
         let out = match res {
             Either::Left((out, sleep_fut)) => {
                 drop(sleep_fut);

@@ -42,7 +42,10 @@ impl StorageManager {
     /// or a transaction can not be performed at this time, this will fail.
     /// Returns a transaction handle if the transaction was created
     /// Returns Err(VeilidAPIError::TryAgain) if the transaction could not be created
-    #[instrument(level = "trace", target = "stor", skip(self), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self), ret)
+    )]
     pub async fn begin_transaction(
         &self,
         record_keys: Vec<RecordKey>,
@@ -123,7 +126,7 @@ impl StorageManager {
                     .unwrap_or_else(|| {
                         self.anonymous_signing_keys
                             .get(opaque_record_key.kind())
-                            .unwrap()
+                            .unwrap_or_log()
                     });
 
                 // Get safety selection for this record
@@ -295,7 +298,10 @@ impl StorageManager {
     /// or a transaction can not be performed at this time, this will fail.
     /// Returns Err(VeilidAPIError::TryAgain) if the transaction could not be finalized at this time
     /// Returns Err(_) if the transaction finalize failed and resulted in rollback or drop
-    #[instrument(level = "trace", target = "stor", skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self))
+    )]
     pub async fn end_and_commit_transaction(
         &self,
         transaction_handle: OutboundTransactionHandle,
@@ -336,7 +342,10 @@ impl StorageManager {
     /// or a transaction can not be performed at this time, this will fail.
     /// Returns Err(VeilidAPIError::TryAgain) if the transaction could not be ended at this time
     /// Returns Err(_) if the transaction end failed and resulted in rollback or drop
-    #[instrument(level = "trace", target = "stor", skip(self, records_lock))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self, records_lock))
+    )]
     pub(super) async fn end_transaction_locked(
         &self,
         records_lock: &StorageManagerRecordsLockGuard,
@@ -418,7 +427,10 @@ impl StorageManager {
     /// or a transaction can not be performed at this time, this will fail.
     /// Returns Err(VeilidAPIError::TryAgain) if the transaction could not be committed at this time
     /// Returns Err(_) if the transaction commit failed and resulted in rollback or drop
-    #[instrument(level = "trace", target = "stor", skip(self, records_lock))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self, records_lock))
+    )]
     pub(super) async fn commit_transaction_locked(
         &self,
         records_lock: &StorageManagerRecordsLockGuard,
@@ -497,7 +509,10 @@ impl StorageManager {
 
     /// Removes the transaction from the transaction manager
     /// and flushes its contents to the storage manager
-    #[instrument(level = "trace", target = "dht", skip(self, records_lock))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self, records_lock))
+    )]
     pub(super) async fn flush_committed_transaction_locked(
         &self,
         records_lock: &StorageManagerRecordsLockGuard,
@@ -548,7 +563,10 @@ impl StorageManager {
     /// If an error is returned, the transaction is left in a failed state and can either
     /// * be dropped/ignored and the remote transaction will time out
     /// * another rollback attempt can be made, which may result in a more polite termination of the remote transaction
-    #[instrument(level = "trace", target = "dht", skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self))
+    )]
     pub async fn rollback_transaction(
         &self,
         transaction_handle: OutboundTransactionHandle,
@@ -589,7 +607,10 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "dht", skip(self, _records_lock))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self, _records_lock))
+    )]
     pub(super) async fn rollback_transaction_locked(
         &self,
         _records_lock: &StorageManagerRecordsLockGuard,
@@ -660,7 +681,10 @@ impl StorageManager {
 
     /// Get a value within a transaction
     /// Does not use fanout
-    #[instrument(level = "trace", target = "dht", skip(self), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self), ret)
+    )]
     pub async fn transaction_get(
         &self,
         transaction_handle: OutboundTransactionHandle,
@@ -755,7 +779,7 @@ impl StorageManager {
 
     /// Set a value within a transaction
     /// Does not use fanout
-    #[instrument(level = "trace", target = "dht", skip(self, data), fields(data.len = data.len()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "dht", skip(self, data), fields(data.len = data.len()), ret))]
     pub async fn transaction_set(
         &self,
         transaction_handle: OutboundTransactionHandle,
@@ -923,8 +947,11 @@ impl StorageManager {
     /// Inspect a record within a transaction, does not perform any network
     /// activity, as the transaction state keeps all of the required information
     /// after the begin.
-    #[instrument(level = "trace", target = "dht", skip(self), ret)]
-    pub async fn transaction_inspect(
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self), ret)
+    )]
+    pub fn transaction_inspect(
         &self,
         transaction_handle: OutboundTransactionHandle,
         record_key: RecordKey,
@@ -1199,7 +1226,10 @@ impl StorageManager {
     }
 
     /// Schedule a transaction to be dropped
-    #[instrument(level = "trace", target = "dht", skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip(self))
+    )]
     pub fn drop_transaction_sync(&self, transaction_handle: OutboundTransactionHandle) {
         let registry = self.registry();
         self.background_operation_processor.add_future(async move {

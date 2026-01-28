@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use crate::command_processor::*;
 use crate::cursive_ui::CursiveUI;
 use crate::settings::*;
@@ -8,6 +6,9 @@ use crate::ui::*;
 
 use console::{style, Term};
 use flexi_logger::writers::LogWriter;
+use flexi_logger::DeferredNow;
+use futures::io::AsyncWriteExt as _;
+use indent::indent_by;
 use rustyline_async::SharedWriter;
 use rustyline_async::{Readline, ReadlineError, ReadlineEvent};
 use stop_token::future::FutureExt as StopTokenFutureExt;
@@ -74,7 +75,7 @@ impl InteractiveUI {
             let inner = self.inner.lock();
             (
                 inner.connection_state_receiver.clone(),
-                inner.done.as_ref().unwrap().token(),
+                inner.done.as_ref().unwrap_or_log().token(),
             )
         };
 
@@ -88,7 +89,7 @@ impl InteractiveUI {
         let mut stdout2 = stdout.clone();
         let connection_state_jh = spawn("connection state handler", async move {
             loop {
-                match connection_state_receiver
+                let res = match connection_state_receiver
                     .recv_async()
                     .timeout_at(done2.clone())
                     .await
@@ -98,26 +99,34 @@ impl InteractiveUI {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|n| display_ts(n.as_micros() as u64))
                             .unwrap_or_else(|_| "???".to_string());
-                        let _ = writeln!(stdout2, "Connected TCP: {} @ {}", sa, tstr);
+
+                        stdout2
+                            .write(format!("\rConnected TCP: {} @ {}\n", sa, tstr).as_bytes())
+                            .await
+                            .map(drop)
                     }
                     Ok(Ok(ConnectionState::ConnectedIPC(pb, st))) => {
                         let tstr = st
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|n| display_ts(n.as_micros() as u64))
                             .unwrap_or_else(|_| "???".to_string());
-                        let _ = writeln!(
-                            stdout2,
-                            "Connected IPC: {} @ {}",
-                            pb.to_string_lossy(),
-                            tstr
-                        );
+                        stdout2
+                            .write(
+                                format!("\rConnected IPC: {} @ {}\n", pb.to_string_lossy(), tstr)
+                                    .as_bytes(),
+                            )
+                            .await
+                            .map(drop)
                     }
                     Ok(Ok(ConnectionState::RetryingTCP(sa, st))) => {
                         let tstr = st
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|n| display_ts(n.as_micros() as u64))
                             .unwrap_or_else(|_| "???".to_string());
-                        let _ = writeln!(stdout2, "Retrying TCP: {} @ {}", sa, tstr);
+                        stdout2
+                            .write(format!("\rRetrying TCP: {} @ {}\n", sa, tstr).as_bytes())
+                            .await
+                            .map(drop)
                     }
 
                     Ok(Ok(ConnectionState::RetryingIPC(pb, st))) => {
@@ -125,27 +134,34 @@ impl InteractiveUI {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|n| display_ts(n.as_micros() as u64))
                             .unwrap_or_else(|_| "???".to_string());
-                        let _ =
-                            writeln!(stdout2, "Retrying IPC: {} @ {}", pb.to_string_lossy(), tstr);
+                        stdout2
+                            .write(
+                                format!("Retrying IPC: {} @ {}\n", pb.to_string_lossy(), tstr)
+                                    .as_bytes(),
+                            )
+                            .await
+                            .map(drop)
                     }
                     Ok(Ok(ConnectionState::Disconnected)) => {
-                        let _ = writeln!(stdout2, "Disconnected");
+                        stdout2.write("Disconnected\n".as_bytes()).await.map(drop)
                     }
-                    Ok(Err(e)) => {
-                        eprintln!("Error: {:?}", e);
-                        self2.inner.lock().done.take();
-                        break;
-                    }
+                    Ok(Err(e)) => Err(std::io::Error::other(e)),
                     Err(_) => {
                         break;
                     }
+                };
+
+                if let Err(e) = res {
+                    eprintln!("Error: {:?}", e);
+                    self2.inner.lock().done.take();
+                    break;
                 }
             }
         });
 
         loop {
             if let Some(e) = self.inner.lock().error.clone() {
-                println!("Error: {:?}", e);
+                eprintln!("Error: {:?}", e);
                 break;
             }
 
@@ -159,13 +175,13 @@ impl InteractiveUI {
 
                     if line == "clear" {
                         if let Err(e) = readline.clear() {
-                            println!("Error: {:?}", e);
+                            eprintln!("Error: {:?}", e);
                         }
                     } else if line == "log error" {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api error",
+                                "change_log_level api #enabled=error",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -176,7 +192,7 @@ impl InteractiveUI {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api warn",
+                                "change_log_level api #enabled=warn",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -187,7 +203,7 @@ impl InteractiveUI {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api info",
+                                "change_log_level api #enabled=info",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -198,7 +214,7 @@ impl InteractiveUI {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api debug",
+                                "change_log_level api #enabled=debug",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -212,7 +228,7 @@ impl InteractiveUI {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api trace",
+                                "change_log_level api #enabled=trace",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -223,7 +239,7 @@ impl InteractiveUI {
                         let opt_cmdproc = self.inner.lock().cmdproc.clone();
                         if let Some(cmdproc) = opt_cmdproc {
                             if let Err(e) = cmdproc.run_command(
-                                "change_log_level api off",
+                                "change_log_level api #enabled=off",
                                 UICallback::Interactive(Box::new(|| {})),
                             ) {
                                 eprintln!("Error: {:?}", e);
@@ -236,18 +252,17 @@ impl InteractiveUI {
                         self.inner.lock().log_enabled = true;
                     } else if !line.is_empty() {
                         if line == "help" {
-                            let _ = writeln!(
-                                stdout,
-                                r#"
+                            let _ = stdout.write(
+                                br#"
 Interactive Mode Commands:
     help - Display this help
     clear - Clear the screen
-    log [level]      - Set the client api log level for the node to one of: error,warn,info,debug,trace,off
+    log [level]      - Set the api layer log level for currently enabled facility tag to one of: error,warn,info,debug,trace,off
         hide|disable - Turn off viewing the log without changing the log level for the node
         show|enable  - Turn on viewing the log without changing the log level for the node
                      - With no option, 'log' turns on viewing the log and sets the level to 'debug'
 "#
-                            );
+                            ).await;
                         }
 
                         let cmdproc = self.inner.lock().cmdproc.clone();
@@ -258,13 +273,15 @@ Interactive Mode Commands:
                                     //let mut stdout = stdout.clone();
                                     move || {
                                         // if let Err(e) = writeln!(stdout) {
-                                        //     println!("Error: {:?}", e);
+                                        //     eprintln!("Error: {:?}", e);
                                         // }
                                     }
                                 })),
                             ) {
-                                if let Err(e) = writeln!(stdout, "Error: {}", e) {
-                                    println!("Error: {:?}", e);
+                                if let Err(e) =
+                                    stdout.write(format!("Error: {}", e).as_bytes()).await
+                                {
+                                    eprintln!("Error: {:?}", e);
                                     break;
                                 }
                             }
@@ -279,7 +296,7 @@ Interactive Mode Commands:
                 }
                 Ok(Err(ReadlineError::Closed)) => {}
                 Ok(Err(ReadlineError::IO(e))) => {
-                    println!("IO Error: {:?}", e);
+                    eprintln!("IO Error: {:?}", e);
                     break;
                 }
                 Err(_) => {
@@ -325,10 +342,12 @@ impl UISender for InteractiveUISender {
         })
     }
     fn as_logwriter(&self) -> Option<Box<dyn LogWriter>> {
-        None
+        Some(Box::new(self.clone()) as Box<dyn LogWriter>)
     }
 
     fn display_string_dialog(&self, title: &str, text: &str, close_cb: UICallback) {
+        use std::io::Write;
+
         let Some(mut stdout) = self.inner.lock().stdout.clone() else {
             return;
         };
@@ -377,6 +396,8 @@ impl UISender for InteractiveUISender {
     }
 
     fn add_node_event(&self, _log_color: Level, event: &str) {
+        use std::io::Write;
+
         let Some(mut stdout) = self.inner.lock().stdout.clone() else {
             return;
         };
@@ -385,6 +406,8 @@ impl UISender for InteractiveUISender {
         }
     }
     fn add_log_event(&self, log_color: Level, event: &str) {
+        use std::io::Write;
+
         let (enable_color, mut stdout) = {
             let inner = self.inner.lock();
             if !inner.log_enabled {
@@ -417,5 +440,47 @@ impl UISender for InteractiveUISender {
         } else {
             println!("{}", log_line);
         }
+    }
+}
+
+impl LogWriter for InteractiveUISender {
+    fn write(&self, _now: &mut DeferredNow, record: &Record) -> std::io::Result<()> {
+        let mut lines = String::new();
+        let mut indent = 0;
+
+        let ts_prefix = format!(
+            "[veilid-cli] {} ",
+            CursiveUI::cli_ts(CursiveUI::get_start_time()),
+        );
+        indent += ts_prefix.len();
+        lines += &ts_prefix;
+
+        let filestr = format!(
+            "{}:{} ",
+            record.file().unwrap_or("(unnamed)"),
+            record.line().unwrap_or(0),
+        );
+        indent += filestr.len();
+        lines += &filestr;
+
+        let levstr = format!("{}: ", record.level());
+        indent += levstr.len();
+        lines += &levstr;
+
+        let args = format!("{}", &record.args());
+        lines += &indent_by(indent, args);
+
+        print!("{}\r\n", lines);
+
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        // we are not buffering
+        Ok(())
+    }
+
+    fn max_log_level(&self) -> log::LevelFilter {
+        log::LevelFilter::max()
     }
 }

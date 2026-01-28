@@ -60,22 +60,25 @@ impl MachineState {
         }
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner))
+    )]
     pub fn release(mut self, gsm_inner: &mut GlobalStateManagerInner) {
         self.release_all_interfaces(gsm_inner)
-            .expect("must succeed");
+            .expect_or_log("must succeed");
 
         if let MachineOrigin::Template(generating_template) = self.immutable.origin {
             let mut template_state = gsm_inner
                 .template_states()
                 .get_state(generating_template)
-                .expect("must exist");
+                .expect_or_log("must exist");
             template_state.on_machine_released(self.id());
             gsm_inner.template_states_mut().set_state(template_state);
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn set_disable_capabilities(&mut self, disable_capabilities: Vec<String>) {
         self.fields = Arc::new(MachineStateFields {
             disable_capabilities: disable_capabilities.into(),
@@ -83,7 +86,7 @@ impl MachineState {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self)))]
     pub fn set_bootstrap(&mut self, bootstrap: bool) {
         self.fields = Arc::new(MachineStateFields {
             bootstrap,
@@ -102,7 +105,7 @@ impl MachineState {
         }
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn allocate_interface(
         &mut self,
         interface_name: Option<String>,
@@ -120,7 +123,8 @@ impl MachineState {
             is_loopback: false,
             is_running: true,
             is_point_to_point: false,
-            has_default_route: true,
+            has_default_route_v4: true,
+            has_default_route_v6: true,
         });
         let interfaces = self.fields.interfaces.update(
             interface_key.clone(),
@@ -148,7 +152,10 @@ impl MachineState {
         intfs
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_address_ipv4(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -215,7 +222,10 @@ impl MachineState {
         Ok(ifv4_addr)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn allocate_address_ipv6(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -281,7 +291,10 @@ impl MachineState {
         Ok(ifv6_addr)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn attach_network(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -317,7 +330,10 @@ impl MachineState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn detach_network(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -361,7 +377,10 @@ impl MachineState {
         Ok(out)
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn release_address(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -424,7 +443,10 @@ impl MachineState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn release_all_addresses(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -455,7 +477,10 @@ impl MachineState {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, gsm_inner), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, gsm_inner), err)
+    )]
     pub fn release_all_interfaces(
         &mut self,
         gsm_inner: &mut GlobalStateManagerInner,

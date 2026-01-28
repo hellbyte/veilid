@@ -194,7 +194,6 @@ impl ReceiptManager {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all)]
     fn perform_callback(
         evt: ReceiptEvent,
         record_mut: &mut ReceiptRecord,
@@ -218,7 +217,10 @@ impl ReceiptManager {
         }
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn timeout_task_routine(self, now: Timestamp, stop_token: StopToken) {
         // Go through all receipts and build a list of expired nonces
         let mut new_next_oldest_ts: Option<Timestamp> = None;
@@ -232,7 +234,7 @@ impl ReceiptManager {
                     // Expire this receipt
                     expired_nonces.push(k.clone());
                 } else if new_next_oldest_ts.is_none()
-                    || receipt_inner.expiration < new_next_oldest_ts.unwrap()
+                    || receipt_inner.expiration < new_next_oldest_ts.unwrap_or_log()
                 {
                     // Mark the next oldest timestamp we would need to take action on as we go through everything
                     new_next_oldest_ts = Some(receipt_inner.expiration);
@@ -243,7 +245,10 @@ impl ReceiptManager {
             }
             // Now remove the expired receipts
             for e in expired_nonces {
-                let expired_record = inner.records_by_nonce.remove(&e).expect("key should exist");
+                let expired_record = inner
+                    .records_by_nonce
+                    .remove(&e)
+                    .expect_or_log("key should exist");
                 expired_records.push(expired_record);
             }
             // Update the next oldest timestamp
@@ -267,12 +272,16 @@ impl ReceiptManager {
         }
     }
 
-    #[instrument(
-        level = "trace",
-        target = "receipt",
-        name = "ReceiptManager::tick",
-        skip_all,
-        err
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(
+            level = "trace",
+            target = "receipt",
+            name = "ReceiptManager::tick",
+            skip_all,
+            err,
+            fields(__VEILID_LOG_KEY = self.log_key())
+        )
     )]
     pub async fn tick(&self) -> EyreResult<()> {
         let Ok(_guard) = self.unlocked_inner.startup_lock.enter() else {
@@ -337,7 +346,10 @@ impl ReceiptManager {
         veilid_log!(self debug "finished receipt manager shutdown");
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn record_receipt(
         &self,
         receipt: Receipt,
@@ -346,7 +358,7 @@ impl ReceiptManager {
         callback: impl ReceiptCallback,
     ) {
         let Ok(_guard) = self.unlocked_inner.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'record_receipt' due to not started up");
             return;
         };
         let receipt_nonce = receipt.get_nonce();
@@ -363,7 +375,10 @@ impl ReceiptManager {
         Self::update_next_oldest_timestamp(&mut inner);
     }
 
-    #[instrument(level = "trace", target = "receipt", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "receipt", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn record_single_shot_receipt(
         &self,
         receipt: Receipt,
@@ -371,7 +386,7 @@ impl ReceiptManager {
         eventual: ReceiptSingleShotType,
     ) {
         let Ok(_guard) = self.unlocked_inner.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'record_single_shot_receipt' due to not started up");
             return;
         };
         let receipt_nonce = receipt.get_nonce();
@@ -392,7 +407,7 @@ impl ReceiptManager {
         for v in inner.records_by_nonce.values() {
             let receipt_inner = v.lock();
             if new_next_oldest_ts.is_none()
-                || receipt_inner.expiration < new_next_oldest_ts.unwrap()
+                || receipt_inner.expiration < new_next_oldest_ts.unwrap_or_log()
             {
                 // Mark the next oldest timestamp we would need to take action on as we go through everything
                 new_next_oldest_ts = Some(receipt_inner.expiration);

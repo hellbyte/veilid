@@ -1,8 +1,4 @@
-//! Test suite utilities for non-wasm platforms
-#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::*;
-
-///////////////////////////////////////////////////////////////////////////
+use super::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "rt-async-std")] {
@@ -11,10 +7,16 @@ cfg_if::cfg_if! {
             async_std::task::block_on(f)
         }
     } else if #[cfg(feature = "rt-tokio")] {
+        static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to build Tokio runtime")
+        });
+
         #[allow(dead_code)]
         pub fn block_on<F: Future<Output = T>, T>(f: F) -> T {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(f)
+            RUNTIME.block_on(f)
         }
     } else {
         compile_error!("needs executor implementation");
@@ -22,11 +24,20 @@ cfg_if::cfg_if! {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+
 cfg_if! {
     if #[cfg(test)] {
-        use serial_test::serial;
         use std::sync::Once;
         use paste::paste;
+
+        // Utility function to wait for a debugger to attach
+        #[allow(dead_code)]
+        pub fn wait_for_debugger() {
+            eprintln!("Waiting for debugger: pid={}", std::process::id());
+            use bugsalot::debugger;
+            debugger::wait_until_attached(None).expect("state() not implemented on this platform");
+            eprintln!("Debugger attached");
+        }
 
         macro_rules! run_test {
             // Nearly all test runner code is cookie cutter, and copy-pasting makes it too easy to make a typo.
@@ -35,9 +46,8 @@ cfg_if! {
             (module $parent_module:ident $test_module:ident) => {
                 paste! {
                     #[test]
-                    #[serial]
                     fn [<run_ $parent_module _ $test_module>]() {
-                        setup();
+                        native_setup();
                         block_on(async {
                             $parent_module::tests::$test_module::test_all().await;
                         })
@@ -49,11 +59,10 @@ cfg_if! {
             (component $component:ident) => {
                 paste! {
                     #[test]
-                    #[serial]
                     fn [<run_tests_ $component>]() {
-                        setup();
+                        native_setup();
                         block_on(async {
-                            $component::tests::test_all().await;
+                            $component::[<tests_ $component>]::test_all().await;
                         })
                     }
                 }
@@ -63,9 +72,8 @@ cfg_if! {
             (common $test_module:ident) => {
                 paste! {
                     #[test]
-                    #[serial]
                     fn [<run_ $test_module>]() {
-                        setup();
+                        native_setup();
                         block_on(async {
                             tests::$test_module::test_all().await;
                         })
@@ -77,37 +85,36 @@ cfg_if! {
 
         static SETUP_ONCE: Once = Once::new();
 
-        pub fn setup() {
+        pub fn native_setup() {
             SETUP_ONCE.call_once(|| {
-                use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-                let mut env_filter = EnvFilter::builder().from_env_lossy();
-                for ig in DEFAULT_LOG_FACILITIES_IGNORE_LIST {
-                    env_filter = env_filter.add_directive(format!("{}=off", ig).parse().unwrap());
+                if std::env::var("NEXTEST").is_err() {
+                    eprintln!("WARNING: nextest not detected. Use `cargo nextest run` for optimal test running.");
                 }
-                let fmt_layer = fmt::layer();
-                tracing_subscriber::registry()
-                    .with(fmt_layer)
-                    .with(env_filter)
-                    .init();
+                if std::env::var("RUST_LOG").unwrap_or_default().is_empty() {
+                    eprintln!("INFO: To enable test logging, set the RUST_LOG environment variable. Example: RUST_LOG=#common=debug");
+                }
+                block_on(
+                    #[allow(clippy::unused_async)]
+                    async {
+                        VeilidTracing::stdout().try_apply_default_env().expect("RUST_LOG string is invalid");
+                    }
+                );
             });
         }
 
-        run_test!(module crypto test_types);
-        run_test!(module crypto test_crypto);
-        run_test!(module crypto test_envelope_receipt);
 
-        run_test!(common test_veilid_core);
-        run_test!(common test_protected_store);
+        run_test!(common test_attachment_manager);
 
-        run_test!(module table_store test_table_store);
-
+        run_test!(component crypto);
+        run_test!(component table_store);
         run_test!(component veilid_api);
-
         run_test!(component routing_table);
-
         run_test!(component network_manager);
-
+        run_test!(component protected_store);
         run_test!(component storage_manager);
+        run_test!(component rpc_processor);
 
     }
+
+
 }

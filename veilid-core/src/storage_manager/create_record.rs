@@ -30,13 +30,15 @@ impl StorageManager {
         // Now that the record is made we should always succeed to open the existing record
         // The initial writer is the owner of the record
         self.open_existing_record_locked(&records_lock, key, Some(owner), safety_selection)
-            .await
-            .map(|r| r.unwrap())
+            .map(|r| r.unwrap_or_log())
     }
 
     ////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn create_new_owned_local_record(
         &self,
         kind: CryptoKind,

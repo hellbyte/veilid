@@ -8,18 +8,6 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use veilid_tools::*;
 
-pub fn convert_loglevel(s: &str) -> Result<String, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "off" => Ok("Off".to_owned()),
-        "error" => Ok("Error".to_owned()),
-        "warn" => Ok("Warn".to_owned()),
-        "info" => Ok("Info".to_owned()),
-        "debug" => Ok("Debug".to_owned()),
-        "trace" => Ok("Trace".to_owned()),
-        _ => Err(format!("Invalid log level: {}", s)),
-    }
-}
-
 #[derive(PartialEq, Clone)]
 pub enum ConnectionState {
     Disconnected,
@@ -92,7 +80,7 @@ impl CommandProcessor {
         self.inner.lock().ui_sender.clone_uisender()
     }
     fn capi(&self) -> ClientApiConnection {
-        self.inner.lock().capi.as_ref().unwrap().clone()
+        self.inner.lock().capi.as_ref().unwrap_or_log().clone()
     }
 
     fn word_split(line: &str) -> (String, Option<String>) {
@@ -131,23 +119,19 @@ impl CommandProcessor {
                 &format!(
                     r#"Client Commands:
     exit/quit                           exit the client
-    disconnect                          disconnect the client from the Veilid node 
+    disconnect                          disconnect the client from the Veilid node
     shutdown                            shut the server down
-    change_log_level <layer> <level>    change the log level for a tracing layer
-                                        layers include: 
+    change_log_level <layer> <directive>    change the log level for a tracing layer
+                                        layers include:
                                             all, terminal, system, api, file, otlp
-                                        levels include:
-                                            error, warn, info, debug, trace
-    change_log_ignore <layer> <changes> change the log target ignore list for a tracing layer
-                                        targets to add to the ignore list can be separated by a comma.
-                                        to remove a target from the ignore list, prepend it with a minus.
+                                        directives are in RUST_LOG format and can use target names or tags (groups) starting with '#':
+                                            rpc=trace,#common=debug
     enable [flag]                       set a flag
     disable [flag]                      unset a flag
                                         valid flags in include:
                                             app_messages
 Core Debug Commands:
-{}
-"#,
+{}"#,
                     indent_all_by(4, out)
                 ),
             );
@@ -265,20 +249,16 @@ Core Debug Commands:
         let ui = self.ui_sender();
         spawn_detached_local("cmd change_log_level", async move {
             let (layer, rest) = Self::word_split(&rest.unwrap_or_default());
-            let log_level = match convert_loglevel(&rest.unwrap_or_default()) {
-                Ok(v) => v,
-                Err(e) => {
-                    ui.add_node_event(Level::Error, &format!("Failed to change log level: {}", e));
-                    ui.send_callback(callback);
-                    return;
-                }
-            };
+            let directives = &rest.unwrap_or_default();
 
-            match capi.server_change_log_level(layer, log_level.clone()).await {
+            match capi
+                .server_change_log_level(layer, directives.clone())
+                .await
+            {
                 Ok(()) => {
                     ui.display_string_dialog(
                         "Log level changed",
-                        &format!("Log level set to '{}'", log_level),
+                        "Applied log direcetives",
                         callback,
                     );
                 }

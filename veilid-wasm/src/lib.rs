@@ -20,10 +20,10 @@ use tsify::*;
 use veilid_core::*;
 use veilid_core::{tools::*, VeilidAPIError};
 use veilid_tracing_wasm::*;
-use wasm_bindgen_futures::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature="dart")] {
+        use wasm_bindgen_futures::*;
         use futures_util::FutureExt;
         use gloo_utils::format::JsValueSerdeExt;
 

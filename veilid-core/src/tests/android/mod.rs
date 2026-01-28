@@ -1,3 +1,5 @@
+pub mod get_directories;
+
 use super::native::*;
 use crate::tests::*;
 use crate::*;
@@ -20,12 +22,7 @@ pub extern "system" fn Java_com_veilid_veilid_1core_1android_1tests_MainActivity
 }
 
 pub fn veilid_core_setup_android_tests(env: JNIEnv, ctx: JObject) {
-    // Set up subscriber and layers
-    let filter = VeilidLayerFilter::new(VeilidConfigLogLevel::Info, &[], None);
-    let layer = paranoid_android::layer("veilid-core");
-    tracing_subscriber::registry()
-        .with(layer.with_filter(filter))
-        .init();
+    veilid_core_setup_android(env, ctx);
 
     // Set up panic hook for backtraces
     panic::set_hook(Box::new(|panic_info| {
@@ -51,5 +48,13 @@ pub fn veilid_core_setup_android_tests(env: JNIEnv, ctx: JObject) {
         error!("Backtrace:\n{:?}", bt);
     }));
 
-    veilid_core_setup_android(env, ctx);
+    // Set up subscriber and layers
+    let filter = VeilidLayerFilter::default();
+    filter.apply_common_log_level(VeilidConfigLogLevel::Info);
+    let layer = paranoid_android::layer("com.veilid.veilid_core_android_tests")
+        .with_target(true)
+        //.map_fmt_fields(FmtStripVeilidFields::mapper())
+        .with_filter(filter);
+
+    tracing_subscriber::registry().with(layer).init();
 }

@@ -173,7 +173,7 @@ impl RPCOperationTransactBeginA {
         let question_context = validate_context
             .question_context
             .as_ref()
-            .expect("TransactBeginA requires question context");
+            .expect_or_log("TransactBeginA requires question context");
         let QuestionContext::TransactBegin(transact_begin_context) = question_context else {
             panic!("Wrong context type for TransactBeginA");
         };

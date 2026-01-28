@@ -6,7 +6,7 @@ use stop_token::future::FutureExt as StopFutureExt;
 impl_veilid_log_facility!("rtab");
 
 impl RoutingTable {
-    #[instrument(level = "trace", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn bootstrap_task_routine(
         &self,
         stop_token: StopToken,

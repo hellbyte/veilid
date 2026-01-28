@@ -18,7 +18,7 @@ pub enum TemplateLocationsList {
 }
 
 impl TemplateLocationsList {
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn can_pick<F>(
         &self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -58,7 +58,7 @@ impl TemplateLocationsList {
         Ok(true)
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn pick<F>(
         &self,
         gsm_inner: &mut GlobalStateManagerInner,
@@ -124,7 +124,7 @@ impl TemplateLocationsList {
         Ok(Some(network_state))
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     fn is_network_available<F>(
         &self,
         gsm_inner: &GlobalStateManagerInner,
@@ -147,7 +147,7 @@ impl TemplateLocationsList {
         Ok(true)
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     fn is_blueprint_available<F>(
         &self,
         gsm_inner: &mut GlobalStateManagerInner,

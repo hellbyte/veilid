@@ -45,11 +45,13 @@ impl BareRecordKey {
 }
 
 impl HashDigest {
+    #[allow(dead_code)]
     pub(crate) fn to_hash_coordinate(&self) -> HashCoordinate {
         HashCoordinate::new(self.kind(), self.ref_value().to_bare_hash_coordinate())
     }
 }
 impl BareHashDigest {
+    #[allow(dead_code)]
     pub(crate) fn to_bare_hash_coordinate(&self) -> BareHashCoordinate {
         BareHashCoordinate::new(self)
     }

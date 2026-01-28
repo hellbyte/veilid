@@ -154,7 +154,7 @@ where
     ) -> Result<T, RouterOpWaitError<T>> {
         // Take the receiver
         // After this, we must manually cancel since the cancel on handle drop is disabled
-        let result_receiver = handle.result_receiver.take().unwrap();
+        let result_receiver = handle.result_receiver.take().unwrap_or_log();
         let result_fut = result_receiver.recv_async();
 
         // wait for eventualvalue

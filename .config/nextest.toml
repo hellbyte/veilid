@@ -1,0 +1,5 @@
+[profile.default]
+fail-fast = { max-fail = 1, terminate = "immediate" }
+
+[profile.full]
+fail-fast = false

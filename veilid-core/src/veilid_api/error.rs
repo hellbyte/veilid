@@ -153,13 +153,13 @@ pub enum VeilidAPIError {
     Unimplemented { message: String },
     #[error("Parse error: '{message}' with value '{value}'")]
     ParseError { message: String, value: String },
-    #[error("Invalid argument: '{argument}' for '{context}' with value '{value}'")]
+    #[error("Invalid argument: '{context}' for '{argument}' with value '{value}'")]
     InvalidArgument {
         context: String,
         argument: String,
         value: String,
     },
-    #[error("Missing argument: '{argument}' for '{context}'")]
+    #[error("Missing argument: '{context}' for '{argument}'")]
     MissingArgument { context: String, argument: String },
     #[error("Generic: {message}")]
     Generic { message: String },

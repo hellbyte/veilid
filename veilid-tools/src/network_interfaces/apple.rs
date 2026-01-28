@@ -3,10 +3,10 @@
 use super::*;
 
 use libc::{
-    close, freeifaddrs, getifaddrs, ifaddrs, ioctl, pid_t, sockaddr, sockaddr_in6, socket, sysctl,
-    time_t, AF_INET6, CTL_NET, IFF_BROADCAST, IFF_LOOPBACK, IFF_POINTOPOINT, IFF_RUNNING, IFNAMSIZ,
-    NET_RT_FLAGS, PF_ROUTE, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTA_DST, RTA_GATEWAY, RTF_GATEWAY,
-    SOCK_DGRAM,
+    close, freeifaddrs, getifaddrs, ifaddrs, ioctl, pid_t, sockaddr, sockaddr_dl, sockaddr_in6,
+    socket, sysctl, time_t, AF_INET6, AF_LINK, CTL_NET, IFF_BROADCAST, IFF_LOOPBACK,
+    IFF_POINTOPOINT, IFF_RUNNING, IFNAMSIZ, NET_RT_FLAGS, PF_ROUTE, RTAX_DST, RTAX_GATEWAY,
+    RTAX_MAX, RTA_DST, RTA_GATEWAY, RTF_GATEWAY, SOCK_DGRAM,
 };
 use sockaddr_tools::SockAddr;
 use std::ffi::CStr;
@@ -270,13 +270,13 @@ impl Iterator for IfAddrsIterator {
 ///////////////////////////////////////////////////
 
 pub struct PlatformSupportApple {
-    default_route_interfaces: BTreeSet<u32>,
+    gateways: BTreeMap<u32, BTreeSet<IpAddr>>,
 }
 
 impl PlatformSupportApple {
     pub fn new() -> Self {
         PlatformSupportApple {
-            default_route_interfaces: BTreeSet::new(),
+            gateways: BTreeMap::new(),
         }
     }
 
@@ -323,7 +323,7 @@ impl PlatformSupportApple {
             }
 
             // Clear old interfaces
-            self.default_route_interfaces.clear();
+            self.gateways.clear();
 
             // Process each routing message
             let mut mib_ptr = rt_buf.as_ptr();
@@ -355,7 +355,8 @@ impl PlatformSupportApple {
                         Some(a) => a,
                         None => continue,
                     };
-                    let _saddr_gateway = match SockAddr::new(sa_tab[RTAX_GATEWAY as usize]) {
+
+                    let saddr_gateway = match SockAddr::new(sa_tab[RTAX_GATEWAY as usize]) {
                         Some(a) => a,
                         None => continue,
                     };
@@ -365,8 +366,16 @@ impl PlatformSupportApple {
                         Some(a) => a,
                         None => continue,
                     };
+                    let gateway_ipaddr = match saddr_gateway.as_ipaddr() {
+                        Some(a) => a,
+                        None => continue,
+                    };
+
                     if dst_ipaddr.is_unspecified() {
-                        self.default_route_interfaces.insert(intf_index);
+                        self.gateways
+                            .entry(intf_index)
+                            .or_default()
+                            .insert(gateway_ipaddr);
                     }
                 }
 
@@ -377,12 +386,11 @@ impl PlatformSupportApple {
         }
     }
 
-    fn get_interface_flags(&self, index: u32, flags: c_int) -> InterfaceFlags {
+    fn get_interface_flags(&self, flags: c_int) -> InterfaceFlags {
         InterfaceFlags {
             is_loopback: (flags & IFF_LOOPBACK) != 0,
             is_running: (flags & IFF_RUNNING) != 0,
             is_point_to_point: (flags & IFF_POINTOPOINT) != 0,
-            has_default_route: self.default_route_interfaces.contains(&index),
         }
     }
 
@@ -392,7 +400,7 @@ impl PlatformSupportApple {
             return Err(io::Error::last_os_error());
         }
 
-        let mut req = in6_ifreq::from_name(ifname).unwrap();
+        let mut req = in6_ifreq::from_name(ifname).unwrap_or_log();
         req.set_addr(addr);
 
         let res = unsafe { ioctl(sock, SIOCGIFAFLAG_IN6, &mut req) };
@@ -402,7 +410,7 @@ impl PlatformSupportApple {
         }
         let flags = req.get_flags6();
 
-        let mut req = in6_ifreq::from_name(ifname).unwrap();
+        let mut req = in6_ifreq::from_name(ifname).unwrap_or_log();
         req.set_addr(addr);
 
         let res = unsafe { ioctl(sock, SIOCGIFALIFETIME_IN6, &mut req) };
@@ -438,33 +446,58 @@ impl PlatformSupportApple {
 
         // Ask for all the addresses we have
         let ifaddrs = IfAddrs::new()?;
-        let mut ifindex = 0;
-        let mut last_name = String::new();
+
+        // Determine all the name to index mappings
+        let mut name_to_index = BTreeMap::<String, u32>::new();
         for ifaddr in ifaddrs.iter() {
+            if !ifaddr.ifa_addr.is_null()
+                && unsafe { (*ifaddr.ifa_addr).sa_family } == AF_LINK as u8
+            {
+                // Get the interface name
+                let ifname = unsafe { CStr::from_ptr(ifaddr.ifa_name) }
+                    .to_string_lossy()
+                    .into_owned();
+                let sdl = unsafe { *(ifaddr.ifa_addr as *const sockaddr_dl) };
+                name_to_index.insert(ifname, sdl.sdl_index as u32);
+            }
+        }
+
+        // Iterate all interface addresses, pair them with their gateways and add them to the interfaces map
+        for ifaddr in ifaddrs.iter() {
+            // Ensure we're getting an ip address here otherwise we'll skip it
+            let Some(ip_addr) = sockaddr_tools::to_ipaddr(ifaddr.ifa_addr) else {
+                continue;
+            };
+
             // Get the interface name
             let ifname = unsafe { CStr::from_ptr(ifaddr.ifa_name) }
                 .to_string_lossy()
                 .into_owned();
 
             // Get the interface index
-            if last_name != ifname {
-                last_name = ifname.clone();
-                ifindex += 1;
-            }
+            let Some(ifindex) = name_to_index.get(&ifname).copied() else {
+                continue;
+            };
 
             // Map the name to a NetworkInterface
             if !interfaces.contains_key(&ifname) {
                 // If we have no NetworkInterface yet, make one
-                let flags = self.get_interface_flags(ifindex, ifaddr.ifa_flags as c_int);
-                interfaces.insert(ifname.clone(), NetworkInterface::new(ifname.clone(), flags));
+                let flags = self.get_interface_flags(ifaddr.ifa_flags as c_int);
+                let mut net_intf = NetworkInterface::new(ifname.clone(), flags);
+                // Add gateways if we have them
+                if let Some(gateways) = self.gateways.get(&ifindex) {
+                    for gateway in gateways {
+                        net_intf.add_gateway(*gateway);
+                    }
+                }
+                interfaces.insert(ifname.clone(), net_intf);
             }
-            let intf = interfaces.get_mut(&ifname).unwrap();
+            let intf = interfaces.get_mut(&ifname).unwrap_or_log();
 
             let mut address_flags = AddressFlags::default();
 
-            let intf_addr = match sockaddr_tools::to_ipaddr(ifaddr.ifa_addr) {
-                None => continue,
-                Some(IpAddr::V4(ipv4_addr)) => {
+            let intf_addr = match ip_addr {
+                IpAddr::V4(ipv4_addr) => {
                     let netmask = match sockaddr_tools::to_ipaddr(ifaddr.ifa_netmask) {
                         Some(IpAddr::V4(netmask)) => netmask,
                         _ => Ipv4Addr::new(0, 0, 0, 0),
@@ -484,7 +517,7 @@ impl PlatformSupportApple {
                         broadcast,
                     })
                 }
-                Some(IpAddr::V6(ipv6_addr)) => {
+                IpAddr::V6(ipv6_addr) => {
                     let netmask = match sockaddr_tools::to_ipaddr(ifaddr.ifa_netmask) {
                         Some(IpAddr::V6(netmask)) => netmask,
                         _ => Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
@@ -493,7 +526,7 @@ impl PlatformSupportApple {
                     // Get address flags for ipv6
                     address_flags = match Self::get_address_flags(
                         &ifname,
-                        SockAddr::new(ifaddr.ifa_addr).unwrap().sa_in6(),
+                        SockAddr::new(ifaddr.ifa_addr).unwrap_or_log().sa_in6(),
                     ) {
                         Ok(v) => v,
                         Err(e) => {
@@ -514,8 +547,7 @@ impl PlatformSupportApple {
             };
 
             // Add to the list
-            intf.addrs
-                .push(InterfaceAddress::new(intf_addr, address_flags));
+            intf.add_address(InterfaceAddress::new(intf_addr, address_flags));
         }
 
         Ok(())

@@ -46,13 +46,13 @@ pub(super) enum UncommittedSubkeyChange {
         /// The new subkey data
         new_data: RecordData,
 
-        /// The old subkey data
-        old_data: RecordData,
+        /// The old subkey data if it was in the cache
+        opt_old_data: Option<RecordData>,
     },
 
     Delete {
-        /// The subkey data being deleted
-        old_data: RecordData,
+        /// The subkey data being deleted if it was in the cache
+        opt_old_data: Option<RecordData>,
         is_lru: bool,
     },
 }
@@ -68,6 +68,9 @@ where
     st_xact: Option<TableDBTransaction>,
     uncommitted_record_changes: Arc<UncommittedRecordChanges<D>>,
     uncommitted_subkey_changes: Arc<UncommittedSubkeyChanges>,
+
+    finished: bool,
+    committed: bool,
 }
 
 impl<D> CommitAction<D>
@@ -85,10 +88,17 @@ where
             st_xact: Some(st_xact),
             uncommitted_record_changes,
             uncommitted_subkey_changes,
+            finished: false,
+            committed: false,
         }
     }
 
     pub async fn commit(&mut self) -> VeilidAPIResult<()> {
+        if self.committed {
+            apibail_internal!("commit action already committed");
+        }
+        self.committed = true;
+
         let rt_xact = self
             .rt_xact
             .take()
@@ -129,12 +139,12 @@ where
                     }
                     UncommittedSubkeyChange::Update {
                         new_data,
-                        old_data: _,
+                        opt_old_data: _,
                     } => {
                         st_xact.store_json(0, &stk.bytes(), &new_data).await?;
                     }
                     UncommittedSubkeyChange::Delete {
-                        old_data: _,
+                        opt_old_data: _,
                         is_lru: _,
                     } => st_xact.delete(0, &stk.bytes()).await?,
                 }
@@ -170,18 +180,31 @@ where
         Arc<UncommittedRecordChanges<D>>,
         Arc<UncommittedSubkeyChanges>,
     )> {
+        self.finished = true;
+
         if self.rt_xact.is_none() || self.st_xact.is_none() {
             return None;
         }
 
-        let rt_xact = self.rt_xact.take().unwrap();
+        let rt_xact = self.rt_xact.take().unwrap_or_log();
         rt_xact.rollback();
-        let st_xact = self.st_xact.take().unwrap();
+        let st_xact = self.st_xact.take().unwrap_or_log();
         st_xact.rollback();
 
         Some((
-            self.uncommitted_record_changes,
-            self.uncommitted_subkey_changes,
+            self.uncommitted_record_changes.clone(),
+            self.uncommitted_subkey_changes.clone(),
         ))
+    }
+}
+
+impl<D> Drop for CommitAction<D>
+where
+    D: RecordDetail,
+{
+    fn drop(&mut self) {
+        if !self.finished {
+            error!(target:"stor", "CommitAction dropped without being finished: {:#?}", self);
+        }
     }
 }

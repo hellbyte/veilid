@@ -152,7 +152,7 @@ impl PrivateRoute {
         // Get the safety route to use from the spec
         Some(match &pr_first_hop.node {
             RouteNode::NodeId(n) => n.clone(),
-            RouteNode::PeerInfo(p) => p.node_ids().get(self.public_key.kind()).unwrap(),
+            RouteNode::PeerInfo(p) => p.node_ids().get(self.public_key.kind()).unwrap_or_log(),
         })
     }
 }

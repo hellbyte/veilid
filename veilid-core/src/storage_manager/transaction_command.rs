@@ -90,7 +90,10 @@ impl StorageManager {
     ////////////////////////////////////////////////////////////////////////
 
     /// Perform transact command queries on the network for a single record
-    #[instrument(level = "trace", target = "dht", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "dht", skip_all, err)
+    )]
     pub(super) async fn outbound_transact_command(
         &self,
         params: OutboundTransactCommandParams,
@@ -131,8 +134,7 @@ impl StorageManager {
 
                 let tva = network_result_value_or_log!(self Box::pin(rpc_processor
                     .rpc_call_transact_command(
-                        Destination::direct(node_ref.routing_domain_filtered(routing_domain))
-                            .with_safety(safety_selection.clone()),
+                        Destination::direct(node_ref.routing_domain_filtered(routing_domain), Some(safety_selection.clone())),
                         opaque_record_key.clone(),
                         descriptor.clone(),
                         node_transaction_id.xid(),
@@ -215,7 +217,7 @@ impl StorageManager {
     ////////////////////////////////////////////////////////////////////////
 
     /// Handle a received 'TransactCommand' query
-    #[instrument(level = "debug", target = "dht", ret(Display), err, fields(duration, __VEILID_LOG_KEY = self.log_key(), opt_value.len = opt_value.as_ref().map(|x| x.value_data().data_size())), skip(self, opt_value, _opt_seqs))]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", target = "dht", ret(Display), err, fields(duration, __VEILID_LOG_KEY = self.log_key(), opt_value.len = opt_value.as_ref().map(|x| x.value_data().data_size())), skip(self, opt_value, _opt_seqs)))]
     pub async fn inbound_transact_command(
         &self,
         opaque_record_key: &OpaqueRecordKey,

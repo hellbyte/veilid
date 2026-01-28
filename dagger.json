@@ -1,6 +1,6 @@
 {
   "name": "veilid",
-  "engineVersion": "v0.18.16",
+  "engineVersion": "v0.19.10",
   "sdk": {
     "source": "python"
   },

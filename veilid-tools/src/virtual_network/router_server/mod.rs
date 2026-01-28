@@ -158,7 +158,7 @@ impl RouterServer {
         self.unlocked_inner
             .new_client_sender
             .send(listener_fut)
-            .expect("should be able to send client");
+            .expect_or_log("should be able to send client");
 
         Ok(stop_source)
     }
@@ -221,7 +221,7 @@ impl RouterServer {
         self.unlocked_inner
             .new_client_sender
             .send(listener_fut)
-            .expect("should be able to send client");
+            .expect_or_log("should be able to send client");
 
         Ok(stop_source)
     }
@@ -249,7 +249,7 @@ impl RouterServer {
         self.unlocked_inner
             .new_client_sender
             .send(inbound_receiver_fut)
-            .expect("should be able to send client");
+            .expect_or_log("should be able to send client");
 
         // Create a RouterClient directly connected to this RouterServer
         RouterClient::local_router_client(local_inbound_sender, local_outbound_receiver)

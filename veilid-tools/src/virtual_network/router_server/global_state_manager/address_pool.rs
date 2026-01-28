@@ -87,7 +87,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(opt_allocation.is_some())
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn reserve_allocation_v4(
         &mut self,
         allocation: Ipv4Net,
@@ -110,7 +110,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(scope)
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn reserve_allocation_v6(
         &mut self,
         allocation: Ipv6Net,
@@ -155,7 +155,10 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         overlaps
     }
 
-    #[instrument(level = "debug", skip(self, srng), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, srng), err)
+    )]
     pub fn allocate_random_v4(
         &mut self,
         srng: &mut StableRng,
@@ -180,7 +183,10 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(None)
     }
 
-    #[instrument(level = "debug", skip(self, srng), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "debug", skip(self, srng), err)
+    )]
     pub fn allocate_random_v6(
         &mut self,
         srng: &mut StableRng,
@@ -205,7 +211,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(None)
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_allocation_v4(
         &mut self,
         allocation: Ipv4Net,
@@ -223,7 +229,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(opt_tag)
     }
 
-    #[instrument(level = "debug", skip(self), err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip(self), err))]
     pub fn release_allocation_v6(
         &mut self,
         allocation: Ipv6Net,
@@ -276,7 +282,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         false
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn clear_ipv4<F: FnMut(Ipv4Net, &T) -> bool>(
         &mut self,
         mut check: F,
@@ -299,7 +305,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip_all, err)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err))]
     pub fn clear_ipv6<F: FnMut(Ipv6Net, &T) -> bool>(
         &mut self,
         mut check: F,
@@ -428,7 +434,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
                 (current_subnet_index - current_scope_start_subnet_index) << (32 - prefix)
             };
             let net = Ipv4Net::new(Ipv4Addr::from(netbits | subnetbits), prefix)
-                .expect("prefix must be valid");
+                .expect_or_log("prefix must be valid");
             // See if this net is available
             if self.get_overlaps_v4(net).is_empty() {
                 break Some(net);
@@ -530,7 +536,7 @@ impl<T: fmt::Debug + Clone> AddressPool<T> {
                 (current_subnet_index - current_scope_start_subnet_index) << (128 - prefix)
             };
             let net = Ipv6Net::new(Ipv6Addr::from(netbits | subnetbits), prefix)
-                .expect("prefix must be valid");
+                .expect_or_log("prefix must be valid");
             // See if this net is available
             if self.get_overlaps_v6(net).is_empty() {
                 break Some(net);

@@ -14,12 +14,16 @@ pub struct ProtocolConfig {
 pub(super) struct NetworkState {
     /// the calculated protocol configuration for inbound/outbound protocols
     pub protocol_config: ProtocolConfig,
-    /// does our network have ipv4 on any interface?
-    pub enable_ipv4: bool,
-    /// does our network have ipv6 on any interface?
-    pub enable_ipv6: bool,
-    /// The interface addresses (network+mask) most recently seen
-    pub interface_addresses: Arc<Vec<IfAddr>>,
+    /// does our network have ipv4 on a local interface?
+    pub enable_ipv4_local: bool,
+    /// does our network have ipv4 globally routable?
+    pub enable_ipv4_global: bool,
+    /// does our network have ipv6 on a local interface?
+    pub enable_ipv6_local: bool,
+    /// does our network have ipv6 globally routable?
+    pub enable_ipv6_global: bool,
+    /// The interface addresses (network+mask) most recently seen and default routing state
+    pub interface_address_state: Arc<NetworkInterfaceAddressState>,
 }
 
 impl Network {
@@ -32,7 +36,8 @@ impl Network {
             .lock()
             .network_state
             .as_ref()
-            .unwrap()
+            .unwrap_or_log()
+            .interface_address_state
             .interface_addresses
             .iter()
             .any(|x| x.ip() == addr)
@@ -53,33 +58,55 @@ impl Network {
             return Ok(None);
         }
 
-        let interface_addresses = self.interfaces.interface_addresses();
+        let interface_address_state = self.interfaces.interface_address_state();
 
-        if let Some(old_interface_addresses) =
-            last_network_state.map(|x| x.interface_addresses.clone())
+        if let Some(old_interface_address_state) =
+            last_network_state.map(|x| x.interface_address_state.clone())
         {
             veilid_log!(self debug
-                "Network interface addresses changed: \nFrom: {:?}\n  To: {:?}\n",
-                old_interface_addresses, interface_addresses
+                "Network interface address state changed: \nFrom: {:?}\n  To: {:?}\n",
+                old_interface_address_state, interface_address_state
             );
         } else {
             veilid_log!(self debug
-                "Network interface addresses: \n  {:?}\n",
-                interface_addresses
+                "Network interface address state: \n  {:?}\n",
+                interface_address_state
             );
         }
 
         // Determine if we have ipv4/ipv6 addresses
-        let mut enable_ipv4 = false;
-        let mut enable_ipv6 = false;
+        let mut enable_ipv4_local = false;
+        let mut enable_ipv6_local = false;
+        let mut enable_ipv4_global = false;
+        let mut enable_ipv6_global = false;
 
-        for addr in interface_addresses.iter() {
+        for addr in interface_address_state.interface_addresses.iter() {
             match addr {
                 IfAddr::V4(_) => {
-                    enable_ipv4 = true;
+                    enable_ipv4_local = true;
                 }
                 IfAddr::V6(_) => {
-                    enable_ipv6 = true;
+                    enable_ipv6_local = true;
+                }
+            }
+        }
+
+        // If we have local address families, check for routability
+        for gateway_ip in interface_address_state.gateway_addresses.iter() {
+            match gateway_ip {
+                IpAddr::V4(v4) => {
+                    // If we have a gateway that isn't a loopback or local only we should try publicinternet global ipv4
+                    if enable_ipv4_local && (!v4.is_loopback() && !v4.is_link_local()) {
+                        veilid_log!(self debug "Global IPV4 detected via gateway");
+                        enable_ipv4_global = true;
+                    }
+                }
+                IpAddr::V6(v6) => {
+                    // If we have a gateway that isn't a loopback or local only we should try publicinternet global ipv4
+                    if enable_ipv6_local && (!v6.is_loopback() && !v6.is_unicast_link_local()) {
+                        veilid_log!(self debug "Global IPV6 detected via gateway");
+                        enable_ipv6_global = true;
+                    }
                 }
             }
         }
@@ -120,13 +147,17 @@ impl Network {
 
             let mut family_global = AddressTypeSet::new();
             let mut family_local = AddressTypeSet::new();
-            if enable_ipv4 {
-                family_global.insert(AddressType::IPV4);
+            if enable_ipv4_local {
                 family_local.insert(AddressType::IPV4);
             }
-            if enable_ipv6 {
-                family_global.insert(AddressType::IPV6);
+            if enable_ipv4_global {
+                family_global.insert(AddressType::IPV4);
+            }
+            if enable_ipv6_local {
                 family_local.insert(AddressType::IPV6);
+            }
+            if enable_ipv6_global {
+                family_global.insert(AddressType::IPV6);
             }
 
             // set up the routing table's network config
@@ -158,9 +189,11 @@ impl Network {
 
         let new_network_state = Some(Arc::new(NetworkState {
             protocol_config,
-            enable_ipv4,
-            enable_ipv6,
-            interface_addresses,
+            enable_ipv4_local,
+            enable_ipv4_global,
+            enable_ipv6_local,
+            enable_ipv6_global,
+            interface_address_state,
         }));
 
         self.inner.lock().network_state = new_network_state.clone();

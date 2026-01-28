@@ -268,7 +268,7 @@ impl RoutingDomainDetail for LocalNetworkRoutingDomainDetail {
         true
     }
 
-    #[instrument(level = "trace", target = "rtab", skip(self, _rti, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret)]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rtab", skip(self, _rti, context_sort), fields(__VEILID_LOG_KEY = self.log_key()), ret))]
     fn get_contact_method(
         &self,
         _rti: &RoutingTableInner,

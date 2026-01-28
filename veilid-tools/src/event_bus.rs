@@ -173,7 +173,7 @@ impl EventBus {
             Arc::new(move |any_evt| {
                 let handler = handler.clone();
                 Box::pin(async move {
-                    handler(any_evt.downcast::<E>().unwrap()).await;
+                    handler(any_evt.downcast::<E>().unwrap_or_log()).await;
                 })
             }),
         ));
@@ -187,7 +187,7 @@ impl EventBus {
         let mut inner = self.inner.lock();
 
         inner.handlers.entry(sub.type_id).and_modify(|e| {
-            let index = e.iter().position(|x| x.0 == sub.id).unwrap();
+            let index = e.iter().position(|x| x.0 == sub.id).unwrap_or_log();
             e.remove(index);
         });
 

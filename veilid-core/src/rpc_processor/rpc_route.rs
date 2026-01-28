@@ -3,7 +3,10 @@ use super::*;
 impl_veilid_log_facility!("rpc");
 
 impl RPCProcessor {
-    #[instrument(level = "trace", target = "rpc", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_route_safety_route_hop(
         &self,
         routed_operation: RoutedOperation,
@@ -29,7 +32,7 @@ impl RPCProcessor {
         let next_hop_route = RPCOperationRoute::new(
             SafetyRoute {
                 public_key: safety_route.public_key,
-                hops: SafetyRouteHops::Data(route_hop.next_hop.unwrap()),
+                hops: SafetyRouteHops::Data(route_hop.next_hop.unwrap_or_log()),
             },
             routed_operation,
         );
@@ -39,7 +42,7 @@ impl RPCProcessor {
         // Send the next route statement
         Box::pin(
             self.statement(
-                Destination::direct(next_hop_nr),
+                Destination::direct(next_hop_nr, None),
                 next_hop_route_stmt,
                 None,
                 Some(route_op_id),
@@ -51,7 +54,10 @@ impl RPCProcessor {
         .await
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_route_private_route_hop(
         &self,
         routed_operation: RoutedOperation,
@@ -88,7 +94,7 @@ impl RPCProcessor {
         // Send the next route statement
         Box::pin(
             self.statement(
-                Destination::direct(next_hop_nr),
+                Destination::direct(next_hop_nr, None),
                 next_hop_route_stmt,
                 None,
                 Some(route_op_id),
@@ -105,7 +111,10 @@ impl RPCProcessor {
     /// Note: it is important that we never respond with a safety route to questions that come
     /// in without a private route. Giving away a safety route when the node id is known is
     /// a privacy violation!
-    #[instrument(level = "trace", target = "rpc", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_safety_routed_operation(
         &self,
         detail: RPCMessageHeaderDetailDirect,
@@ -154,7 +163,10 @@ impl RPCProcessor {
     }
 
     /// Process a routed operation that came in over both a safety route and a private route
-    #[instrument(level = "trace", target = "rpc", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_private_routed_operation(
         &self,
         detail: RPCMessageHeaderDetailDirect,
@@ -234,7 +246,10 @@ impl RPCProcessor {
         Ok(NetworkResult::value(()))
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_routed_operation(
         &self,
         detail: RPCMessageHeaderDetailDirect,
@@ -270,7 +285,10 @@ impl RPCProcessor {
         }
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_private_route_first_hop(
         &self,
         mut routed_operation: RoutedOperation,
@@ -333,7 +351,10 @@ impl RPCProcessor {
     }
 
     /// Decrypt route hop data and sign routed operation
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn decrypt_private_route_hop_data(
         &self,
         route_hop_data: &RouteHopData,
@@ -404,7 +425,10 @@ impl RPCProcessor {
         Ok(NetworkResult::value(route_hop))
     }
 
-    #[instrument(level = "trace", target = "rpc", skip(self), ret, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip(self), ret, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub(super) async fn process_route(&self, msg: Message) -> RPCNetworkResult<()> {
         // Ignore if disabled
         let routing_table = self.routing_table();

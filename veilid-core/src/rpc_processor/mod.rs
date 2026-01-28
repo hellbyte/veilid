@@ -31,6 +31,10 @@ mod sender_info;
 mod sender_peer_info;
 mod waitable_reply;
 
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests_rpc_processor;
+
 pub use coders::encode_nonce as capnp_encode_nonce;
 pub use coders::encode_public_key as capnp_encode_public_key;
 
@@ -57,9 +61,6 @@ pub(crate) use destination::*;
 pub(crate) use error::*;
 pub(crate) use fanout::*;
 pub(crate) use sender_info::*;
-
-use futures_util::StreamExt as _;
-use stop_token::future::FutureExt as _;
 
 use coders::*;
 use message::*;
@@ -181,19 +182,44 @@ impl RPCProcessor {
         };
 
         Self {
+            waiting_rpc_table: OperationWaiter::new(registry.clone()),
+            waiting_app_call_table: OperationWaiter::new(registry.clone()),
             registry,
             inner: Mutex::new(Self::new_inner()),
             timeout: timeout_us,
             queue_size,
             concurrency,
-            waiting_rpc_table: OperationWaiter::new(),
-            waiting_app_call_table: OperationWaiter::new(),
             startup_context,
         }
     }
 
     /////////////////////////////////////
     // Initialization
+
+    fn log_facilities_impl(&self) -> VeilidComponentLogFacilities {
+        VeilidComponentLogFacilities::new()
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("rpc", ["#common"]).unwrap(),
+            )
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags(
+                    "rpc_message",
+                    ["#dht", "#fanout", "#verbose"],
+                )
+                .unwrap(),
+            )
+            .with_facility(VeilidComponentLogFacility::try_new_with_tags("dht", ["#dht"]).unwrap())
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags(
+                    "network_result",
+                    ["#dht", "#fanout", "#verbose"],
+                )
+                .unwrap(),
+            )
+            .with_facility(
+                VeilidComponentLogFacility::try_new_with_tags("fanout", ["#fanout"]).unwrap(),
+            )
+    }
 
     #[expect(clippy::unused_async)]
     async fn init_async(&self) -> EyreResult<()> {
@@ -219,8 +245,8 @@ impl RPCProcessor {
 
     //////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "debug", skip_all, err)]
-    pub async fn startup(&self) -> EyreResult<()> {
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
+    pub fn startup(&self) -> EyreResult<()> {
         veilid_log!(self debug "starting rpc processor startup");
 
         let guard = self.startup_context.startup_lock.startup()?;
@@ -241,7 +267,7 @@ impl RPCProcessor {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all, fields(__VEILID_LOG_KEY = self.log_key())))]
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting rpc processor shutdown");
         let guard = self
@@ -249,7 +275,7 @@ impl RPCProcessor {
             .startup_lock
             .shutdown()
             .await
-            .expect("should be started up");
+            .expect_or_log("should be started up");
 
         self.shutdown_rpc_workers().await;
 
@@ -270,7 +296,10 @@ impl RPCProcessor {
     }
 
     /// Incorporate 'sender peer info' sent along with an RPC message
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn process_sender_peer_info(
         &self,
         sender_node_id: NodeId,
@@ -317,7 +346,10 @@ impl RPCProcessor {
     /// Search the public internet routing domain for a single node and add
     /// it to the routing table and return the node reference
     /// If no node was found in the timeout, this returns None
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn public_internet_peer_search(
         &self,
         node_id: NodeId,
@@ -345,14 +377,14 @@ impl RPCProcessor {
             let safety_selection = safety_selection.clone();
             Box::pin(async move {
                 let this = registry.rpc_processor();
-                match Box::pin(
-                    this.rpc_call_find_node(
-                        Destination::direct(next_node.routing_domain_filtered(routing_domain))
-                            .with_safety(safety_selection.clone()),
-                        node_id,
-                        vec![],
+                match Box::pin(this.rpc_call_find_node(
+                    Destination::direct(
+                        next_node.routing_domain_filtered(routing_domain),
+                        Some(safety_selection.clone()),
                     ),
-                )
+                    node_id,
+                    vec![],
+                ))
                 .await?
                 {
                     NetworkResult::Timeout => Ok(FanoutCallOutput {
@@ -426,7 +458,10 @@ impl RPCProcessor {
     /// Search the DHT for a specific node corresponding to a key unless we
     /// have that node in our routing table already, and return the node reference
     /// Note: This routine can possibly be recursive, hence the PinBoxFuture async form
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn resolve_node(
         &self,
         node_id: NodeId,
@@ -497,7 +532,10 @@ impl RPCProcessor {
         )
     }
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn wait_for_reply(
         &self,
         waitable_reply: WaitableReply,
@@ -581,7 +619,10 @@ impl RPCProcessor {
     }
 
     /// Wrap an operation with a private route inside a safety route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn wrap_with_route(
         &self,
         routing_domain: RoutingDomain,
@@ -635,7 +676,7 @@ impl RPCProcessor {
         // Prepare route operation
         let route_operation = RPCOperationRoute::new(compiled_route.safety_route, operation);
         let ssni_route =
-            self.get_sender_peer_info(&Destination::direct(compiled_route.first_hop.clone()));
+            self.get_sender_peer_info(&Destination::direct(compiled_route.first_hop.clone(), None));
         let operation = RPCOperation::new_statement(
             RPCStatement::new(RPCStatementDetail::Route(Box::new(route_operation))),
             ssni_route,
@@ -653,8 +694,8 @@ impl RPCProcessor {
         let out = RenderedOperation {
             outer_op_id: op_id,
             message: out_message,
-            destination_node_ref: compiled_route.first_hop.unfiltered(),
             node_ref: compiled_route.first_hop,
+            opt_relay_di: None,
             safety_route: if sr_is_stub { None } else { Some(sr_pubkey) },
             remote_private_route: if pr_is_stub { None } else { Some(pr_pubkey) },
             reply_private_route,
@@ -666,7 +707,10 @@ impl RPCProcessor {
     /// Produce a byte buffer that represents the wire encoding of the entire
     /// unencrypted envelope body for a RPC message. This incorporates
     /// wrapping a private and/or safety route if they are specified.
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn render_signed_operation(
         &self,
         dest: Destination,
@@ -699,49 +743,64 @@ impl RPCProcessor {
 
         // To where are we sending the request
         match dest {
+            Destination::Relay {
+                relay_di,
+                node: ref node_ref,
+            } => {
+                // Send to a node directly via a relay dialinfo
+
+                // Reply private route should be None here, even for questions
+                if reply_private_route.is_some() {
+                    return Err(RPCError::internal(
+                        "reply private route should never be specified for relay destinations",
+                    ));
+                }
+
+                // If no safety route is being used, and we're not sending to a private
+                // route, we can use a direct envelope instead of routing
+                out = NetworkResult::value(RenderedOperation {
+                    outer_op_id: op_id,
+                    message,
+                    node_ref: node_ref.default_filtered_with_sequencing(
+                        relay_di
+                            .protocol_type()
+                            .sequence_ordering()
+                            .strict_sequencing(),
+                    ),
+                    opt_relay_di: Some(relay_di),
+                    safety_route: None,
+                    remote_private_route: None,
+                    reply_private_route: None,
+                });
+            }
             Destination::Direct {
                 node: ref node_ref,
-                ref safety_selection,
-            }
-            | Destination::Relay {
-                relay: ref node_ref,
-                node: _,
-                ref safety_selection,
+                safety_selection,
             } => {
                 // Send to a node without a private route
                 // --------------------------------------
-
-                // Get the actual destination node id accounting for relays
-                let (node_ref, destination_node_ref) = if let Destination::Relay {
-                    relay: _,
-                    node: ref target,
-                    safety_selection: _,
-                } = dest
-                {
-                    (node_ref.clone(), target.clone())
-                } else {
-                    (node_ref.clone(), node_ref.unfiltered())
-                };
 
                 // Handle the existence of safety route
                 match safety_selection {
                     SafetySelection::Unsafe(sequencing) => {
                         // Apply safety selection sequencing requirement if it is more strict than the node_ref's sequencing requirement
                         let mut node_ref = node_ref.clone();
-                        if *sequencing > node_ref.sequencing() {
-                            node_ref.set_sequencing(*sequencing)
+                        if sequencing > node_ref.sequencing() {
+                            node_ref.set_sequencing(sequencing)
                         }
 
                         // Reply private route should be None here, even for questions
-                        assert!(reply_private_route.is_none());
+                        if reply_private_route.is_some() {
+                            return Err(RPCError::internal("reply private route should never be specified for direct destinations"));
+                        }
 
                         // If no safety route is being used, and we're not sending to a private
                         // route, we can use a direct envelope instead of routing
                         out = NetworkResult::value(RenderedOperation {
                             outer_op_id: op_id,
                             message,
-                            destination_node_ref,
                             node_ref,
+                            opt_relay_di: None,
                             safety_route: None,
                             remote_private_route: None,
                             reply_private_route: None,
@@ -754,7 +813,7 @@ impl RPCProcessor {
                         // No private route was specified for the request
                         // but we are using a safety route, so we must create an empty private route
                         // Destination relay is ignored for safety routed operations
-                        let peer_info = match destination_node_ref.get_peer_info(routing_domain) {
+                        let peer_info = match node_ref.get_peer_info(routing_domain) {
                             None => {
                                 return Ok(NetworkResult::no_connection_other(
                                     "No peer info for stub private route",
@@ -763,7 +822,7 @@ impl RPCProcessor {
                             Some(pi) => pi,
                         };
                         let private_route = PrivateRoute::new_stub(
-                            match destination_node_ref.best_public_key(routing_domain) {
+                            match node_ref.best_public_key(routing_domain) {
                                 Some(pk) => pk,
                                 None => {
                                     return Ok(NetworkResult::no_connection_other(
@@ -799,7 +858,7 @@ impl RPCProcessor {
                                 kind = "route",
                                 route_op_id,
                                 op_id = op_id.as_u64(),
-                                ?destination_node_ref,
+                                ?node_ref,
                                 safety_route,
                                 desc = "wrap_with_route"
                             );
@@ -856,7 +915,10 @@ impl RPCProcessor {
     /// routing table caching when it is okay to do so
     /// Also check target's timestamp of our own node info, to see if we should send that
     /// And send our timestamp of the target's node info so they can determine if they should update us on their next rpc
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn get_sender_peer_info(&self, dest: &Destination) -> SenderPeerInfo {
         // veilid_log!(self debug target: "network_result", "get_sender_peer_info: {:?}", dest);
 
@@ -866,7 +928,6 @@ impl RPCProcessor {
         // thus defeating the purpose of the safety route entirely :P
         let Some(UnsafeRoutingInfo {
             opt_node,
-            opt_relay: _,
             opt_routing_domain,
         }) = dest.get_unsafe_routing_info(&routing_table)
         else {
@@ -904,7 +965,10 @@ impl RPCProcessor {
     }
 
     /// Record failure to send to node or route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn record_send_failure(
         &self,
         rpc_kind: RPCKind,
@@ -945,7 +1009,10 @@ impl RPCProcessor {
     }
 
     /// Record question lost to node or route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn record_lost_answer(&self, context: &WaitableReplyContext) {
         // Record for node if this was not sent via a route
         if context.safety_route.is_none() && context.remote_private_route.is_none() {
@@ -983,7 +1050,10 @@ impl RPCProcessor {
     }
 
     /// Record success sending to node or route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     #[expect(clippy::too_many_arguments)]
     fn record_send_success(
         &self,
@@ -1029,7 +1099,10 @@ impl RPCProcessor {
 
     /// Record answer received from node or route
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn record_answer_received(
         &self,
         recv_ts: Timestamp,
@@ -1118,7 +1191,10 @@ impl RPCProcessor {
     }
 
     /// Record question or statement received from node or route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn record_question_received(&self, msg: &Message) {
         let recv_ts = msg.header.timestamp;
         let bytes = msg.header.body_len;
@@ -1162,7 +1238,10 @@ impl RPCProcessor {
 
     /// Issue a question over the network, possibly using an anonymized route
     /// Optionally keeps a context to be passed to the answer processor when an answer is received
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn question(
         &self,
         dest: Destination,
@@ -1194,8 +1273,8 @@ impl RPCProcessor {
         let RenderedOperation {
             outer_op_id,
             message,
-            destination_node_ref,
             node_ref,
+            opt_relay_di,
             safety_route,
             remote_private_route,
             reply_private_route,
@@ -1235,11 +1314,7 @@ impl RPCProcessor {
         let message_len = message.len();
         let res = self
             .network_manager()
-            .send_envelope(
-                node_ref.clone(),
-                Some(destination_node_ref.clone()),
-                message,
-            )
+            .send_envelope(node_ref.clone(), opt_relay_di.clone(), message)
             .await
             .map_err(|e| {
                 // If we're returning an error, clean up
@@ -1256,7 +1331,7 @@ impl RPCProcessor {
         // Take send timestamp -after- send is attempted to exclude TCP connection time which
         // may unfairly punish some nodes, randomly, based on their being in the connection table or not
         let send_ts = Timestamp::now();
-        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, destination_node_ref={}, message.len={}", outer_op_id, node_ref, destination_node_ref, message_len) ] {
+        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, opt_relay_di={}, message.len={}", outer_op_id, node_ref, opt_relay_di.as_ref().map(|x| x.to_string()).unwrap_or_else(String::new), message_len) ] {
                 // If we couldn't send we're still cleaning up
                 self.record_send_failure(RPCKind::Question, send_ts, node_ref.unfiltered(), safety_route, remote_private_route);
                 network_result_raise!(res);
@@ -1299,7 +1374,10 @@ impl RPCProcessor {
     }
 
     /// Issue a statement over the network, possibly using an anonymized route
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn statement(
         &self,
         dest: Destination,
@@ -1330,8 +1408,8 @@ impl RPCProcessor {
         let RenderedOperation {
             outer_op_id,
             message,
-            destination_node_ref,
             node_ref,
+            opt_relay_di,
             safety_route,
             remote_private_route,
             reply_private_route: _,
@@ -1352,11 +1430,7 @@ impl RPCProcessor {
         let message_len = message.len();
         let res = self
             .network_manager()
-            .send_envelope(
-                node_ref.clone(),
-                Some(destination_node_ref.clone()),
-                message,
-            )
+            .send_envelope(node_ref.clone(), opt_relay_di.clone(), message)
             .await
             .map_err(|e| {
                 // If we're returning an error, clean up
@@ -1373,7 +1447,7 @@ impl RPCProcessor {
         // Take send timestamp -after- send is attempted to exclude TCP connection time which
         // may unfairly punish some nodes, randomly, based on their being in the connection table or not
         let send_ts = Timestamp::now();
-        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, destination_node_ref={}, message.len={}", outer_op_id, node_ref, destination_node_ref, message_len) ] {
+        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, opt_relay_di={}, message.len={}", outer_op_id, node_ref, opt_relay_di.as_ref().map(|x| x.to_string()).unwrap_or_else(String::new), message_len) ] {
                 // If we couldn't send we're still cleaning up
                 self.record_send_failure(RPCKind::Statement, send_ts, node_ref.unfiltered(), safety_route.clone(), remote_private_route.clone());
                 network_result_raise!(res);
@@ -1395,7 +1469,10 @@ impl RPCProcessor {
     }
     /// Issue a reply over the network, possibly using an anonymized route
     /// The request must want a response, or this routine fails
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn answer(
         &self,
         request: Message,
@@ -1428,8 +1505,8 @@ impl RPCProcessor {
         let RenderedOperation {
             outer_op_id,
             message,
-            destination_node_ref,
             node_ref,
+            opt_relay_di,
             safety_route,
             remote_private_route,
             reply_private_route: _,
@@ -1450,11 +1527,7 @@ impl RPCProcessor {
         let message_len = message.len();
         let res = self
             .network_manager()
-            .send_envelope(
-                node_ref.clone(),
-                Some(destination_node_ref.clone()),
-                message,
-            )
+            .send_envelope(node_ref.clone(), opt_relay_di.clone(), message)
             .await
             .map_err(|e| {
                 // If we're returning an error, clean up
@@ -1471,7 +1544,7 @@ impl RPCProcessor {
         // Take send timestamp -after- send is attempted to exclude TCP connection time which
         // may unfairly punish some nodes, randomly, based on their being in the connection table or not
         let send_ts = Timestamp::now();
-        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, destination_node_ref={}, message.len={}", outer_op_id, node_ref, destination_node_ref, message_len) ] {
+        let send_data_result = network_result_value_or_log!(self res => [ format!(": outer_op_id = {}, node_ref={}, opt_relay_di={}, message.len={}", outer_op_id, node_ref, opt_relay_di.as_ref().map(|x| x.to_string()).unwrap_or_else(String::new), message_len) ] {
                 // If we couldn't send we're still cleaning up
                 self.record_send_failure(RPCKind::Answer, send_ts, node_ref.unfiltered(), safety_route.clone(), remote_private_route.clone());
                 network_result_raise!(res);
@@ -1496,7 +1569,10 @@ impl RPCProcessor {
     /// This performs a capnp decode on the data, and if it passes the capnp schema
     /// it performs the signature and cryptographic validation required to pass the operation up for processing
     /// Returns the operation and its signing key if provided
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn decode_rpc_operation(
         &self,
         encoded_msg: &MessageEncoded,
@@ -1529,7 +1605,10 @@ impl RPCProcessor {
     }
 
     /// Validation of RPC signature if provided
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn validate_rpc_signed_operation(
         &self,
         signed_operation: &RPCSignedOperation,
@@ -1564,7 +1643,10 @@ impl RPCProcessor {
     /// caller or receiver. This does not mean the operation is 'semantically correct'. For
     /// complex operations that require stateful validation and a more robust context than
     /// 'signatures', the caller must still perform whatever validation is necessary
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     fn validate_rpc_operation(&self, operation: &RPCOperation) -> Result<(), RPCError> {
         // If this is an answer, get the question context for this answer
         // If we received an answer for a question we did not ask, this will return an error
@@ -1586,7 +1668,10 @@ impl RPCProcessor {
     }
 
     //////////////////////////////////////////////////////////////////////
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     async fn process_rpc_message(&self, encoded_msg: MessageEncoded) -> RPCNetworkResult<()> {
         let start_ts = Timestamp::now();
 
@@ -1754,81 +1839,73 @@ impl RPCProcessor {
 
         // Process specific message kind
         let out = match msg.operation.kind() {
-            RPCOperationKind::Question(q) => {
-                let res = match q.detail() {
-                    RPCQuestionDetail::StatusQ(_) => {
-                        pin_dyn_future_closure!(self.process_status_q(msg))
-                    }
-                    RPCQuestionDetail::FindNodeQ(_) => {
-                        pin_dyn_future_closure!(self.process_find_node_q(msg))
-                    }
-                    RPCQuestionDetail::AppCallQ(_) => {
-                        pin_dyn_future_closure!(self.process_app_call_q(msg))
-                    }
-                    RPCQuestionDetail::GetValueQ(_) => {
-                        pin_dyn_future_closure!(self.process_get_value_q(msg))
-                    }
-                    RPCQuestionDetail::SetValueQ(_) => {
-                        pin_dyn_future_closure!(self.process_set_value_q(msg))
-                    }
-                    RPCQuestionDetail::WatchValueQ(_) => {
-                        pin_dyn_future_closure!(self.process_watch_value_q(msg))
-                    }
-                    RPCQuestionDetail::InspectValueQ(_) => {
-                        pin_dyn_future_closure!(self.process_inspect_value_q(msg))
-                    }
-                    RPCQuestionDetail::TransactBeginQ(_) => {
-                        pin_dyn_future_closure!(self.process_transact_begin_q(msg))
-                    }
-                    RPCQuestionDetail::TransactCommandQ(_) => {
-                        pin_dyn_future_closure!(self.process_transact_command_q(msg))
-                    }
-                    #[cfg(feature = "unstable-blockstore")]
-                    RPCQuestionDetail::SupplyBlockQ(_) => {
-                        pin_dyn_future_closure!(self.process_supply_block_q(msg))
-                    }
-                    #[cfg(feature = "unstable-blockstore")]
-                    RPCQuestionDetail::FindBlockQ(_) => {
-                        pin_dyn_future_closure!(self.process_find_block_q(msg))
-                    }
-                    #[cfg(feature = "unstable-tunnels")]
-                    RPCQuestionDetail::StartTunnelQ(_) => {
-                        pin_dyn_future_closure!(self.process_start_tunnel_q(msg))
-                    }
-                    #[cfg(feature = "unstable-tunnels")]
-                    RPCQuestionDetail::CompleteTunnelQ(_) => {
-                        pin_dyn_future_closure!(self.process_complete_tunnel_q(msg))
-                    }
-                    #[cfg(feature = "unstable-tunnels")]
-                    RPCQuestionDetail::CancelTunnelQ(_) => {
-                        pin_dyn_future_closure!(self.process_cancel_tunnel_q(msg))
-                    }
-                };
-                res.await
-            }
-            RPCOperationKind::Statement(s) => {
-                let res = match s.detail() {
-                    RPCStatementDetail::ValidateDialInfo(_) => {
-                        pin_dyn_future_closure!(self.process_validate_dial_info(msg))
-                    }
-                    RPCStatementDetail::Route(_) => {
-                        pin_dyn_future_closure!(self.process_route(msg))
-                    }
-                    RPCStatementDetail::ValueChanged(_) => {
-                        pin_dyn_future_closure!(self.process_value_changed(msg))
-                    }
-                    RPCStatementDetail::Signal(_) => {
-                        pin_dyn_future_closure!(self.process_signal(msg))
-                    }
-                    RPCStatementDetail::ReturnReceipt(_) => {
-                        pin_dyn_future_closure!(self.process_return_receipt(msg))
-                    }
-                    RPCStatementDetail::AppMessage(_) => {
-                        pin_dyn_future_closure!(self.process_app_message(msg))
-                    }
-                };
-                res.await
-            }
+            RPCOperationKind::Question(q) => match q.detail() {
+                RPCQuestionDetail::StatusQ(_) => {
+                    pin_dyn_future_closure!(self.process_status_q(msg)).await
+                }
+                RPCQuestionDetail::FindNodeQ(_) => {
+                    pin_dyn_future_closure!(self.process_find_node_q(msg)).await
+                }
+                RPCQuestionDetail::AppCallQ(_) => {
+                    pin_dyn_future_closure!(self.process_app_call_q(msg)).await
+                }
+                RPCQuestionDetail::GetValueQ(_) => {
+                    pin_dyn_future_closure!(self.process_get_value_q(msg)).await
+                }
+                RPCQuestionDetail::SetValueQ(_) => {
+                    pin_dyn_future_closure!(self.process_set_value_q(msg)).await
+                }
+                RPCQuestionDetail::WatchValueQ(_) => {
+                    pin_dyn_future_closure!(self.process_watch_value_q(msg)).await
+                }
+                RPCQuestionDetail::InspectValueQ(_) => {
+                    pin_dyn_future_closure!(self.process_inspect_value_q(msg)).await
+                }
+                RPCQuestionDetail::TransactBeginQ(_) => {
+                    pin_dyn_future_closure!(self.process_transact_begin_q(msg)).await
+                }
+                RPCQuestionDetail::TransactCommandQ(_) => {
+                    pin_dyn_future_closure!(self.process_transact_command_q(msg)).await
+                }
+                #[cfg(feature = "unstable-blockstore")]
+                RPCQuestionDetail::SupplyBlockQ(_) => {
+                    pin_dyn_future_closure!(self.process_supply_block_q(msg)).await
+                }
+                #[cfg(feature = "unstable-blockstore")]
+                RPCQuestionDetail::FindBlockQ(_) => {
+                    pin_dyn_future_closure!(self.process_find_block_q(msg)).await
+                }
+                #[cfg(feature = "unstable-tunnels")]
+                RPCQuestionDetail::StartTunnelQ(_) => {
+                    pin_dyn_future_closure!(self.process_start_tunnel_q(msg)).await
+                }
+                #[cfg(feature = "unstable-tunnels")]
+                RPCQuestionDetail::CompleteTunnelQ(_) => {
+                    pin_dyn_future_closure!(self.process_complete_tunnel_q(msg)).await
+                }
+                #[cfg(feature = "unstable-tunnels")]
+                RPCQuestionDetail::CancelTunnelQ(_) => {
+                    pin_dyn_future_closure!(self.process_cancel_tunnel_q(msg)).await
+                }
+            },
+            RPCOperationKind::Statement(s) => match s.detail() {
+                RPCStatementDetail::ValidateDialInfo(_) => {
+                    pin_dyn_future_closure!(self.process_validate_dial_info(msg)).await
+                }
+                RPCStatementDetail::Route(_) => {
+                    pin_dyn_future_closure!(self.process_route(msg)).await
+                }
+                RPCStatementDetail::ValueChanged(_) => {
+                    pin_dyn_future_closure!(self.process_value_changed(msg)).await
+                }
+                RPCStatementDetail::Signal(_) => {
+                    pin_dyn_future_closure!(self.process_signal(msg)).await
+                }
+                RPCStatementDetail::ReturnReceipt(_) => {
+                    pin_dyn_future_closure!(self.process_return_receipt(msg)).await
+                }
+                RPCStatementDetail::AppMessage(_) => self.process_app_message(msg),
+            },
             RPCOperationKind::Answer(_) => {
                 let op_id = msg.operation.op_id();
                 if let Err(e) = self.waiting_rpc_table.complete_op_waiter(op_id, msg) {

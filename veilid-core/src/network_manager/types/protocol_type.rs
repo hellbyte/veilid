@@ -96,7 +96,9 @@ impl ProtocolType {
         }
     }
     pub fn sort_order(&self, sequencing: Sequencing) -> usize {
-        *PROTOCOL_TYPE_ORDERING.get(&(sequencing, *self)).unwrap()
+        *PROTOCOL_TYPE_ORDERING
+            .get(&(sequencing, *self))
+            .unwrap_or_log()
     }
     pub fn all_ordered_set() -> ProtocolTypeSet {
         *PROTOCOL_TYPE_ALL_ORDERED_SET

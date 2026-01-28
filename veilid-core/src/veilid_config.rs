@@ -582,11 +582,11 @@ impl Default for VeilidConfigRoutingTable {
         }
         let bootstrap_keys = vec![
             // Primary Veilid Foundation bootstrap signing key
-            PublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k").unwrap(),
+            PublicKey::from_str("VLD0:Vj0lKDdUQXmQ5Ol1SZdlvXkBHUccBcQvGLN9vbLSI7k").unwrap_or_log(),
             // Secondary Veilid Foundation bootstrap signing key
-            PublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo").unwrap(),
+            PublicKey::from_str("VLD0:QeQJorqbXtC7v3OlynCZ_W3m76wGNeB5NTF81ypqHAo").unwrap_or_log(),
             // Backup Veilid Foundation bootstrap signing key
-            PublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA").unwrap(),
+            PublicKey::from_str("VLD0:QNdcl-0OiFfYVj9331XVR6IqZ49NG-E18d5P7lwi4TA").unwrap_or_log(),
         ];
 
         Self {
@@ -768,7 +768,9 @@ pub struct VeilidConfigCapabilities {
     pub disable: Vec<VeilidCapability>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize, JsonSchema,
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     derive(Tsify),
@@ -786,31 +788,21 @@ pub enum VeilidConfigLogLevel {
     Trace,
 }
 
-impl VeilidConfigLogLevel {
-    #[must_use]
-    pub fn to_veilid_log_level(&self) -> Option<VeilidLogLevel> {
-        match self {
-            Self::Off => None,
-            Self::Error => Some(VeilidLogLevel::Error),
-            Self::Warn => Some(VeilidLogLevel::Warn),
-            Self::Info => Some(VeilidLogLevel::Info),
-            Self::Debug => Some(VeilidLogLevel::Debug),
-            Self::Trace => Some(VeilidLogLevel::Trace),
+impl From<VeilidLogLevel> for VeilidConfigLogLevel {
+    fn from(value: VeilidLogLevel) -> Self {
+        match value {
+            VeilidLogLevel::Error => Self::Error,
+            VeilidLogLevel::Warn => Self::Warn,
+            VeilidLogLevel::Info => Self::Info,
+            VeilidLogLevel::Debug => Self::Debug,
+            VeilidLogLevel::Trace => Self::Trace,
         }
     }
-    #[must_use]
-    pub fn to_tracing_level_filter(&self) -> level_filters::LevelFilter {
-        match self {
-            Self::Off => level_filters::LevelFilter::OFF,
-            Self::Error => level_filters::LevelFilter::ERROR,
-            Self::Warn => level_filters::LevelFilter::WARN,
-            Self::Info => level_filters::LevelFilter::INFO,
-            Self::Debug => level_filters::LevelFilter::DEBUG,
-            Self::Trace => level_filters::LevelFilter::TRACE,
-        }
-    }
-    pub fn from_veilid_log_level(level: Option<VeilidLogLevel>) -> Self {
-        match level {
+}
+
+impl From<Option<VeilidLogLevel>> for VeilidConfigLogLevel {
+    fn from(value: Option<VeilidLogLevel>) -> Self {
+        match value {
             None => Self::Off,
             Some(VeilidLogLevel::Error) => Self::Error,
             Some(VeilidLogLevel::Warn) => Self::Warn,
@@ -819,29 +811,96 @@ impl VeilidConfigLogLevel {
             Some(VeilidLogLevel::Trace) => Self::Trace,
         }
     }
-    pub fn from_tracing_level_filter(level: level_filters::LevelFilter) -> Self {
-        match level {
-            level_filters::LevelFilter::OFF => Self::Off,
-            level_filters::LevelFilter::ERROR => Self::Error,
-            level_filters::LevelFilter::WARN => Self::Warn,
-            level_filters::LevelFilter::INFO => Self::Info,
-            level_filters::LevelFilter::DEBUG => Self::Debug,
-            level_filters::LevelFilter::TRACE => Self::Trace,
+}
+
+impl From<tracing::level_filters::LevelFilter> for VeilidConfigLogLevel {
+    fn from(value: tracing::level_filters::LevelFilter) -> Self {
+        match value {
+            tracing::level_filters::LevelFilter::OFF => Self::Off,
+            tracing::level_filters::LevelFilter::ERROR => Self::Error,
+            tracing::level_filters::LevelFilter::WARN => Self::Warn,
+            tracing::level_filters::LevelFilter::INFO => Self::Info,
+            tracing::level_filters::LevelFilter::DEBUG => Self::Debug,
+            tracing::level_filters::LevelFilter::TRACE => Self::Trace,
         }
     }
 }
+
+impl From<VeilidConfigLogLevel> for tracing::level_filters::LevelFilter {
+    fn from(val: VeilidConfigLogLevel) -> Self {
+        match val {
+            VeilidConfigLogLevel::Off => tracing::level_filters::LevelFilter::OFF,
+            VeilidConfigLogLevel::Error => tracing::level_filters::LevelFilter::ERROR,
+            VeilidConfigLogLevel::Warn => tracing::level_filters::LevelFilter::WARN,
+            VeilidConfigLogLevel::Info => tracing::level_filters::LevelFilter::INFO,
+            VeilidConfigLogLevel::Debug => tracing::level_filters::LevelFilter::DEBUG,
+            VeilidConfigLogLevel::Trace => tracing::level_filters::LevelFilter::TRACE,
+        }
+    }
+}
+
+impl From<tracing::log::LevelFilter> for VeilidConfigLogLevel {
+    fn from(value: tracing::log::LevelFilter) -> Self {
+        match value {
+            tracing::log::LevelFilter::Off => Self::Off,
+            tracing::log::LevelFilter::Error => Self::Error,
+            tracing::log::LevelFilter::Warn => Self::Warn,
+            tracing::log::LevelFilter::Info => Self::Info,
+            tracing::log::LevelFilter::Debug => Self::Debug,
+            tracing::log::LevelFilter::Trace => Self::Trace,
+        }
+    }
+}
+
+impl From<VeilidConfigLogLevel> for tracing::log::LevelFilter {
+    fn from(val: VeilidConfigLogLevel) -> Self {
+        match val {
+            VeilidConfigLogLevel::Off => tracing::log::LevelFilter::Off,
+            VeilidConfigLogLevel::Error => tracing::log::LevelFilter::Error,
+            VeilidConfigLogLevel::Warn => tracing::log::LevelFilter::Warn,
+            VeilidConfigLogLevel::Info => tracing::log::LevelFilter::Info,
+            VeilidConfigLogLevel::Debug => tracing::log::LevelFilter::Debug,
+            VeilidConfigLogLevel::Trace => tracing::log::LevelFilter::Trace,
+        }
+    }
+}
+
+impl TryFrom<&str> for VeilidConfigLogLevel {
+    type Error = VeilidAPIError;
+
+    fn try_from(value: &str) -> Result<Self, <Self as TryFrom<&str>>::Error> {
+        Self::from_str(value)
+    }
+}
+
+impl TryFrom<String> for VeilidConfigLogLevel {
+    type Error = VeilidAPIError;
+
+    fn try_from(value: String) -> Result<Self, <Self as TryFrom<String>>::Error> {
+        Self::from_str(value.as_str())
+    }
+}
+
+impl TryFrom<&String> for VeilidConfigLogLevel {
+    type Error = VeilidAPIError;
+
+    fn try_from(value: &String) -> Result<Self, <Self as TryFrom<&String>>::Error> {
+        Self::from_str(value.as_str())
+    }
+}
+
 impl FromStr for VeilidConfigLogLevel {
     type Err = VeilidAPIError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "Off" => Self::Off,
-            "Error" => Self::Error,
-            "Warn" => Self::Warn,
-            "Info" => Self::Info,
-            "Debug" => Self::Debug,
-            "Trace" => Self::Trace,
+        Ok(match s.to_ascii_lowercase().as_str() {
+            "off" => Self::Off,
+            "error" => Self::Error,
+            "warn" => Self::Warn,
+            "info" => Self::Info,
+            "debug" => Self::Debug,
+            "trace" => Self::Trace,
             _ => {
-                apibail_invalid_argument!("Can't convert str", "s", s);
+                apibail_invalid_argument!("invalid VeilidConfigLogLevel string", "s", s);
             }
         })
     }

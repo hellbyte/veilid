@@ -91,7 +91,10 @@ impl RouteSpecStore {
         self.default_route_hop_count_unsafe
     }
 
-    #[instrument(level = "trace", target = "route", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn reset(&self) {
         *self.inner.lock() = RouteSpecStoreInner {
             content: RouteSpecStoreContent::default(),
@@ -99,7 +102,10 @@ impl RouteSpecStore {
         };
     }
 
-    #[instrument(level = "trace", target = "route", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn load(&self) -> EyreResult<()> {
         let inner = {
             let table_store = self.table_store();
@@ -128,7 +134,10 @@ impl RouteSpecStore {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "route", skip(self), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn save(&self) -> EyreResult<()> {
         let content = {
             let inner = self.inner.lock();
@@ -142,7 +151,10 @@ impl RouteSpecStore {
         Ok(())
     }
 
-    #[instrument(level = "trace", target = "route", skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn send_route_update(&self) {
         let (dead_routes, dead_remote_routes) = {
             let mut inner = self.inner.lock();
@@ -178,7 +190,10 @@ impl RouteSpecStore {
     }
 
     /// Release an allocated or remote route that is no longer in use
-    #[instrument(level = "trace", target = "route", skip(self), ret)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), ret, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn release_route(&self, id: RouteId) -> bool {
         let is_remote = self.is_route_id_remote(&id);
         if is_remote {
@@ -249,7 +264,10 @@ impl RouteSpecStore {
     }
 
     /// Clear caches when our local node info changes
-    #[instrument(level = "trace", target = "route", skip(self))]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rtab::route", skip(self), fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub fn reset_cache(&self) {
         veilid_log!(self debug "resetting route cache");
 

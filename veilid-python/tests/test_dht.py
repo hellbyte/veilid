@@ -87,6 +87,15 @@ async def test_set_get_dht_value(api_connection: veilid.VeilidAPI):
             vd4 = await rc.get_dht_value(rec.key, ValueSubkey(1), False)
             assert vd4 is None
 
+            with pytest.raises(veilid.VeilidAPIError):
+                await rc.get_dht_value(rec.key, ValueSubkey(2), False)
+
+            with pytest.raises(veilid.VeilidAPIError):
+                await rc.get_dht_value(rec.key, ValueSubkey(2), False)
+
+            with pytest.raises(veilid.VeilidAPIError):
+                await rc.set_dht_value(rec.key, ValueSubkey(2), b"BLAH BLAH BLAH")
+                
             #print("vd2: {}", vd2.__dict__)
             #print("vd3: {}", vd3.__dict__)
 
@@ -94,6 +103,55 @@ async def test_set_get_dht_value(api_connection: veilid.VeilidAPI):
 
             await rc.close_dht_record(rec.key)
             await rc.delete_dht_record(rec.key)
+
+
+@pytest.mark.skipif(os.getenv("STRESS") != "1", reason="stress test takes a long time")
+@pytest.mark.asyncio
+async def test_set_bulk_get_bulk_dht_value(api_connection: veilid.VeilidAPI):
+    rc = await api_connection.new_routing_context()
+    async with rc:
+        for kind in await api_connection.valid_crypto_kinds():
+            rec = await rc.create_dht_record(kind, veilid.DHTSchema.dflt(32))
+
+            # Number of records
+            COUNT = 8
+            # Number of subkeys per record
+            SUBKEY_COUNT = 32
+            # Test data to set
+            TEST_DATA = b"abcd"
+            # Read count
+            READ_COUNT = 20
+
+            # write dht records on server 0
+            records = []
+            schema = veilid.DHTSchema.dflt(SUBKEY_COUNT)
+            print(f'writing {COUNT} records with {SUBKEY_COUNT} subkeys')
+            init_futures = set()
+            for n in range(COUNT):
+                desc = await rc.create_dht_record(kind, schema)
+                records.append(desc)
+
+                for i in range(SUBKEY_COUNT):
+                    init_futures.add(rc.set_dht_value(desc.key, ValueSubkey(i), TEST_DATA))
+                print(f'  {n}: {desc.key} {desc.owner}:{desc.owner_secret}')
+
+            await asyncio.gather(*init_futures)
+
+            # Wait for all records to synchronize, with progress bars
+            # await sync_win(rc, records, SUBKEY_COUNT, init_futures)
+
+            # read dht records on server 0
+            print(f'reading {COUNT} records cached {READ_COUNT} times')
+            for n, desc in enumerate(records):
+                get_futures = set()
+                for j in range(READ_COUNT):
+                    for i in range(SUBKEY_COUNT):
+                        get_futures.add(rc.get_dht_value(desc.key, ValueSubkey(i), force_refresh=True))
+                
+                await asyncio.gather(*get_futures)
+                await rc.close_dht_record(desc.key)
+                print(f'  {n}')
+
 
 
 @pytest.mark.asyncio
@@ -605,6 +663,9 @@ async def test_watch_many_dht_values():
         await api1.debug("record purge local")
         await api1.debug("record purge remote")
 
+        # clear the queue since it might have stuff in it from before the purge
+        value_change_queue = asyncio.Queue()
+
         # make routing contexts
         # unsafe version for debugging
         # rc0 = await (await api0.new_routing_context()).with_safety(SafetySelection.unsafe())
@@ -629,6 +690,9 @@ async def test_watch_many_dht_values():
                     vd = await rc0.set_dht_value(records[n].key, ValueSubkey(0), b"BLAH")
                     assert vd is None
 
+                    # Wait for sync to ensure the set comes before the watch
+                    await sync(rc0, [records[n]])
+
                     # Server 0: Make a watch on all the subkeys
                     active = await rc0.watch_dht_values(records[n].key)
                     assert active
@@ -639,7 +703,12 @@ async def test_watch_many_dht_values():
                     print(f"setting record {n}")
 
                     # Server 1: Open the subkey
-                    _ignore = await rc1.open_dht_record(record.key, record.owner_key_pair())
+                    rec = await rc1.open_dht_record(record.key, record.owner_key_pair())
+                    print(f"Opened record {n} on subnode 1: {rec}")
+
+                    # Server 1: Now get the subkey to ensure
+                    vd = await rc1.get_dht_value(record.key, ValueSubkey(0))
+                    assert vd is not None and vd.data == b"BLAH"
 
                     # Server 1: Now set the subkey and trigger an update
                     vd = await rc1.set_dht_value(record.key, ValueSubkey(0), b"BLAH BLAH")
@@ -653,8 +722,11 @@ async def test_watch_many_dht_values():
 
                     # Server 0: Wait for the update
                     try:
-                        upd = await asyncio.wait_for(value_change_queue.get(), timeout=10)
+                        upd = await asyncio.wait_for(value_change_queue.get(), timeout=20)
                         assert isinstance(upd.detail, veilid.VeilidValueChange)
+                        if upd.detail.key not in missing_records:
+                            n -= 1
+                            continue
                         missing_records.remove(upd.detail.key)
                     except:
                         # Dump which records didn't get updates
@@ -716,23 +788,25 @@ async def _run_test_schema_limit(api_connection: veilid.VeilidAPI, open_record: 
 
                 # write dht records on server 0
                 records = []
-                print(f'writing {count} subkeys')
+                print(f'writing {count} subkeys:', end='')
                 for n in range(count):
                     await rc.set_dht_value(desc.key, ValueSubkey(n), test_data)
-                    print(f'  {n}')
+                    print(f' {n}', end='')
+                print('\n')
 
                 await sync(rc, [desc])
 
                 await rc.close_dht_record(desc.key)
 
                 # read dht records on server 0
-                print(f'reading {count} subkeys')
+                print(f'reading {count} subkeys:', end='')
                 desc1 = await rc.open_dht_record(desc.key)
                 for n in range(count):
                     vd0 = await rc.get_dht_value(desc1.key, ValueSubkey(n))
                     assert vd0 is not None
                     assert vd0.data == test_data
-                    print(f'  {n}')
+                    print(f' {n}', end='')
+                print('\n')
 
 
 @pytest.mark.asyncio

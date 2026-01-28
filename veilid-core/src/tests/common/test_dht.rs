@@ -1,6 +1,6 @@
-use crate::crypto::tests::fixtures::*;
-use crate::tests::fixtures::*;
-use crate::*;
+use crate::tests_crypto::*;
+
+use super::*;
 
 use lazy_static::*;
 
@@ -14,35 +14,35 @@ lazy_static! {
     );
 }
 
-pub async fn test_get_dht_value_unopened(api: VeilidAPI) {
+async fn test_get_dht_value_unopened(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let result = rc.get_dht_value(BOGUS_KEY.clone(), 0, false).await;
     assert_err!(result);
 }
 
-pub async fn test_open_dht_record_nonexistent_no_writer(api: VeilidAPI) {
+async fn test_open_dht_record_nonexistent_no_writer(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let result = rc.get_dht_value(BOGUS_KEY.clone(), 0, false).await;
     assert_err!(result);
 }
 
-pub async fn test_close_dht_record_nonexistent(api: VeilidAPI) {
+async fn test_close_dht_record_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let result = rc.close_dht_record(BOGUS_KEY.clone()).await;
     assert_err!(result);
 }
 
-pub async fn test_delete_dht_record_nonexistent(api: VeilidAPI) {
+async fn test_delete_dht_record_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let result = rc.delete_dht_record(BOGUS_KEY.clone()).await;
     assert_err!(result);
 }
 
-pub async fn test_create_delete_dht_record_simple(api: VeilidAPI) {
+async fn test_create_delete_dht_record_simple(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
@@ -55,7 +55,7 @@ pub async fn test_create_delete_dht_record_simple(api: VeilidAPI) {
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
-pub async fn test_create_dht_record_with_owner(api: VeilidAPI) {
+async fn test_create_dht_record_with_owner(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let crypto = api.crypto().unwrap();
@@ -78,7 +78,7 @@ pub async fn test_create_dht_record_with_owner(api: VeilidAPI) {
     rc.delete_dht_record(dht_key.clone()).await.unwrap();
 }
 
-pub async fn test_get_dht_record_key(api: VeilidAPI) {
+async fn test_get_dht_record_key(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let crypto = api.crypto().unwrap();
@@ -113,7 +113,7 @@ pub async fn test_get_dht_record_key(api: VeilidAPI) {
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
-pub async fn test_get_dht_value_nonexistent(api: VeilidAPI) {
+async fn test_get_dht_value_nonexistent(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
@@ -128,7 +128,7 @@ pub async fn test_get_dht_value_nonexistent(api: VeilidAPI) {
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
-pub async fn test_set_get_dht_value(api: VeilidAPI) {
+async fn test_set_get_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
@@ -178,7 +178,7 @@ pub async fn test_set_get_dht_value(api: VeilidAPI) {
     rc.delete_dht_record(dht_key).await.unwrap();
 }
 
-pub async fn test_open_writer_dht_value(api: VeilidAPI) {
+async fn test_open_writer_dht_value(api: VeilidAPI) {
     let rc = api.routing_context().unwrap();
 
     let rec = rc
@@ -431,18 +431,13 @@ pub async fn test_set_dht_value_allow_offline(api: VeilidAPI) {
 }
 
 pub async fn test_all() {
-    if intf::env_variable_is_defined("CI") {
-        info!("skipping DHT test in CI");
-        return;
-    }
-
-    let (update_callback, config) = setup_veilid_core();
+    let (update_callback, config) = fixture_veilid_core();
     let api = api_startup(update_callback, config)
         .await
         .expect("startup failed");
 
     let _ = api.attach().await;
-    wait_for_public_internet_ready(&api).await;
+    fixture_wait_for_public_internet_ready(&api).await;
 
     test_get_dht_value_unopened(api.clone()).await;
     test_open_dht_record_nonexistent_no_writer(api.clone()).await;
@@ -451,6 +446,7 @@ pub async fn test_all() {
     test_get_dht_value_nonexistent(api.clone()).await;
     test_create_delete_dht_record_simple(api.clone()).await;
     test_create_dht_record_with_owner(api.clone()).await;
+    test_get_dht_record_key(api.clone()).await;
     test_set_get_dht_value(api.clone()).await;
     test_open_writer_dht_value(api.clone()).await;
     test_set_dht_value_allow_offline(api.clone()).await;

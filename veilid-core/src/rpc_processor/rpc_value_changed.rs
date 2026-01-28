@@ -5,7 +5,7 @@ impl_veilid_log_facility!("rpc");
 impl RPCProcessor {
     // Sends a dht value change notification
     // Can be sent via all methods including relays and routes but never over a safety route
-    #[instrument(level = "trace", target = "rpc", skip(self, value), err(level=Level::DEBUG))]
+    #[cfg_attr(feature = "instrument", instrument(level = "trace", target = "rpc", skip(self, value), err(level=Level::DEBUG)))]
     pub async fn rpc_call_value_changed(
         &self,
         dest: Destination,
@@ -38,7 +38,10 @@ impl RPCProcessor {
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[instrument(level = "trace", target = "rpc", skip_all)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "rpc", skip_all)
+    )]
     pub(super) async fn process_value_changed(&self, msg: Message) -> RPCNetworkResult<()> {
         // Get the statement
         let (_, _, kind) = msg.operation.destructure();

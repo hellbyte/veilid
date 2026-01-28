@@ -128,7 +128,7 @@ impl IpcListener {
         };
         Box::pin(async move {
             Ok(IpcStream {
-                internal: this.internal.as_ref().unwrap().accept().await?.0,
+                internal: this.internal.as_ref().unwrap_or_log().accept().await?.0,
             })
         })
     }
@@ -139,9 +139,9 @@ impl IpcListener {
             return Err(io::Error::from(io::ErrorKind::NotConnected));
         }
         Ok(IpcIncoming {
-            path: self.path.take().unwrap(),
+            path: self.path.take().unwrap_or_log(),
             internal: UnixListenerStream::new(
-                Arc::into_inner(self.internal.take().unwrap()).unwrap(),
+                Arc::into_inner(self.internal.take().unwrap_or_log()).unwrap_or_log(),
             ),
             phantom: std::marker::PhantomData,
         })

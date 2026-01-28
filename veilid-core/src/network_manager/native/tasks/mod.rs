@@ -45,15 +45,22 @@ impl Network {
 
         let routing_domain_state =
             routing_table.routing_domain_state(RoutingDomain::PublicInternet);
-        let state_wants_dial_info = matches!(
-            routing_domain_state,
-            RoutingDomainState::NeedsDialInfoConfirmation
-        );
 
-        let state_is_publishable = matches!(
-            routing_domain_state,
-            RoutingDomainState::ReadyToPublish { relay_status: _ }
-        );
+        let (state_wants_dial_info, state_is_publishable) = match routing_domain_state {
+            RoutingDomainState::Invalid | RoutingDomainState::Unusable => {
+                // Never tick if we haven't set up the network or the network is not usable
+                return false;
+            }
+            RoutingDomainState::NeedsDialInfoConfirmation => {
+                // Still need to confirm dial info
+                (true, false)
+            }
+            RoutingDomainState::NeedsRelays { relay_status: _ }
+            | RoutingDomainState::ReadyToPublish { relay_status: _ } => {
+                // Already have confirmed dialinfo
+                (false, true)
+            }
+        };
 
         let current_peer_info = routing_table.get_current_peer_info(RoutingDomain::PublicInternet);
 
@@ -87,10 +94,13 @@ impl Network {
         }
     }
 
-    #[instrument(level = "trace", target = "net", name = "Network::tick", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "net", name = "Network::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
+    )]
     pub async fn tick(&self) -> EyreResult<()> {
         let Ok(_guard) = self.startup_lock.enter() else {
-            veilid_log!(self debug "ignoring due to not started up");
+            veilid_log!(self debug "ignoring 'Network::tick' due to not started up");
             return Ok(());
         };
 

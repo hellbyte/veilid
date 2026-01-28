@@ -64,7 +64,7 @@ impl StableRng {
                     .iter()
                     .map(|x| x.weight())
                     .reduce(|acc, x| acc + x)
-                    .expect("config validation broken");
+                    .expect_or_log("config validation broken");
 
                 let r = self.next_f32(0.0, total_weight);
                 let mut current_weight = 0.0f32;
@@ -75,7 +75,7 @@ impl StableRng {
                     }
                 }
                 // Catch f32 imprecision
-                vec.last().expect("config validation broken").item()
+                vec.last().expect_or_log("config validation broken").item()
             }
         }
     }
@@ -88,11 +88,14 @@ impl StableRng {
                     .iter()
                     .map(|x| x.weight())
                     .reduce(|acc, x| acc + x)
-                    .expect("config validation broken");
+                    .expect_or_log("config validation broken");
 
                 let r = self.next_f32(0.0, total_weight);
                 let mut current_weight = 0.0f32;
-                let last = vec.pop().expect("config validation broken").into_item();
+                let last = vec
+                    .pop()
+                    .expect_or_log("config validation broken")
+                    .into_item();
                 for x in vec {
                     current_weight += x.weight();
                     if r < current_weight {

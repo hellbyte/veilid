@@ -6,7 +6,10 @@ impl_veilid_log_facility!("stor");
 
 impl StorageManager {
     // Send value change notifications across the network
-    #[instrument(level = "trace", target = "stor", skip_all, err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip_all, err)
+    )]
     pub(super) async fn send_value_changes_task_routine(
         &self,
         stop_token: StopToken,
@@ -59,7 +62,10 @@ impl StorageManager {
     }
 
     // Send single value change out to the network
-    #[instrument(level = "trace", target = "stor", skip(self), err)]
+    #[cfg_attr(
+        feature = "instrument",
+        instrument(level = "trace", target = "stor", skip(self), err)
+    )]
     async fn send_value_change(&self, vc: ValueChangedInfo) -> VeilidAPIResult<()> {
         if !self.dht_is_online() {
             apibail_try_again!("network is not available");
