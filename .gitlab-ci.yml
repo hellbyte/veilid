@@ -246,38 +246,6 @@ package_linux:
   rules:
     - if: '$CI_COMMIT_TAG =~ /v\d.+/'
 
-publish_crates:
-  stage: build_packages
-  needs:
-    - package_linux
-  tags:
-    - build-amd64-deb
-  script:
-    - vlt login
-    - vlt run --command="cargo publish -p veilid-tools --dry-run"
-    - vlt run --command="cargo publish -p veilid-tools"
-    - vlt run --command="cargo publish -p veilid-core --dry-run"
-    - vlt run --command="cargo publish -p veilid-core"
-    - vlt run --command="cargo publish -p veilid-remote-api --dry-run"
-    - vlt run --command="cargo publish -p veilid-remote-api"
-  allow_failure: true
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /v\d.+/'
-
-publish_python:
-  stage: build_packages
-  needs:
-    - package_linux
-  tags:
-    - build-amd64-deb
-  script:
-    - vlt login
-    - cd veilid-python && /home/gitlab-runner/.local/bin/poetry build
-    - vlt run --command="/home/gitlab-runner/.local/bin/poetry publish"
-  allow_failure: true
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /v\d.+/'
-
 build_repositories:
   stage: distribute
   tags:
@@ -292,6 +260,36 @@ build_repositories:
     - bash scripts/cicd/build-orchestration/distribute-stable-packages.sh
   dependencies:
     - package_linux
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /v\d.+/'
+
+publish_crates:
+  stage: distribute
+  needs:
+    - build_repositories
+  tags:
+    - build-amd64-deb
+  script:
+    - cargo publish -p veilid-tools --dry-run
+    - cargo publish -p veilid-tools
+    - cargo publish -p veilid-core --dry-run
+    - cargo publish -p veilid-core
+    - cargo publish -p veilid-remote-api --dry-run
+    - cargo publish -p veilid-remote-api
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /v\d.+/'
+
+publish_python:
+  stage: distribute
+  needs:
+    - build_repositories
+  tags:
+    - build-amd64-deb
+  script:
+    - cd veilid-python && /home/gitlab-runner/.local/bin/poetry build
+    - /home/gitlab-runner/.local/bin/poetry publish
+  allow_failure: true
   rules:
     - if: '$CI_COMMIT_TAG =~ /v\d.+/'
 
