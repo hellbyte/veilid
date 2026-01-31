@@ -259,21 +259,29 @@ impl Logs {
         // Systemd Journal logger
         cfg_if! {
             if #[cfg(target_os = "linux")] {
-                let log_key_filter =
-                    make_veilid_server_log_key_filter(settingsr.testing.subnode_index, true);
+                if settingsr.logging.system.enabled {
+                    let log_key_filter =
+                        make_veilid_server_log_key_filter(settingsr.testing.subnode_index, true);
 
-                let filter = VeilidLayerFilter::new_with_config(
-                    VeilidLayerFilterConfig::new().with_common_log_level(settingsr.logging.system.level.into()),
-                );
-                filter.set_log_key_filter(log_key_filter);
+                    let filter = VeilidLayerFilter::new_with_config(
+                        VeilidLayerFilterConfig::new().with_common_log_level(settingsr.logging.system.level.into()),
+                    );
+                    filter.set_log_key_filter(log_key_filter);
 
-                #[allow(deprecated)]
-                filter.apply_ignore_change_list(&settingsr.logging.system.ignore_log_targets);
+                    #[allow(deprecated)]
+                    filter.apply_ignore_change_list(&settingsr.logging.system.ignore_log_targets);
 
-                let layer = tracing_journald::layer().wrap_err("failed to set up journald logging")?
-                    .with_filter(filter.clone());
-                filters.insert("system", filter);
-                layers.push(layer.boxed());
+                    match tracing_journald::layer() {
+                        Ok(layer) => {
+                            let layer = layer.with_filter(filter.clone());
+                            filters.insert("system", filter);
+                            layers.push(layer.boxed());
+                        }
+                        Err(e) => {
+                            eprintln!("failed to set up journald logging (try setting `logging.system.enabled=false` if you are not using systemd): {}", e);
+                        }
+                    }
+                }
             }
         }
 
