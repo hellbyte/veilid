@@ -906,6 +906,7 @@ impl StorageManager {
                 subkey,
                 value,
                 InboundWatchUpdateMode::ExcludeTarget(target),
+                CommitActionFlushMode::Deferred,
             )
             .await;
 

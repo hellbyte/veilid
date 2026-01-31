@@ -2,6 +2,7 @@ use super::*;
 
 /// Record lock guard for multiple records
 #[derive(Debug)]
+#[must_use]
 pub struct RecordsLockGuard<R: LockPurpose, S: LockPurpose> {
     record_lock_guards: Vec<RecordLockGuard<R, S>>,
 }

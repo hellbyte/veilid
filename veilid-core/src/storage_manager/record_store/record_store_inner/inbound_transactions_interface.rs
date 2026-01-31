@@ -24,16 +24,6 @@ pub(in super::super) enum PrepareEndInboundTransactionResult {
     Continue(PrepareEndInboundTransactionContext),
 }
 
-pub(in super::super) struct PrepareCommitInboundTransactionContext<D: RecordDetail> {
-    pub transaction_id: InboundTransactionId,
-    pub opt_commit_action: Option<CommitAction<D>>,
-}
-
-pub(in super::super) enum PrepareCommitInboundTransactionResult<D: RecordDetail> {
-    Done(InboundTransactCommandResult),
-    Continue(PrepareCommitInboundTransactionContext<D>),
-}
-
 impl<D> RecordStoreInner<D>
 where
     D: RecordDetail,
@@ -337,21 +327,19 @@ where
         feature = "instrument",
         instrument(level = "trace", target = "stor", skip_all, err)
     )]
-    pub fn prepare_commit_inbound_transaction<C: FnOnce() -> D>(
+    pub fn commit_inbound_transaction<C: FnOnce() -> D>(
         &mut self,
         opaque_record_key: &OpaqueRecordKey,
         transaction_id: InboundTransactionId,
         make_record_detail: C,
-    ) -> VeilidAPIResult<PrepareCommitInboundTransactionResult<D>> {
+    ) -> VeilidAPIResult<InboundTransactCommandResult> {
         let rtk = RecordTableKey {
             record_key: opaque_record_key.clone(),
         };
 
         let transaction = {
             let Some(active_transaction_list) = self.inbound_transactions.get_mut(&rtk) else {
-                return Ok(PrepareCommitInboundTransactionResult::Done(
-                    InboundTransactCommandResult::InvalidTransaction,
-                ));
+                return Ok(InboundTransactCommandResult::InvalidTransaction);
             };
 
             // If there is a record lock then it better be ours
@@ -363,9 +351,7 @@ where
                     .remove_transaction(transaction_id)
                     .unwrap_or_else(veilid_log_err!(self));
                 veilid_log!(self debug "{}","bad lock state");
-                return Ok(PrepareCommitInboundTransactionResult::Done(
-                    InboundTransactCommandResult::InvalidTransaction,
-                ));
+                return Ok(InboundTransactCommandResult::InvalidTransaction);
             }
 
             // Get the inbound transaction if it is still valid
@@ -392,35 +378,23 @@ where
         // Apply all changes
         let watch_update_mode = InboundWatchUpdateMode::UpdateAll;
         let subkey_values = transaction.changed_subkeys().collect::<Vec<_>>();
-        let opt_commit_action = self
-            .set_subkeys_single_record(opaque_record_key, &subkey_values, &watch_update_mode)
+        if self
+            .set_subkeys_single_record(
+                opaque_record_key,
+                &subkey_values,
+                &watch_update_mode,
+                CommitActionFlushMode::Deferred,
+            )
             .inspect_err(veilid_log_err!(
                 self,
                 "set_subkeys_single_record failed in commit"
-            ))?;
+            ))?
+            .is_some()
+        {
+            apibail_internal!("deferred commit action should have returned None");
+        }
 
-        Ok(PrepareCommitInboundTransactionResult::Continue(
-            PrepareCommitInboundTransactionContext {
-                transaction_id,
-                opt_commit_action,
-            },
-        ))
-    }
-
-    #[cfg_attr(
-        feature = "instrument",
-        instrument(level = "trace", target = "stor", skip_all, err)
-    )]
-    pub fn finish_commit_inbound_transaction(
-        &mut self,
-        commit_context: PrepareCommitInboundTransactionContext<D>,
-    ) -> VeilidAPIResult<InboundTransactCommandResult> {
-        let PrepareCommitInboundTransactionContext {
-            transaction_id,
-            opt_commit_action: _,
-        } = commit_context;
-
-        // Drop transaction and lock now that we're done
+        // Drop transaction now that we're done
         if !self
             .inbound_transactions
             .try_remove_transaction(transaction_id)

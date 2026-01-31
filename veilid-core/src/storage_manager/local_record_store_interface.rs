@@ -53,6 +53,7 @@ impl StorageManager {
                 subkey,
                 value.clone(),
                 InboundWatchUpdateMode::NoUpdate,
+                CommitActionFlushMode::Immediate,
             )
             .await?;
 
@@ -89,6 +90,7 @@ impl StorageManager {
                 subkey,
                 value.clone(),
                 InboundWatchUpdateMode::NoUpdate,
+                CommitActionFlushMode::Immediate,
             )
             .await?;
 
@@ -121,6 +123,7 @@ impl StorageManager {
                 subkey,
                 value.clone(),
                 InboundWatchUpdateMode::NoUpdate,
+                CommitActionFlushMode::Immediate,
             )
             .await?;
 
@@ -154,6 +157,7 @@ impl StorageManager {
                 &opaque_record_key,
                 &subkey_values,
                 InboundWatchUpdateMode::NoUpdate,
+                CommitActionFlushMode::Immediate,
             )
             .await?;
 
@@ -189,7 +193,11 @@ impl StorageManager {
         // Write subkey to local store
         let local_record_store = self.get_local_record_store()?;
         local_record_store
-            .set_subkeys_multiple_records(&keys_and_subkeys, InboundWatchUpdateMode::NoUpdate)
+            .set_subkeys_multiple_records(
+                &keys_and_subkeys,
+                InboundWatchUpdateMode::NoUpdate,
+                CommitActionFlushMode::Immediate,
+            )
             .await?;
 
         Ok(())

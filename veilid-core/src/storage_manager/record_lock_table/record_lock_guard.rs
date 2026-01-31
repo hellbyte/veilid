@@ -2,6 +2,7 @@ use super::*;
 
 /// Record lock guard for a single record
 #[derive(Debug)]
+#[must_use]
 pub struct RecordLockGuard<R: LockPurpose, S: LockPurpose> {
     record_lock: Arc<RecordLock<R, S>>,
     _whole_record_lock_guard: AsyncRwLockWriteGuardArc<()>,

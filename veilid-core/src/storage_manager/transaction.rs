@@ -695,11 +695,14 @@ impl StorageManager {
             apibail_not_initialized!();
         };
 
-        let _subkey_lock = self.record_lock_table.lock_subkey(
-            record_key.opaque(),
-            subkey,
-            StorageManagerSubkeyLockPurpose::TransactGet,
-        );
+        let _subkey_lock = self
+            .record_lock_table
+            .lock_subkey(
+                record_key.opaque(),
+                subkey,
+                StorageManagerSubkeyLockPurpose::TransactGet,
+            )
+            .await;
 
         // Early rejection if dht is not online
         if !self.dht_is_online() {
@@ -792,11 +795,14 @@ impl StorageManager {
             apibail_not_initialized!();
         };
 
-        let _subkey_lock = self.record_lock_table.lock_subkey(
-            record_key.opaque(),
-            subkey,
-            StorageManagerSubkeyLockPurpose::TransactSet,
-        );
+        let _subkey_lock = self
+            .record_lock_table
+            .lock_subkey(
+                record_key.opaque(),
+                subkey,
+                StorageManagerSubkeyLockPurpose::TransactSet,
+            )
+            .await;
 
         let opaque_record_key = record_key.opaque();
 

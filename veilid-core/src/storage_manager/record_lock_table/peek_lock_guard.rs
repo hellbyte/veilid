@@ -2,6 +2,7 @@ use super::*;
 
 /// Shared record lock guard for a single record with no subkey locks
 #[derive(Debug)]
+#[must_use]
 pub struct PeekLockGuard<R: LockPurpose, S: LockPurpose> {
     record_lock: Arc<RecordLock<R, S>>,
     _whole_record_lock_guard: AsyncRwLockReadGuardArc<()>,

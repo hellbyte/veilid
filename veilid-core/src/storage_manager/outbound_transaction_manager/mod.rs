@@ -24,6 +24,9 @@ pub(in crate::storage_manager) use subkey_consensus::*;
 
 impl_veilid_log_facility!("stor");
 
+/// The percentage of nodes to allow past the consensus count on a transaction begin to account for network errors, rounded up
+const CONSENSUS_TRIM_PERCENT: usize = 33;
+
 /// Outbound Transaction Manager is not currently serialized, so
 /// transactions do not survive across app restarts
 /// If it is to be serialized it has to be done more intelligently than
@@ -228,6 +231,8 @@ impl OutboundTransactionManager {
         transaction_handle: OutboundTransactionHandle,
         results: Vec<OutboundTransactBeginResult>,
     ) -> VeilidAPIResult<()> {
+        let registry = self.registry();
+
         // Get the required strict consensus count
         let required_strict_consensus_count = self.config().network.dht.set_value_count as usize;
 
@@ -249,6 +254,23 @@ impl OutboundTransactionManager {
                     required_strict_consensus_count);
             }
 
+            // Trim results down to a factor of the strict consensus count
+            // Ensure the nodes we take are the closest to the record key
+            let mut node_transaction_params = result.node_transaction_params.clone();
+            let sort = make_closest_node_id_sort(result.opaque_record_key.to_hash_coordinate());
+            node_transaction_params.sort_by(|a, b| {
+                sort(
+                    &a.node_ref.node_ids().get(a.kind).unwrap_or_log(),
+                    &b.node_ref.node_ids().get(b.kind).unwrap_or_log(),
+                )
+            });
+            let max_node_transaction_params_count = required_strict_consensus_count
+                + (required_strict_consensus_count * CONSENSUS_TRIM_PERCENT).div_ceil(100);
+            if node_transaction_params.len() > max_node_transaction_params_count {
+                veilid_log!(registry debug "trimming node transactions from {} to {} for record key {}", node_transaction_params.len(), max_node_transaction_params_count, result.opaque_record_key);
+                node_transaction_params.truncate(max_node_transaction_params_count);
+            }
+
             // Update record state with results
             let Some(record_state) =
                 outbound_transaction_state.get_record_state_mut(&result.opaque_record_key)
@@ -261,7 +283,7 @@ impl OutboundTransactionManager {
 
             record_state.update_descriptor(result.descriptor)?;
             record_state.update_begin_network_seqs(result.seqs)?;
-            for ntp in result.node_transaction_params {
+            for ntp in node_transaction_params {
                 record_state.new_node_transaction(ntp)?;
             }
         }
@@ -770,9 +792,15 @@ impl OutboundTransactionManager {
                     .record(subkey, Some(set_subkey_consensus));
             }
         } else {
-            // If no consensus was reached, we eliminate the records because this is an error condition
+            // If no consensus was reached, we eliminate the consensus records for this subkey
+            // and return a try again error
             record_state.updated_consensus_mut().record(subkey, None);
             record_state.current_consensus_mut().record(subkey, None);
+            apibail_try_again!(
+                "set did not reach consensus for subkey: {}:{}",
+                record_state.record_key().opaque(),
+                subkey
+            );
         }
 
         Ok(())

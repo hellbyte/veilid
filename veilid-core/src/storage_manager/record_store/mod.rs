@@ -34,6 +34,15 @@ use record_store_locks::*;
 
 impl_veilid_log_facility!("stor");
 
+/// Whether to flush the commit action immediately or defer it to the background
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum CommitActionFlushMode {
+    /// Flush the commit action immediately
+    Immediate,
+    /// Defer the commit action to the background
+    Deferred,
+}
+
 pub(super) struct RecordStoreUnlockedInner {
     registry: VeilidComponentRegistry,
     name: String,
@@ -338,6 +347,7 @@ where
         subkey: ValueSubkey,
         value: Arc<SignedValueData>,
         watch_update_mode: InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<()> {
         let _subkey_lock = self
             .record_store_lock_table
@@ -353,6 +363,7 @@ where
             subkey,
             value,
             &watch_update_mode,
+            commit_action_flush_mode,
         )?;
 
         if let Some(commit_action) = opt_commit_action {
@@ -371,6 +382,7 @@ where
         opaque_record_key: &OpaqueRecordKey,
         subkey_values: &SubkeyValueList,
         watch_update_mode: InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<()> {
         let _record_lock = self
             .record_store_lock_table
@@ -389,6 +401,7 @@ where
             opaque_record_key,
             subkey_values,
             &watch_update_mode,
+            commit_action_flush_mode,
         )?;
 
         if let Some(commit_action) = opt_commit_action {
@@ -406,6 +419,7 @@ where
         &self,
         keys_and_subkeys: &RecordSubkeyValueList,
         watch_update_mode: InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<()> {
         let _records_lock = self
             .record_store_lock_table
@@ -423,10 +437,11 @@ where
             )
             .await;
 
-        let opt_commit_action = self
-            .inner
-            .lock()
-            .set_subkeys_multiple_records(keys_and_subkeys, &watch_update_mode)?;
+        let opt_commit_action = self.inner.lock().set_subkeys_multiple_records(
+            keys_and_subkeys,
+            &watch_update_mode,
+            commit_action_flush_mode,
+        )?;
 
         if let Some(commit_action) = opt_commit_action {
             self.process_commit_action(commit_action).await?;
@@ -693,31 +708,11 @@ where
             )
             .await;
 
-        // prepare
-        let commit_res = self.inner.lock().prepare_commit_inbound_transaction(
+        self.inner.lock().commit_inbound_transaction(
             opaque_record_key,
             transaction_id,
             make_record_detail,
-        )?;
-
-        let mut commit_context = match commit_res {
-            PrepareCommitInboundTransactionResult::Done(inbound_transact_commit_result) => {
-                return Ok(inbound_transact_commit_result);
-            }
-            PrepareCommitInboundTransactionResult::Continue(
-                prepare_commit_inbound_transaction_context,
-            ) => prepare_commit_inbound_transaction_context,
-        };
-
-        // commit action
-        if let Some(commit_action) = commit_context.opt_commit_action.take() {
-            self.process_commit_action(commit_action).await?;
-        };
-
-        // finish
-        self.inner
-            .lock()
-            .finish_commit_inbound_transaction(commit_context)
+        )
     }
 
     #[cfg_attr(

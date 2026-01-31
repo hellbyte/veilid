@@ -276,12 +276,16 @@ impl StorageManager {
                         FanoutDoneDisposition::NotDone
                     }
                     FanoutResultKind::Timeout | FanoutResultKind::Exhausted => {
-                        // Signal we're done
+                        // Signal we're done and stop anything still in progress
                         FanoutDoneDisposition::DoneEarly
                     }
                     FanoutResultKind::Consensus => {
-                        // Signal we're done
-                        FanoutDoneDisposition::Done
+                        // Signal we're done and stop anything still in progress
+                        FanoutDoneDisposition::DoneEarly
+
+                        // NOTE: Enabling this will result in slower transactions but more accurate consensus
+                        // // Signal we're done, but let the lanes in progress finish
+                        // FanoutDoneDisposition::Done
                     }
                 }
             })

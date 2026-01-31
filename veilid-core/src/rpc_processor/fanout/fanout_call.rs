@@ -94,6 +94,7 @@ pub enum FanoutQueueMode {
     Unthrottled,
 }
 
+/// How long to wait before proceeding beyong a node that is being too slow after consensus is met
 const THROTTLE_DURATION_PERCENT: u64 = 33;
 
 /// The return type of the fanout call routine
@@ -126,6 +127,7 @@ pub enum FanoutDoneDisposition {
     /// Finish immediately without completing operations
     DoneEarly,
     /// Finish when all operations are complete
+    #[allow(dead_code)]
     Done,
     /// Not done yet
     NotDone,

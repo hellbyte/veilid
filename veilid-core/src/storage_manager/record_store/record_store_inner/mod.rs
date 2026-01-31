@@ -105,6 +105,7 @@ where
         subkey: ValueSubkey,
         value: Arc<SignedValueData>,
         watch_update_mode: &InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<Option<CommitAction<D>>> {
         self.record_index
             .set_single_subkey(opaque_record_key, subkey, value)?;
@@ -112,8 +113,10 @@ where
         // Update watches
         self.update_watched_value(opaque_record_key, subkey, watch_update_mode);
 
-        // Single subkeys on a single record can be committed lazily
-        Ok(self.record_index.maybe_prepare_commit_action())
+        match commit_action_flush_mode {
+            CommitActionFlushMode::Immediate => Ok(self.record_index.prepare_commit_action()),
+            CommitActionFlushMode::Deferred => Ok(None),
+        }
     }
 
     pub fn set_subkeys_single_record(
@@ -121,6 +124,7 @@ where
         opaque_record_key: &OpaqueRecordKey,
         subkey_values: &SubkeyValueList,
         watch_update_mode: &InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<Option<CommitAction<D>>> {
         self.record_index
             .set_subkeys_single_record(opaque_record_key, subkey_values)?;
@@ -130,14 +134,17 @@ where
             self.update_watched_value(opaque_record_key, subkey, watch_update_mode);
         }
 
-        // Multiple subkeys on a single record should be committed immediately to ensure they all commit together
-        Ok(self.record_index.prepare_commit_action())
+        match commit_action_flush_mode {
+            CommitActionFlushMode::Immediate => Ok(self.record_index.prepare_commit_action()),
+            CommitActionFlushMode::Deferred => Ok(None),
+        }
     }
 
     pub fn set_subkeys_multiple_records(
         &mut self,
         keys_and_subkeys: &RecordSubkeyValueList,
         watch_update_mode: &InboundWatchUpdateMode,
+        commit_action_flush_mode: CommitActionFlushMode,
     ) -> VeilidAPIResult<Option<CommitAction<D>>> {
         self.record_index
             .set_subkeys_multiple_records(keys_and_subkeys)?;
@@ -149,8 +156,10 @@ where
             }
         }
 
-        // Multiple subkeys on multiple records should be committed immediately to ensure they all commit together
-        Ok(self.record_index.prepare_commit_action())
+        match commit_action_flush_mode {
+            CommitActionFlushMode::Immediate => Ok(self.record_index.prepare_commit_action()),
+            CommitActionFlushMode::Deferred => Ok(None),
+        }
     }
 
     pub fn flush(&mut self) -> Option<CommitAction<D>> {

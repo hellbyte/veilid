@@ -1,3 +1,8 @@
+**UNRELEASED**
+
+- veilid-core:
+  - Improved DHT transactions speed and reliability
+
 **Changed in Veilid 0.5.2**
 
 - _BREAKING API CHANGES_:

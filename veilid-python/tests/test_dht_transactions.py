@@ -608,7 +608,173 @@ async def test_dht_transaction_write_read_full_subkeys():
 
 @pytest.mark.skipif(os.getenv("STRESS") != "1", reason="stress test takes a long time")
 @pytest.mark.asyncio
-async def test_dht_transaction_write_read_full_records():
+async def test_dht_transaction_write_read_full_records_serial():
+
+    async def null_update_callback(update: VeilidUpdate):
+        pass
+
+    try:
+        api0 = await api_connector(null_update_callback, 0)
+    except VeilidConnectionError:
+        pytest.skip("Unable to connect to veilid-server 0.")
+        return
+
+    async with api0:
+        # purge local and remote record stores to ensure we start fresh
+        await api0.debug("record purge local")
+        await api0.debug("record purge remote")
+
+        # make routing contexts
+        rc0 = await (await api0.new_routing_context()).with_sequencing(Sequencing.ENSURE_ORDERED)
+        async with rc0:
+
+            for kind in await api0.valid_crypto_kinds():
+                print(f"kind: {kind}")
+                cs = await api0.get_crypto_system(kind)
+                async with cs:
+
+                    # Number of records
+                    COUNT = 8
+                    # Number of subkeys per record
+                    SUBKEY_COUNT = 32
+                    # BareNonce to encrypt test data
+                    NONCE = Nonce.from_bytes(b"A"*await cs.nonce_length())
+                    # Secret to encrypt test data
+                    SECRET = SharedSecret.from_value(await cs.kind(), BareSharedSecret.from_bytes(b"A"*await cs.shared_secret_length()))
+                    # Max subkey size
+                    MAX_SUBKEY_SIZE = min(32768, 1024*1024//SUBKEY_COUNT)
+                    # MAX_SUBKEY_SIZE = 256
+                    # Concurrency limit for subkeys within a transaction
+                    CONCURRENCY_LIMIT = 8
+
+                    # write dht records on server 0
+                    records : list[DHTRecordDescriptor] = []
+                    subkey_data_list : list[bytes] = []
+                    schema = DHTSchema.dflt(SUBKEY_COUNT)
+                    print(f'writing {COUNT} records with full subkeys')
+                    for n in range(COUNT):
+                        desc = await rc0.create_dht_record(kind, schema)
+                        print(f'  {n}: {desc.key} {desc.owner}:{desc.owner_secret}')
+                        records.append(desc)
+
+                        # Make encrypted data that is consistent and hard to compress
+                        subkey_data = bytes(chr(ord("A")+n%32)*MAX_SUBKEY_SIZE, 'ascii')
+                        subkey_data = await cs.crypt_no_auth(subkey_data, NONCE, SECRET)
+                        subkey_data_list.append(subkey_data)
+
+                    for n in range(COUNT):
+                        start = time.time()
+                        transaction = await api0.transact_dht_records([records[n].key], None)
+                        print(f'transaction {n} begin: {time.time()-start}')
+
+                        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+                        key = records[n].key
+                        subkey_data = subkey_data_list[n]
+
+                        init_set_futures : set[Coroutine[Any, Any, ValueData | None]] = set()
+
+                        async def setter(key: RecordKey, subkey: ValueSubkey, subkey_data: bytes):
+                            async with semaphore:
+                                subkey_start = time.time()
+                                print(f'subkey {subkey} start time offset: {subkey_start-start}')
+
+                                cnt = 0
+                                while True:
+                                    try:
+                                        res = await transaction.set(key, subkey, subkey_data)
+                                        break
+                                    except veilid.VeilidAPIErrorTryAgain:
+                                        cnt += 1
+                                        print(f'  retry #{cnt} setting {key} #{subkey}')
+                                        continue
+                                
+                                subkey_finish = time.time()
+                                print(f'subkey {subkey} finish time offset: {subkey_finish-start}, duration: {subkey_finish-subkey_start}')
+                                return res
+
+                        for i in range(SUBKEY_COUNT):
+                            start = time.time()
+                            init_set_futures.add(setter(key, ValueSubkey(i), subkey_data))
+
+                        # Update each subkey for each record serially
+                        # This stress tests record keepalives
+                        await asyncio.gather(*init_set_futures)
+
+                        print(f'transaction set record {n}: {time.time()-start}')
+
+                        start = time.time()
+                        await transaction.commit()
+                        print(f'transaction commit: {time.time()-start}')
+
+                    for desc in records:
+                        await rc0.close_dht_record(desc.key)
+
+                    await api0.debug("record purge local")
+                    await api0.debug("record purge remote")
+
+                    # read dht records on server 0
+                    print(f'reading {COUNT} records')
+
+                    for desc in records:
+                        await rc0.open_dht_record(desc.key)
+
+                    start = time.time()
+                    print(f'transaction begin: {time.time()-start}')
+
+                    for n in range(COUNT):
+                        key = records[n].key
+                        transaction = await api0.transact_dht_records([records[n].key], None)
+                        subkey_data = subkey_data_list[n]
+
+                        init_get_futures : set[Coroutine[Any, Any, tuple[RecordKey, ValueSubkey, bytes, ValueData | None]]] = set()
+                        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+                        for i in range(SUBKEY_COUNT):
+                            start = time.time()
+                            subkey = ValueSubkey(i)
+
+                            async def getter(key: RecordKey, subkey: ValueSubkey, check_data: bytes):
+                                async with semaphore:
+                                    subkey_start = time.time()
+                                    print(f'subkey {subkey} start time offset: {subkey_start-start}')
+
+                                    cnt = 0
+                                    while True:
+                                        try:
+                                            res = await transaction.get(key, subkey)
+                                            break
+                                        except veilid.VeilidAPIErrorTryAgain:
+                                            cnt += 1
+                                            print(f'  retry #{cnt} setting {key} #{subkey}')
+                                            continue
+
+                                    subkey_finish = time.time()
+                                    print(f'subkey {subkey} finish time offset: {subkey_finish-start}, duration: {subkey_finish-subkey_start}')
+                                    return (key, subkey, check_data, res)
+
+                            init_get_futures.add(getter(key, subkey, subkey_data))
+
+                        # Get each subkey for each record serially
+                        # This stress tests record keepalives
+                        get_results = await asyncio.gather(*init_get_futures)
+                        for key, sk, check_data, vd in get_results:
+                            assert vd is not None and vd.data == check_data
+
+                        print(f'transaction get record {n}: {time.time()-start}')
+
+                        start = time.time()
+                        await transaction.rollback()
+                        print(f'transaction rollback: {time.time()-start}')
+
+                    for desc in records:
+                        await rc0.close_dht_record(desc.key)
+
+
+
+@pytest.mark.skipif(os.getenv("STRESS") != "1", reason="stress test takes a long time")
+@pytest.mark.asyncio
+async def test_dht_transaction_write_read_full_records_parallel():
 
     async def null_update_callback(update: VeilidUpdate):
         pass

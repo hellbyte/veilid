@@ -2,6 +2,7 @@ use super::*;
 
 /// Shared record lock guard for a single record and an exclusive lock on a single subkey
 #[derive(Debug)]
+#[must_use]
 pub struct SubkeyLockGuard<R: LockPurpose, S: LockPurpose> {
     record_lock: Arc<RecordLock<R, S>>,
     _whole_record_lock_guard: AsyncRwLockReadGuardArc<()>,
