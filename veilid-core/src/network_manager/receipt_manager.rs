@@ -336,7 +336,7 @@ impl ReceiptManager {
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting receipt manager shutdown");
         let Ok(guard) = self.unlocked_inner.startup_lock.shutdown().await else {
-            veilid_log!(self debug "receipt manager is already shut down");
+            veilid_log!(self error "receipt manager is already shut down");
             return;
         };
 

@@ -70,7 +70,7 @@ impl RPCProcessor {
             matches!(descriptor_mode, GetDescriptorMode::WantDescriptor),
         )?;
         let question = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             RPCQuestionDetail::InspectValueQ(Box::new(inspect_value_q)),
         );
 

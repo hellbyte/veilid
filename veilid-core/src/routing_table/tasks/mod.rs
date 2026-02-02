@@ -125,6 +125,10 @@ impl RoutingTable {
         instrument(level = "trace", name = "RoutingTable::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
     )]
     pub async fn tick(&self) -> EyreResult<()> {
+        let Ok(_startup_guard) = self.startup_context.startup_lock.enter() else {
+            return Ok(());
+        };
+
         // Don't tick if paused
         let opt_tick_guard = {
             let inner = self.inner.read();

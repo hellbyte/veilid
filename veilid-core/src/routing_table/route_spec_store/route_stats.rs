@@ -193,7 +193,7 @@ impl RouteSpecStore {
     where
         F: FnOnce(&mut RouteStats) -> R,
     {
-        let inner = &mut *self.inner.lock();
+        let inner = &mut *self.inner.write();
 
         // Check for stub route
         if self.routing_table().public_keys().contains(key) {
@@ -219,7 +219,7 @@ impl RouteSpecStore {
 
     /// Process transfer statistics to get averages
     pub fn roll_transfers(&self, last_ts: Timestamp, cur_ts: Timestamp) {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
 
         // Roll transfers for allocated routes
         inner.content.roll_transfers(last_ts, cur_ts);
@@ -230,7 +230,7 @@ impl RouteSpecStore {
 
     /// Process answer statistics
     pub fn roll_answers(&self, cur_ts: Timestamp) {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
 
         // Roll transfers for allocated routes
         inner.content.roll_answers(cur_ts);

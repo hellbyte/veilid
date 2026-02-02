@@ -18,7 +18,7 @@ impl RouteSpecStore {
         F: FnOnce(&RouteSetSpecDetail, &RouteSpecDetail) -> R,
         R: fmt::Debug,
     {
-        let inner = &*self.inner.lock();
+        let inner = self.inner.read();
         let crypto = self.crypto();
 
         let Some(rsid) = inner.content.get_id_by_key(public_key) else {

@@ -21,7 +21,7 @@ impl RPCProcessor {
 
         let app_call_q = RPCOperationAppCallQ::new(message)?;
         let question = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             RPCQuestionDetail::AppCallQ(Box::new(app_call_q)),
         );
 

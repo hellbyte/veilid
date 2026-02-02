@@ -38,6 +38,10 @@ impl NetworkManager {
         instrument(level = "trace", name = "NetworkManager::tick", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key()))
     )]
     async fn tick(&self) -> EyreResult<()> {
+        let Ok(_startup_guard) = self.startup_context.startup_lock.enter() else {
+            return Ok(());
+        };
+
         let net = self.net();
         let receipt_manager = self.receipt_manager();
 

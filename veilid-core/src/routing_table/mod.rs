@@ -332,18 +332,18 @@ impl RoutingTable {
         // Stop tasks
         veilid_log!(self debug "stopping routing table tasks");
 
-        if let Some(sub) = self.tick_subscription.lock().take() {
-            self.event_bus().unsubscribe(sub);
-        }
-
-        self.cancel_tasks().await;
-
         let guard = self
             .startup_context
             .startup_lock
             .shutdown()
             .await
             .expect_or_log("should be started up");
+
+        if let Some(sub) = self.tick_subscription.lock().take() {
+            self.event_bus().unsubscribe(sub);
+        }
+
+        self.cancel_tasks().await;
 
         // Unpublish peer info
         veilid_log!(self debug "unpublishing peer info");

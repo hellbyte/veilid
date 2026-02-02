@@ -82,7 +82,7 @@ impl RPCProcessor {
             want_descriptor,
         )?;
         let question = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             RPCQuestionDetail::TransactBeginQ(Box::new(transact_value_q)),
         );
 

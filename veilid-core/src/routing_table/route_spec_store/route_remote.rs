@@ -3,7 +3,7 @@ use super::*;
 impl RouteSpecStore {
     /// Choose the best private route from a private route set to communicate with
     pub fn best_remote_private_route(&self, id: &RouteId) -> Option<PrivateRoute> {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         let cur_ts = Timestamp::now();
         let rpri = inner.cache.get_remote_private_route(cur_ts, id)?;
         rpri.best_private_route()
@@ -11,7 +11,7 @@ impl RouteSpecStore {
 
     /// Check if a route id is remote or not
     pub fn is_route_id_remote(&self, id: &RouteId) -> bool {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         let cur_ts = Timestamp::now();
         inner
             .cache
@@ -36,7 +36,7 @@ impl RouteSpecStore {
         let id = self.generate_remote_route_id(&private_routes)?;
 
         // validate the private routes
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         for private_route in &private_routes {
             // ensure private route has first hop
             if !matches!(private_route.hops, PrivateRouteHops::FirstHop(_)) {
@@ -76,7 +76,7 @@ impl RouteSpecStore {
         let id = self.generate_remote_route_id(&private_routes)?;
 
         // validate the private routes
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         for private_route in &private_routes {
             // ensure private route has first hop
             if !matches!(private_route.hops, PrivateRouteHops::FirstHop(_)) {
@@ -102,13 +102,13 @@ impl RouteSpecStore {
         instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
     )]
     pub(super) fn release_remote_route_id(&self, id: RouteId) -> bool {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         inner.cache.remove_remote_private_route(id)
     }
 
     /// Get a route id for a route's public key
     pub fn get_route_id_for_key(&self, key: &PublicKey) -> Option<RouteId> {
-        let inner = &mut *self.inner.lock();
+        let inner = self.inner.read();
         // Check for allocated route
         if let Some(id) = inner.content.get_id_by_key(key) {
             return Some(id);
@@ -129,7 +129,7 @@ impl RouteSpecStore {
         key: &PublicKey,
         published_peer_info: &PeerInfo,
     ) -> bool {
-        let inner = &*self.inner.lock();
+        let inner = self.inner.read();
 
         // Check for allocated route. If this is not a remote private route,
         // we may be running a test and using our own allocated route as the destination private route.
@@ -167,7 +167,7 @@ impl RouteSpecStore {
             apibail_internal!("peer info is not yet published");
         };
 
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
 
         // Check for allocated route. If this is not a remote private route
         // then we just skip the recording. We may be running a test and using

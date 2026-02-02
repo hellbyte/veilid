@@ -193,6 +193,7 @@ impl VeilidComponentRegistry {
         let mut initialized = vec![];
         for component in init_order {
             if let Err(e) = component.init().await {
+                veilid_log!(self error "Error initializing component '{}': {}", component.name(), e);
                 self.terminate_inner(initialized).await;
                 self.event_bus.shutdown().await;
                 return Err(e);

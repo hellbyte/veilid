@@ -11,7 +11,7 @@ pub(crate) struct NodeRefLock<
     'a,
     N: NodeRefAccessorsTrait + NodeRefOperateTrait + fmt::Debug + fmt::Display + Clone,
 > {
-    inner: Mutex<&'a RoutingTableInner>,
+    inner: &'a RoutingTableInner,
     nr: N,
 }
 
@@ -33,10 +33,7 @@ impl<'a, N: NodeRefAccessorsTrait + NodeRefOperateTrait + fmt::Debug + fmt::Disp
     NodeRefLock<'a, N>
 {
     pub fn new(inner: &'a RoutingTableInner, nr: N) -> Self {
-        Self {
-            inner: Mutex::new(inner),
-            nr,
-        }
+        Self { inner, nr }
     }
 
     pub fn unlocked(&self) -> N {
@@ -79,8 +76,7 @@ impl<N: NodeRefAccessorsTrait + NodeRefOperateTrait + fmt::Debug + fmt::Display 
     where
         F: FnOnce(&RoutingTableInner, &BucketEntryInner) -> T,
     {
-        let inner = &*self.inner.lock();
-        self.nr.entry().with(inner, f)
+        self.nr.entry().with(self.inner, f)
     }
 
     fn operate_mut<T, F>(&self, _f: F) -> T

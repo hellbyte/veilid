@@ -28,7 +28,7 @@ pub use types::*;
 use crate::*;
 
 use core_context::{api_shutdown, VeilidCoreContext};
-use routing_table::{DirectionSet, RouteSpecStore};
+use routing_table::{AllocateRouteParams, DirectionSet, RouteIdAndPublicKeys, RouteSpecStore};
 use rpc_processor::*;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////

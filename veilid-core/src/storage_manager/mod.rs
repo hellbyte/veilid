@@ -421,8 +421,9 @@ impl StorageManager {
         feature = "instrument",
         instrument(level = "trace", target = "tstore", skip_all)
     )]
+    #[allow(clippy::unused_async)]
     async fn pre_terminate_async(&self) {
-        // Stop background operations
+        // Unsubscribe from ticker
         {
             let mut inner = self.inner.lock();
             if let Some(sub) = inner.peer_info_change_subscription.take() {
@@ -432,9 +433,6 @@ impl StorageManager {
                 self.event_bus().unsubscribe(sub);
             }
         }
-
-        // Cancel all tasks associated with the tick future
-        self.cancel_tasks().await;
     }
 
     #[cfg_attr(feature = "instrument", instrument(level = "debug", skip_all))]
@@ -447,6 +445,9 @@ impl StorageManager {
             .shutdown()
             .await
             .expect_or_log("should be started up");
+
+        // Cancel all tasks associated with the tick future
+        self.cancel_tasks().await;
 
         // Stop deferred result processor
         self.background_operation_processor.terminate().await;

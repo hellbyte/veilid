@@ -58,8 +58,20 @@ impl RouteSetSpecDetail {
         stability: Stability,
         orderings: SequenceOrderingSet,
         automatic: bool,
-    ) -> Self {
-        Self {
+    ) -> VeilidAPIResult<Self> {
+        if route_set.is_empty() {
+            apibail_missing_argument!("route set is empty", "route_set");
+        }
+        if hop_node_refs.is_empty() {
+            apibail_missing_argument!("hop node refs is empty", "hop_node_refs");
+        }
+        if directions.is_empty() {
+            apibail_missing_argument!("directions is empty", "directions");
+        }
+        if orderings.is_empty() {
+            apibail_missing_argument!("orderings is empty", "orderings");
+        }
+        Ok(Self {
             route_set,
             hop_node_refs,
             published: false,
@@ -68,7 +80,7 @@ impl RouteSetSpecDetail {
             orderings,
             stats: RouteStats::new(cur_ts),
             automatic,
-        }
+        })
     }
     #[expect(dead_code)]
     pub fn len(&self) -> usize {
@@ -157,14 +169,18 @@ impl RouteSetSpecDetail {
     pub fn is_automatic(&self) -> bool {
         self.automatic
     }
+
     /// Generate a key for the cache that can be used to uniquely identify this route's contents
-    pub fn make_cache_key(&self, rti: &RoutingTableInner) -> Vec<u8> {
-        let hops = &self.hop_node_refs;
-        let mut cache: Vec<u8> = Vec::with_capacity(hops.len() * 32); // xxx hack: this code is going away soon anyway
-        for hop in hops {
-            if let Some(b) = hop.locked(rti).best_node_id() {
-                cache.extend_from_slice(b.ref_value());
-            }
+    pub fn make_cache_key(&self) -> Vec<u8> {
+        let best_route_set_key = self.get_best_route_set_key().unwrap_or_log();
+        let best_hops_node_ids = &self
+            .get_route_by_key(&best_route_set_key)
+            .unwrap_or_log()
+            .hops;
+
+        let mut cache: Vec<u8> = Vec::with_capacity(best_hops_node_ids.len() * 32); // xxx hack: this code is going away soon anyway
+        for best_hop_node_id in best_hops_node_ids {
+            cache.extend_from_slice(best_hop_node_id.ref_value());
         }
         cache
     }

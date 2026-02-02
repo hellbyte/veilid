@@ -39,7 +39,7 @@ impl RPCProcessor {
             RPCOperationFindNodeQ::new(node_id.clone(), capabilities.clone())?,
         ));
         let find_node_q = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             find_node_q_detail,
         );
 

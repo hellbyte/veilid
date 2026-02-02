@@ -246,7 +246,7 @@ where
         let rtk = RecordTableKey {
             record_key: opaque_record_key.clone(),
         };
-        let Some(record) = self.record_cache.get(&rtk).cloned() else {
+        let Some(record) = self.record_cache.get(&rtk) else {
             return Ok(None);
         };
 

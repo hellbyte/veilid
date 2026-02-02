@@ -1185,7 +1185,7 @@ impl VeilidAPI {
         Ok(format!("Replied with {} bytes", data_len))
     }
 
-    fn debug_route_allocate(&self, args: Vec<String>) -> VeilidAPIResult<String> {
+    async fn debug_route_allocate(&self, args: Vec<String>) -> VeilidAPIResult<String> {
         // [ord|*ord] [rel] [<count>] [in|out] [avoid_node_id]
 
         let registry = self.core_context()?.registry();
@@ -1230,13 +1230,17 @@ impl VeilidAPI {
         };
 
         // Allocate route
-        let out =
-            match rss.allocate_route(&VALID_CRYPTO_KINDS, &safety_spec, directions, &[], false) {
-                Ok(v) => v.to_string(),
-                Err(e) => {
-                    format!("Route allocation failed: {}", e)
-                }
-            };
+        let allocate_route_params = AllocateRouteParams {
+            crypto_kinds: VALID_CRYPTO_KINDS.to_vec(),
+            safety_spec,
+            directions,
+            avoid_nodes: Vec::new(),
+            automatic: false,
+        };
+        let out = match rss.allocate_route(&allocate_route_params).await {
+            Ok(v) => v.route_id.to_string(),
+            Err(e) => format!("Route allocation failed: {}", e),
+        };
 
         Ok(out)
     }
@@ -1455,7 +1459,7 @@ impl VeilidAPI {
         let command = get_debug_argument_at(&args, 0, "debug_route", "command", get_string)?;
 
         if command == "allocate" {
-            self.debug_route_allocate(args)
+            self.debug_route_allocate(args).await
         } else if command == "release" {
             self.debug_route_release(args)
         } else if command == "publish" {

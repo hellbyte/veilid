@@ -19,6 +19,8 @@ use route_set_spec_detail::*;
 use route_spec_store_cache::*;
 use route_spec_store_content::*;
 
+pub(crate) use route_allocate::AllocateRouteParams;
+pub(crate) use route_select::{RouteIdAndPublicKeys, RouteSelectParams};
 pub(crate) use route_spec_store_cache::CompiledRoute;
 pub use route_stats::*;
 
@@ -41,13 +43,22 @@ struct RouteSpecStoreInner {
     cache: RouteSpecStoreCache,
 }
 
+/// Key for the compile lock table
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct CompileLockKey {
+    pr_pubkey: PublicKey,
+}
+
 /// The routing table's storage for private/safety routes
 #[derive(Debug)]
 #[must_use]
 pub(crate) struct RouteSpecStore {
     registry: VeilidComponentRegistry,
-    inner: Mutex<RouteSpecStoreInner>,
-
+    inner: RwLock<RouteSpecStoreInner>,
+    /// Ensure we don't compile the same route more than once at a time
+    compile_lock_table: AsyncTagLockTable<CompileLockKey>,
+    /// Ensure we don't try to select the first available route for more the same parameters than once at a time
+    first_available_route_lock: AsyncMutex<()>,
     /// Maximum number of hops in a route
     max_route_hop_count: usize,
     /// Default number of hops in a safe route
@@ -69,10 +80,12 @@ impl RouteSpecStore {
 
         Self {
             registry: registry.clone(),
-            inner: Mutex::new(RouteSpecStoreInner {
+            inner: RwLock::new(RouteSpecStoreInner {
                 content: RouteSpecStoreContent::default(),
                 cache: RouteSpecStoreCache::new(registry.clone()),
             }),
+            compile_lock_table: AsyncTagLockTable::new(),
+            first_available_route_lock: AsyncMutex::new(()),
             max_route_hop_count,
             default_route_hop_count_safe,
             default_route_hop_count_unsafe,
@@ -96,7 +109,7 @@ impl RouteSpecStore {
         instrument(level = "trace", target = "rtab::route", skip_all, fields(__VEILID_LOG_KEY = self.log_key()))
     )]
     pub fn reset(&self) {
-        *self.inner.lock() = RouteSpecStoreInner {
+        *self.inner.write() = RouteSpecStoreInner {
             content: RouteSpecStoreContent::default(),
             cache: RouteSpecStoreCache::new(self.registry()),
         };
@@ -120,16 +133,15 @@ impl RouteSpecStore {
             };
 
             // Rebuild the routespecstore cache
-            let rti = &*routing_table.inner.read();
             for (_, rssd) in inner.content.iter_details() {
-                inner.cache.add_to_cache(rti, rssd);
+                inner.cache.add_to_cache(rssd);
             }
 
             inner
         };
 
         // Return the loaded RouteSpecStore
-        *self.inner.lock() = inner;
+        *self.inner.write() = inner;
 
         Ok(())
     }
@@ -140,7 +152,7 @@ impl RouteSpecStore {
     )]
     pub async fn save(&self) -> EyreResult<()> {
         let content = {
-            let inner = self.inner.lock();
+            let inner = self.inner.read();
             inner.content.clone()
         };
 
@@ -157,7 +169,7 @@ impl RouteSpecStore {
     )]
     pub fn send_route_update(&self) {
         let (dead_routes, dead_remote_routes) = {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.write();
             let Some(dr) = inner.cache.take_dead_routes() else {
                 // Nothing to do
                 return;
@@ -182,7 +194,7 @@ impl RouteSpecStore {
         let _tick_guard = routing_table.pause_tasks().await;
         routing_table.cancel_tasks().await;
         {
-            let inner = &mut *self.inner.lock();
+            let inner = &mut *self.inner.write();
             inner.content = Default::default();
             inner.cache = RouteSpecStoreCache::new(self.registry());
         }
@@ -208,7 +220,7 @@ impl RouteSpecStore {
     where
         F: FnMut(&RouteId, &RouteSetSpecDetail) -> Option<R>,
     {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         let mut out = Vec::with_capacity(inner.content.get_detail_count());
         let mut details = inner.content.iter_details().collect::<Vec<_>>();
         details.sort_by(|a, b| {
@@ -240,7 +252,7 @@ impl RouteSpecStore {
     where
         F: FnMut(&RouteId, &RemotePrivateRouteInfo) -> Option<R>,
     {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         let cur_ts = Timestamp::now();
         let remote_route_ids = inner.cache.get_remote_private_route_ids(cur_ts);
 
@@ -271,7 +283,7 @@ impl RouteSpecStore {
     pub fn reset_cache(&self) {
         veilid_log!(self debug "resetting route cache");
 
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
 
         // Clean up allocated routes (does not delete allocated routes, set republication flag)
         inner.content.reset_details();
@@ -284,7 +296,7 @@ impl RouteSpecStore {
     /// When first deserialized, routes must be re-published in order to ensure they remain
     /// in the RouteSpecStore.
     pub fn mark_route_published(&self, id: &RouteId, published: bool) -> VeilidAPIResult<()> {
-        let inner = &mut *self.inner.lock();
+        let mut inner = self.inner.write();
         let Some(rssd) = inner.content.get_detail_mut(id) else {
             apibail_invalid_target!("route does not exist");
         };
@@ -343,7 +355,7 @@ impl RouteSpecStore {
 
     /// Get the display description of a route
     fn display_route(&self, id: &RouteId) -> Option<String> {
-        let inner = &mut *self.inner.lock();
+        let inner = self.inner.read();
         let cur_ts = Timestamp::now();
         if let Some(rpri) = inner.cache.peek_remote_private_route(cur_ts, id) {
             return Some(format!("remote: {}", rpri));
@@ -385,7 +397,7 @@ impl RouteSpecStore {
 
     /// Get the debug description of a route
     fn debug_route(&self, id: &RouteId) -> Option<String> {
-        let inner = &mut *self.inner.lock();
+        let inner = self.inner.read();
         let cur_ts = Timestamp::now();
         if let Some(rpri) = inner.cache.peek_remote_private_route(cur_ts, id) {
             return Some(format!("remote: {:#?}", rpri));

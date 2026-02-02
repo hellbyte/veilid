@@ -269,7 +269,7 @@ impl RPCProcessor {
     }
 
     /// Convert the 'Destination' into a 'RespondTo' for a response
-    pub(super) fn get_destination_respond_to(
+    pub(super) async fn get_destination_respond_to(
         &self,
         dest: &Destination,
     ) -> RPCNetworkResult<RespondTo> {
@@ -291,9 +291,21 @@ impl RPCProcessor {
                         .best_node_id()
                         .ok_or_else(|| RPCError::protocol("no supported node id"))?
                         .kind();
-                    let pr_key = network_result_try!(rss
-                        .select_single_route(crypto_kind, safety_spec, &target.node_ids(), false)
+                    let RouteIdAndPublicKeys {
+                        route_id: _,
+                        public_keys,
+                    } = network_result_try!(rss
+                        .select_single_route(RouteSelectParams {
+                            crypto_kind,
+                            safety_spec: safety_spec.clone(),
+                            directions: DirectionSet::all(),
+                            avoid_nodes: target.node_ids().to_vec(),
+                            is_destination_safe: false,
+                        })
+                        .await
                         .to_rpc_network_result()?);
+
+                    let pr_key = public_keys.get(crypto_kind).unwrap_or_log();
 
                     // Get the assembled route for response
                     let private_route = network_result_try!(rss
@@ -365,13 +377,18 @@ impl RPCProcessor {
                         } else {
                             // Get the private route to respond to that matches the safety route spec we sent the request with
                             network_result_try!(rss
-                                .select_single_route(
+                                .select_single_route(RouteSelectParams {
                                     crypto_kind,
-                                    safety_spec,
-                                    &[avoid_node_id],
-                                    true,
-                                )
+                                    safety_spec: safety_spec.clone(),
+                                    directions: DirectionSet::all(),
+                                    avoid_nodes: vec![avoid_node_id],
+                                    is_destination_safe: true,
+                                })
+                                .await
                                 .to_rpc_network_result()?)
+                            .public_keys
+                            .get(crypto_kind)
+                            .unwrap_or_log()
                         };
 
                         // Get the assembled route for response

@@ -84,7 +84,7 @@ impl RPCProcessor {
             watch_id,
         )?;
         let question = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             RPCQuestionDetail::WatchValueQ(Box::new(watch_value_q)),
         );
 

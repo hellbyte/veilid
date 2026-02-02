@@ -653,6 +653,7 @@ impl RPCProcessor {
                 remote_private_route,
                 reply_private_route.clone()
             )
+            .await
             .to_rpc_network_result()?);
         let sr_is_stub = compiled_route.safety_route.is_stub();
         let sr_pubkey = compiled_route.safety_route.public_key.clone();

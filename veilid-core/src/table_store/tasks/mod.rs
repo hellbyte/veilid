@@ -16,6 +16,10 @@ impl TableStore {
 
     #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", target = "tstore", name = "TableStore::tick", skip_all, err))]
     pub async fn tick(&self, _lag: Option<TimestampDuration>) -> EyreResult<()> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            return Ok(());
+        };
+
         // Run the flush tables task
         self.flush_tables_task.tick().await?;
 

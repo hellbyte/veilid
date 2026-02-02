@@ -12,7 +12,7 @@ impl RouteSpecStore {
         allocated_route_key: &PublicKey,
         optimized: Option<bool>,
     ) -> VeilidAPIResult<PrivateRoute> {
-        let inner: &RouteSpecStoreInner = &self.inner.lock();
+        let inner = self.inner.read();
         let Some(rsid) = inner.content.get_id_by_key(allocated_route_key) else {
             // Route doesn't exist
             apibail_invalid_target!("route id does not exist");
@@ -43,7 +43,7 @@ impl RouteSpecStore {
         id: &RouteId,
         optimized: Option<bool>,
     ) -> VeilidAPIResult<Vec<PrivateRoute>> {
-        let inner = &*self.inner.lock();
+        let inner = self.inner.read();
         let Some(rssd) = inner.content.get_detail(id) else {
             apibail_invalid_target!("route id does not exist");
         };
@@ -67,7 +67,7 @@ impl RouteSpecStore {
         optimized: bool,
     ) -> VeilidAPIResult<PrivateRoute> {
         let routing_table = self.routing_table();
-        let rti = &*routing_table.inner.read();
+        let rti = routing_table.inner.read();
 
         // Ensure we get the crypto for it
         let crypto = routing_table.network_manager().crypto();
@@ -100,8 +100,10 @@ impl RouteSpecStore {
         };
 
         // Iterate hops in private route order (reverse, but inside out)
-        for hop_node_ref in rssd.hop_node_refs() {
-            let hop_node_ref = hop_node_ref.locked(rti);
+        let hop_node_refs = rssd.hop_node_refs();
+        let mut hop_info = Vec::with_capacity(hop_node_refs.len());
+        for hop_node_ref in hop_node_refs {
+            let hop_node_ref = hop_node_ref.locked(&rti);
 
             let Some(hop_node_id) = hop_node_ref.node_ids().get(crypto_kind) else {
                 apibail_invalid_argument!(
@@ -128,7 +130,13 @@ impl RouteSpecStore {
                     crypto_kind
                 );
             };
+            hop_info.push((hop_node_id, hop_public_key, hop_peer_info));
+        }
 
+        // Drop the routing table inner read lock since we don't need it during crypto operations
+        drop(rti);
+
+        for (hop_node_id, hop_public_key, hop_peer_info) in hop_info {
             // Encrypt the previous blob ENC(nonce, DH(PKhop,SKpr))
             let nonce = vcrypto.random_nonce();
 

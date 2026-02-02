@@ -1,7 +1,6 @@
 mod filtered_node_ref;
 mod node_ref_filter;
 mod node_ref_lock;
-mod node_ref_lock_mut;
 mod traits;
 
 impl_veilid_log_facility!("rtab");
@@ -11,7 +10,6 @@ use super::*;
 pub(crate) use filtered_node_ref::*;
 pub(crate) use node_ref_filter::*;
 pub(crate) use node_ref_lock::*;
-pub(crate) use node_ref_lock_mut::*;
 pub(crate) use traits::*;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -89,9 +87,6 @@ impl NodeRef {
 
     pub fn locked<'a>(&self, rti: &'a RoutingTableInner) -> LockedNodeRef<'a> {
         LockedNodeRef::new(rti, self.clone())
-    }
-    pub fn locked_mut<'a>(&self, rti: &'a mut RoutingTableInner) -> LockedMutNodeRef<'a> {
-        LockedMutNodeRef::new(rti, self.clone())
     }
 }
 

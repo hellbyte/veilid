@@ -250,28 +250,30 @@ impl RoutingTable {
             if route_count < background_safety_route_count {
                 let routes_to_allocate = background_safety_route_count - route_count;
 
+                // Parameters here must be the most inclusive safety route spec
+                // These will be used by test_remote_route as well
+                let safety_spec = SafetySpec {
+                    preferred_route: None,
+                    hop_count,
+                    stability: Stability::Reliable,
+                    sequencing: Sequencing::PreferOrdered,
+                };
+
+                let params = AllocateRouteParams {
+                    crypto_kinds: VALID_CRYPTO_KINDS.to_vec(),
+                    safety_spec,
+                    directions: DirectionSet::all(),
+                    avoid_nodes: Vec::new(),
+                    automatic: true,
+                };
                 for _n in 0..routes_to_allocate {
-                    // Parameters here must be the most inclusive safety route spec
-                    // These will be used by test_remote_route as well
-                    let safety_spec = SafetySpec {
-                        preferred_route: None,
-                        hop_count,
-                        stability: Stability::Reliable,
-                        sequencing: Sequencing::PreferOrdered,
-                    };
-                    match self.route_spec_store().allocate_route(
-                        &VALID_CRYPTO_KINDS,
-                        &safety_spec,
-                        DirectionSet::all(),
-                        &[],
-                        true,
-                    ) {
+                    match self.route_spec_store().allocate_route(&params).await {
                         Err(VeilidAPIError::TryAgain { message }) => {
                             veilid_log!(self debug "Route allocation unavailable: {}", message);
                         }
                         Err(e) => return Err(e.into()),
                         Ok(v) => {
-                            newly_allocated_routes.push(v);
+                            newly_allocated_routes.push(v.route_id);
                         }
                     }
                 }

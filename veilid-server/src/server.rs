@@ -96,6 +96,9 @@ pub async fn run_veilid_server_subnode(
     // Start Veilid Core and get API
     let veilid_api = veilid_core::api_startup(update_callback, core_config)
         .await
+        .inspect_err(|e| {
+            eprintln!("VeilidCore startup failed: {:?}", e);
+        })
         .wrap_err("VeilidCore startup failed")?;
 
     // Start client api if one is requested

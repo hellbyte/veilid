@@ -105,6 +105,7 @@ impl fmt::Debug for TableStoreInner {
 #[must_use]
 pub struct TableStore {
     registry: VeilidComponentRegistry,
+    startup_lock: StartupLock,
     inner: Mutex<TableStoreInner>, // Sync mutex here because TableDB drops can happen at any time
     table_store_driver: TableStoreDriver,
     async_lock: Arc<AsyncMutex<()>>,
@@ -116,6 +117,7 @@ impl fmt::Debug for TableStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TableStore")
             .field("registry", &self.registry)
+            .field("startup_lock", &self.startup_lock)
             .field("inner", &self.inner)
             .field("async_lock", &self.async_lock)
             .finish()
@@ -140,6 +142,7 @@ impl TableStore {
 
         let this = Self {
             registry,
+            startup_lock: StartupLock::new(),
             inner: Mutex::new(inner),
             table_store_driver,
             async_lock: Arc::new(AsyncMutex::new(())),
@@ -278,6 +281,10 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     pub fn list_all(&self) -> Vec<(String, String)> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            return vec![];
+        };
+
         let inner = self.inner.lock();
         inner
             .all_table_names
@@ -292,6 +299,10 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     pub async fn delete_all(&self) {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            return;
+        };
+
         // Get all tables
         let real_names = {
             let mut inner = self.inner.lock();
@@ -508,6 +519,8 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     async fn init_async(&self) -> EyreResult<()> {
+        let startup_guard = self.startup_lock.startup()?;
+
         {
             let _async_guard = self.async_lock.lock().await;
 
@@ -587,6 +600,7 @@ impl TableStore {
                 self.delete_all().await;
             }
         }
+        startup_guard.success();
 
         // Set up crypto
         let crypto = self.crypto();
@@ -616,17 +630,13 @@ impl TableStore {
         feature = "instrument",
         instrument(level = "trace", target = "tstore", skip_all)
     )]
+    #[allow(clippy::unused_async)]
     async fn pre_terminate_async(&self) {
-        // Stop background operations
-        {
-            let mut inner = self.inner.lock();
-            if let Some(sub) = inner.tick_subscription.take() {
-                self.event_bus().unsubscribe(sub);
-            }
+        // Unsubscribe from ticker
+        let mut inner = self.inner.lock();
+        if let Some(sub) = inner.tick_subscription.take() {
+            self.event_bus().unsubscribe(sub);
         }
-
-        // Cancel all tasks associated with the tick future
-        self.cancel_tasks().await;
     }
 
     #[cfg_attr(
@@ -634,7 +644,13 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     async fn terminate_async(&self) {
-        let _async_guard = self.async_lock.lock().await;
+        let Ok(_startup_guard) = self.startup_lock.shutdown().await else {
+            veilid_log!(self error "table store is already shut down");
+            return;
+        };
+
+        // Cancel tasks
+        self.cancel_tasks().await;
 
         self.flush().await;
 
@@ -672,6 +688,10 @@ impl TableStore {
         column_count: u32,
         concurrency: usize,
     ) -> VeilidAPIResult<TableDB> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let _async_guard = self.async_lock.lock().await;
 
         // If we aren't initialized yet, bail
@@ -763,6 +783,10 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     pub async fn delete(&self, name: &str) -> VeilidAPIResult<bool> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let _async_guard = self.async_lock.lock().await;
         // If we aren't initialized yet, bail
         {
@@ -807,6 +831,10 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     pub async fn info(&self, name: &str) -> VeilidAPIResult<Option<TableInfo>> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         // Open with the default number of columns
         let tdb = self.open(name, 0).await?;
         let internal_name = tdb.table_name();
@@ -867,6 +895,10 @@ impl TableStore {
         instrument(level = "trace", target = "tstore", skip_all)
     )]
     pub async fn rename(&self, old_name: &str, new_name: &str) -> VeilidAPIResult<()> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            apibail_not_initialized!();
+        };
+
         let _async_guard = self.async_lock.lock().await;
         // If we aren't initialized yet, bail
         {

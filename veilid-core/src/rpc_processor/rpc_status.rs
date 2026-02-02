@@ -60,7 +60,7 @@ impl RPCProcessor {
         // Create status rpc question
         let status_q = RPCOperationStatusQ::new(node_status);
         let question = RPCQuestion::new(
-            network_result_try!(self.get_destination_respond_to(&dest)?),
+            network_result_try!(self.get_destination_respond_to(&dest).await?),
             RPCQuestionDetail::StatusQ(Box::new(status_q)),
         );
 

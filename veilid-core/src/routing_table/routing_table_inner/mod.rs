@@ -776,7 +776,7 @@ impl RoutingTableInner {
     #[cfg_attr(feature = "instrument", instrument(level = "trace", skip_all, err, fields(__VEILID_LOG_KEY = self.log_key())))]
     fn create_node_ref<F>(&mut self, node_ids: &NodeIdGroup, update_func: F) -> EyreResult<NodeRef>
     where
-        F: FnOnce(&mut RoutingTableInner, &mut BucketEntryInner),
+        F: FnOnce(&mut BucketEntryInner),
     {
         let routing_table = self.routing_table();
         if node_ids.is_empty() {
@@ -825,7 +825,7 @@ impl RoutingTableInner {
             let nr = NodeRef::new(self.registry(), best_entry.clone());
 
             // Update the entry with the update func
-            best_entry.with_mut_inner(|e| update_func(self, e));
+            best_entry.with_mut_inner(|e| update_func(e));
 
             // Return the noderef
             return Ok(nr);
@@ -853,7 +853,7 @@ impl RoutingTableInner {
         let nr = NodeRef::new(self.registry(), new_entry.clone());
 
         // Update the entry with the update func
-        new_entry.with_mut_inner(|e| update_func(self, e));
+        new_entry.with_mut_inner(|e| update_func(e));
 
         // Kick the bucket
         veilid_log!(self debug "Routing table now has {} nodes, {} live", self.bucket_entry_count(), self.get_entry_count(RoutingDomainSet::all(), BucketEntryState::Unreliable, &VALID_CRYPTO_KINDS));
@@ -986,7 +986,7 @@ impl RoutingTableInner {
 
         let mut updated = false;
         let mut old_peer_info = None;
-        let nr = self.create_node_ref(&node_ids, |_rti, e| {
+        let nr = self.create_node_ref(&node_ids, |e| {
             old_peer_info = e.get_peer_info(routing_domain);
             updated = e.update_peer_info(routing_domain, peer_info);
         })?;
@@ -1010,7 +1010,7 @@ impl RoutingTableInner {
         node_id: NodeId,
         timestamp: Timestamp,
     ) -> EyreResult<FilteredNodeRef> {
-        let nr = self.create_node_ref(&NodeIdGroup::from(node_id), |_rti, e| {
+        let nr = self.create_node_ref(&NodeIdGroup::from(node_id), |e| {
             //e.make_not_dead(timestamp);
             e.touch_last_seen(timestamp);
         })?;
@@ -1031,7 +1031,7 @@ impl RoutingTableInner {
     /// 1. nodes are registered by id for an existing connection but have no peer info yet
     /// 2. nodes are removed that don't have any peer info
     fn on_entry_peer_info_updated(
-        &mut self,
+        &self,
         old_peer_info: Option<Arc<PeerInfo>>,
         new_peer_info: Option<Arc<PeerInfo>>,
     ) {

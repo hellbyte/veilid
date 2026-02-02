@@ -91,6 +91,10 @@ impl StorageManager {
 
     #[cfg_attr(feature = "instrument", instrument(parent = None, level = "trace", target = "stor", name = "StorageManager::tick", skip_all, err))]
     pub async fn tick(&self, lag: Option<TimestampDuration>) -> EyreResult<()> {
+        let Ok(_startup_guard) = self.startup_lock.enter() else {
+            return Ok(());
+        };
+
         // Run the flush stores task
         self.flush_record_stores_task.tick().await?;
 

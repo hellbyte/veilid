@@ -67,11 +67,6 @@ impl FilteredNodeRef {
         LockedFilteredNodeRef::new(rti, self.clone())
     }
 
-    #[expect(dead_code)]
-    pub fn locked_mut<'a>(&self, rti: &'a mut RoutingTableInner) -> LockedMutFilteredNodeRef<'a> {
-        LockedMutFilteredNodeRef::new(rti, self.clone())
-    }
-
     pub fn set_filter(&mut self, filter: NodeRefFilter) {
         self.filter = filter
     }

@@ -27,7 +27,7 @@ impl RouteSpecStore {
         let (dest, hops) = {
             // Get the best allocated route for this id
             let (key, hops) = {
-                let inner = &mut *self.inner.lock();
+                let inner = self.inner.read();
                 let Some(rssd) = inner.content.get_detail(&private_route_id) else {
                     // Route id is already dead
                     return Ok(Some(false));

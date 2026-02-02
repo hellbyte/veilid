@@ -438,7 +438,7 @@ impl Network {
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting low level network shutdown");
         let Ok(guard) = self.startup_lock.shutdown().await else {
-            veilid_log!(self debug "low level network is already shut down");
+            veilid_log!(self error "low level network is already shut down");
             return;
         };
 

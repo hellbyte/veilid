@@ -163,7 +163,7 @@ impl ConnectionManager {
     pub async fn shutdown(&self) {
         veilid_log!(self debug "starting connection manager shutdown");
         let Ok(guard) = self.arc.startup_lock.shutdown().await else {
-            veilid_log!(self debug "connection manager is already shut down");
+            veilid_log!(self error "connection manager is already shut down");
             return;
         };
 

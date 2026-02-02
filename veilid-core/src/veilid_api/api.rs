@@ -361,8 +361,15 @@ impl VeilidAPI {
 
             let routing_table = self.core_context()?.routing_table();
             let rss = routing_table.route_spec_store();
-            let route_id =
-                rss.allocate_route(crypto_kinds, &safety_spec, DirectionSet::all(), &[], false)?;
+            let allocate_route_params = AllocateRouteParams {
+                crypto_kinds: crypto_kinds.to_vec(),
+                safety_spec,
+                directions: DirectionSet::all(),
+                avoid_nodes: Vec::new(),
+                automatic: false,
+            };
+            let RouteIdAndPublicKeys { route_id, public_keys:_ } =
+                rss.allocate_route(&allocate_route_params).await?;
             match Box::pin(rss.test_route(route_id.clone())).await? {
                 Some(true) => {
                     // route tested okay
